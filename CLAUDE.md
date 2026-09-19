@@ -19,6 +19,8 @@ Core loop is built and working: journal text -> classify -> people/slot/asset ->
 
 Progression (built 2026-09-19): worlds start on the smallest planet (42 tiles) and grow up the size ladder 42 -> 92 -> 162 -> 362 -> 642 -> 1002 once half the land is claimed (`src/world/growth.js`; grids in `data/grids/`, f=10 stays `data/hexgrid.json`). Growing remaps every saved slot and keeps tile size constant, so the island keeps its size while new ocean opens around it. Journaling earns shards (`src/game/economy.js`), spent in the shop on 4 themes, 4 pets and 5 character skins (visuals in `src/world/themes.js` and `src/world/cosmetics.js`, all procedural, no new assets). Store is v3 (`memory-planet.world.v3`, v2 saves migrate as frequency 10). Checks: `node scripts/test-growth.js`.
 
+Planet <-> flat is animated: the island peels off the sphere and presses flat as the planet shrinks away (and the reverse), settling at a three-quarter view (`FLAT_VIEW_PHI`). Each flat piece is eased between its pose on the sphere cap and its flat pose (`makeFoldRig` in `world.js`); the sea is merged geometry, so it bends per vertex by the tile each vertex belongs to (`userData.morph`) and travels with the land. This relies on the flat layout keeping the sphere's winding (`hexDirection` lays direction k at -k*60 deg; `kitEdge` converts to the kit's edge index for road pieces) - the flat view used to be a mirror image of the planet.
+
 Known gaps:
 - Classifier mostly runs on the keyword heuristic (no `.env`, substring-matching bugs, weak people detection); the Claude path is untested live.
 - Roads currently link ALL memories chronologically; people are static (no walking).
@@ -28,7 +30,7 @@ Known gaps:
 
 ## Planned (not built yet, in build order)
 1. **People, paths, NPCs + classifier.** Roads only between memories that share a person. If a new entry mentions a name similar to an earlier person, ask "is this the same person?". Same -> link the two buildings with a road and the existing figure walks between them like an NPC. Different -> new figure on the new tile that stays near its building until another memory mentions them. Fix the classifier (word-boundary matching, log Claude failures, show "classified by ...") and add an explicit "who was there?" input so people names are reliable.
-2. ~~Flat island start, planet size ladder.~~ **Built**, starting on the 42-tile planet rather than a flat island (team call, 2026-09-19). Still open: 1962 / 4002 tiles (the 4002 planet is multiplayer-only).
+2. ~~Flat island start, planet size ladder.~~ **Built**, starting on the 42-tile planet rather than a flat island (team call, 2026-09-19). If the flat-island start comes back, `MI.world.setFlatView(false)` already animates the island folding up into a planet. Still open: 1962 / 4002 tiles (the 4002 planet is multiplayer-only).
 3. ~~Whole-planet themes.~~ **Built** as shop unlocks (meadow, frostfall, blossom, starlight), and themes recolour the kit atlas at runtime. Per-category building style picks are still deferred.
 
 ## Decisions / open questions for later

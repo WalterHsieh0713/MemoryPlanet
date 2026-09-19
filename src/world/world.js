@@ -295,7 +295,7 @@
     var start = performance.now();
     animations.push(function (now) {
       var t = Math.min(1, (now - start) / durationMs);
-      step(t);
+      if (step(t) === true) return true;
       return t >= 1;
     });
   }
@@ -357,7 +357,9 @@
       rebuildRoads(); // the new tile may extend or reroute the network
       // The flat view is a rebuilt snapshot, not a live scene — without this, a memory
       // written while in flat mode wouldn't appear until you toggled out and back.
-      if (state.flatMode) return refreshFlatView(slot).then(function () { return obj; });
+      if (state.flatMode || state.transition) {
+        return refreshFlatView(slot).then(function () { return obj; });
+      }
       return obj;
     });
   }
@@ -403,7 +405,7 @@
   // where the layout is centred on the origin and a tile's sphere direction says nothing
   // about where it ended up.
   function focus(slot, options) {
-    if (!state || state.flatMode) return;
+    if (!state || state.flatMode || state.transition) return;
     var tile = MI.world.sphere.tile(slot);
     if (!tile) return;
     var dir = tile.dir;
@@ -423,6 +425,7 @@
     // Take the short way around rather than spinning the long way.
     var delta = ((targetTheta - fromTheta + Math.PI) % (Math.PI * 2)) - Math.PI;
     animate(850, function (t) {
+      if (state.transition) return true;
       var e = easeInOut(t);
       state.camTheta = fromTheta + delta * e;
       state.camPhi = fromPhi + (targetPhi - fromPhi) * e;
@@ -475,15 +478,28 @@
   // Flat mode stops short of the horizon (the sandbox's limit) so you can never swing under
   // the tiles and see them from beneath. On the globe, orbiting all the way round is fine.
   var FLAT_PHI_LIMIT = 1.25;
+  // Where the flat view settles: a three-quarter view rather than straight down, so the
+  // tiles keep their thickness and the buildings stand up out of the map.
+  var FLAT_VIEW_PHI = 0.85;
 
   function clampPhi(phi) {
     if (state && state.flatMode) return Math.max(0.05, Math.min(FLAT_PHI_LIMIT, phi));
     return Math.max(0.15, Math.min(Math.PI - 0.15, phi));
   }
 
+  // The grid lists neighbours counter-clockwise seen from outside the planet. Laying flat
+  // direction k at -k*60 degrees keeps that winding seen from above, so the flat island is
+  // the planet's patch pressed flat rather than its mirror image (which the unfold
+  // animation could never reach by rotating). Kit edge indices run the other way; see
+  // kitEdge().
   function hexDirection(k) {
-    var a = k * Math.PI / 3;
+    var a = -k * Math.PI / 3;
     return { x: Math.cos(a), z: Math.sin(a) };
+  }
+
+  // Flat direction k, expressed as the kit's edge index (edge e sits at +e*60 degrees).
+  function kitEdge(k) {
+    return (6 - k) % 6;
   }
 
   // `allTiles` defaults to the loaded grid; taking it as an argument keeps this a pure
@@ -522,6 +538,44 @@
       });
     }
     return placed;
+  }
+
+  // Tangent frame at the layout's origin tile, turned so that a tile's (e1, e2) sphere
+  // coordinates line up with its flat (x, z) position: a least-squares rotation fit over the
+  // land tiles. n is the outward normal; (e1, n, e2) is right-handed like three's (x, y, z).
+  function fitFlatFrame(layout, allTiles) {
+    var tiles = allTiles || state.tiles;
+    var origin = null;
+    Object.keys(layout).forEach(function (id) {
+      var p = layout[id];
+      if (origin === null && p.land && p.x === 0 && p.z === 0) origin = Number(id);
+    });
+    if (origin === null) return null;
+
+    var n = new THREE.Vector3().fromArray(tiles[origin].dir).normalize();
+    var helper = Math.abs(n.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    var a = new THREE.Vector3().crossVectors(helper, n).normalize();
+    var b = new THREE.Vector3().crossVectors(a, n);
+
+    // Angle of sum(q * conj(p)) with p = u + i w on the sphere and q = x + i z flat.
+    var re = 0, im = 0;
+    var d = new THREE.Vector3();
+    Object.keys(layout).forEach(function (id) {
+      var p = layout[id];
+      if (!p.land) return;
+      d.fromArray(tiles[id].dir);
+      var u = d.dot(a), w = d.dot(b);
+      re += p.x * u + p.z * w;
+      im += p.z * u - p.x * w;
+    });
+    var phi = Math.atan2(im, re);
+    var cos = Math.cos(phi), sin = Math.sin(phi);
+    return {
+      origin: origin,
+      n: n,
+      e1: a.clone().multiplyScalar(cos).addScaledVector(b, -sin),
+      e2: a.clone().multiplyScalar(sin).addScaledVector(b, cos)
+    };
   }
 
   // --- Roads on the sphere ------------------------------------------------------------
@@ -687,7 +741,7 @@
       if (!placed) return; // outside the part of the island the flat view laid out
       var set = new Set();
       sphereEdges[slot].forEach(function (index) {
-        set.add((index + placed.rot) % 6);
+        set.add(kitEdge((index + placed.rot) % 6));
       });
       edgesBySlot[slot] = set;
     });
@@ -733,7 +787,11 @@
       landSlots.add(m.placement.slot);
       assetBySlot[m.placement.slot] = (m.asset && m.asset.key) || 'grass.glb';
     });
-    if (!landSlots.size) { state.flatRadius = 3; return Promise.resolve(); }
+    if (!landSlots.size) {
+      state.flatRadius = 3;
+      state.flatLayout = null;
+      return Promise.resolve();
+    }
 
     var layout = computeFlatLayout(landSlots, world.home);
     var buildingSlots = new Set();
@@ -764,7 +822,14 @@
       xx += x * x; xz += x * z; zz += z * z;
     });
     var angle = 0.5 * Math.atan2(2 * xz, xx - zz);
-    state.flatGroup.rotation.y = angle;
+    state.flatGroup.position.set(0, 0, 0);
+    state.flatGroup.scale.setScalar(1);
+    state.flatGroup.rotation.set(0, angle, 0);
+    // Kept so the fold/unfold animation can map every flat piece back onto the sphere.
+    state.flatLayout = layout;
+    state.flatAngle = angle;
+    state.flatCentre = { x: cx, z: cz };
+    state.flatFrame = fitFlatFrame(layout);
     var maxScreenX = 0, maxScreenZ = 0;
     ids.forEach(function (id) {
       var x = layout[id].x - cx, z = layout[id].z - cz;
@@ -773,9 +838,12 @@
     });
     var halfFov = state.camera.fov * Math.PI / 360;
     var padding = FLAT_SPACING * 1.5;
+    // Seen at a tilt the island's depth foreshortens, but its near edge comes at you, so
+    // only part of the cosine is given back.
+    var depth = maxScreenZ * (0.45 + 0.55 * Math.cos(FLAT_VIEW_PHI));
     state.flatFitDistance = Math.max(8,
       (maxScreenX + padding) / (Math.tan(halfFov) * state.camera.aspect * 0.88),
-      (maxScreenZ + padding) / (Math.tan(halfFov) * 0.78));
+      (depth + padding) / (Math.tan(halfFov) * 0.78));
 
     var extent = 0;
     var waterCentres = [];
@@ -789,7 +857,7 @@
       if (!p.land && !roads[id]) {
         // Water gets real rippling geometry rather than the kit's static water tile —
         // except where a bridge spans it, which needs a real tile to stand on.
-        waterCentres.push({ x: x, z: z });
+        waterCentres.push({ x: x, z: z, slot: Number(id) });
         return;
       }
       var road = roads[id];
@@ -829,6 +897,7 @@
       obj.scale.setScalar(FLAT_MODEL_SCALE * 0.55);
       obj.position.set(p.x - cx + FLAT_SPACING * 0.26,
         FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, p.z - cz);
+      obj.userData.restY = obj.position.y;
       obj.userData.tag = { type: 'person', id: person.id, slot: slot };
       state.flatGroup.add(obj);
     });
@@ -844,7 +913,12 @@
   // Rebuild the layout in place. Passing the slot that just appeared animates only that
   // tile, so writing an entry from flat mode doesn't replay the whole island rising.
   function refreshFlatView(newSlot) {
-    if (!state || !state.flatMode) return Promise.resolve();
+    if (!state) return Promise.resolve();
+    // Rebuilding mid-fold would pull the pieces out from under the animation; catch up after.
+    if (state.transition) {
+      return state.transition.then(function () { return refreshFlatView(newSlot); });
+    }
+    if (!state.flatMode) return Promise.resolve();
     return buildFlatView().then(function () {
       if (newSlot === undefined || newSlot === null) { animateFlatEntry(); return; }
       state.flatGroup.children.forEach(function (obj) {
@@ -860,6 +934,7 @@
   function riseTile(obj) {
     var rest = obj.userData.restY || 0;
     animate(650, function (t) {
+      if (state.transition) return true;
       obj.position.y = rest - 1.8 * (1 - easeOutBack(t));
     });
   }
@@ -876,6 +951,8 @@
     var colors = new Float32Array(centres.length * perTile * 3);
     var uvs = new Float32Array(centres.length * perTile * 2);
     var land = new Float32Array(centres.length * perTile);
+    // Which tile each vertex belongs to, so the fold can bend the sea per tile.
+    var slots = new Int32Array(centres.length * perTile);
 
     var v = 0;
     centres.forEach(function (c) {
@@ -901,6 +978,7 @@
           uvs[v * 2] = 0.25;
           uvs[v * 2 + 1] = 0.5;
           land[v] = 0;
+          slots[v] = c.slot;
           v++;
         }
       }
@@ -923,10 +1001,12 @@
 
     var surface = new THREE.Mesh(geometry, material);
     surface.receiveShadow = true;
+    surface.userData.morph = { slots: slots, base: positions.slice() };
 
     var group = new THREE.Group();
     group.add(surface, buildFlatWaterSkirt(centres, circum), buildFlatWaterOutlines(centres, circum));
     group.userData.isFlatWater = true; // the entry animation leaves the sea where it is
+    group.userData.isFlatWaterGroup = true;
     return group;
   }
 
@@ -944,6 +1024,7 @@
     centres.forEach(function (c) {
       var loop = new THREE.LineLoop(geometry, material);
       loop.position.set(c.x, FLAT_WATER_Y + 0.012, c.z);
+      loop.userData.waterSlot = c.slot;
       group.add(loop);
     });
     return group;
@@ -961,6 +1042,7 @@
     var bottom = new THREE.Color(currentTheme.skirt[1]).convertSRGBToLinear();
     var positions = [], colors = [];
 
+    var slots = [];
     centres.forEach(function (c) {
       for (var k = 0; k < 6; k++) {
         // Edge k spans vertices k and k+1; its neighbour lies through the edge midpoint.
@@ -981,6 +1063,7 @@
           .forEach(function (pair) {
             positions.push(pair[0][0], pair[0][1], pair[0][2]);
             colors.push(pair[1].r, pair[1].g, pair[1].b);
+            slots.push(c.slot);
           });
       }
     });
@@ -991,9 +1074,14 @@
     geometry.computeVertexNormals();
     // DoubleSide because these are open walls, not a sealed solid — the inside of the far
     // wall is legitimately visible from a low angle.
-    return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+    var mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
       vertexColors: true, flatShading: true, roughness: 0.75, side: THREE.DoubleSide
     }));
+    mesh.userData.morph = {
+      slots: Int32Array.from(slots),
+      base: Float32Array.from(positions)
+    };
+    return mesh;
   }
 
   // Tiles rise out of the water from the middle outward, so entering the flat view reads as
@@ -1015,6 +1103,7 @@
 
     var totalMs = (longest + RISE) * 1000;
     animate(totalMs, function (t) {
+      if (state.transition) return true;
       var elapsed = t * (totalMs / 1000);
       risers.forEach(function (obj) {
         var p = (elapsed - obj.userData.riseDelay) / RISE;
@@ -1049,7 +1138,486 @@
     return mesh;
   }
 
-  function setFlatView(on) {
+  // Planet <-> flat. Animated by default: the island's tiles lift off the sphere and settle
+  // into the flat layout (or the reverse). `{ instant: true }` cuts straight there.
+  function setFlatView(on, options) {
+    if (!state) return Promise.resolve();
+    if (state.transition) return state.transition;
+    var goingFlat = !!on;
+    var animated = !(options && options.instant) && goingFlat !== !!state.flatMode;
+    if (!animated) return setFlatViewInstant(goingFlat);
+
+    var run = goingFlat ? unfoldToFlat() : foldToPlanet();
+    state.transition = run.then(function () {
+      state.transition = null;
+    }, function (err) {
+      state.transition = null;
+      throw err;
+    });
+    return state.transition;
+  }
+
+  function isTransitioning() {
+    return !!state && !!state.transition;
+  }
+
+  var TURN_MS = 700;
+  var UNFOLD_MS = 1800;
+  var FOLD_MS = 1800;
+  var UP = new THREE.Vector3(0, 1, 0);
+  var FLAT_QUAT = new THREE.Quaternion();
+  // While it is folded onto the planet, the flat sea rides just above the planet's own
+  // water — they sit at the same radius otherwise, and the two surfaces fight. A function,
+  // because both terms depend on the current planet size.
+  function waterFoldLift() {
+    return WAVE_AMPLITUDE + 0.02 * state.unit;
+  }
+
+  // The flat view's warm off-white backdrop and softer key light (the blue planet lighting
+  // makes the kit tiles read as murky). mix: 0 = planet, 1 = flat.
+  // Both ends come from the active theme (refreshViewLight, called by setTheme); meadow's
+  // values are the originals. A theme with its own dark sky (starlight) keeps its own
+  // lights in the flat view too, just with a softer sun.
+  var VIEW_LIGHT = null;
+  function refreshViewLight() {
+    var t = currentTheme;
+    PLANET_BG.set(t.sky);
+    FLAT_BG.set(t.flatSky);
+    var planet = { bg: PLANET_BG, sky: new THREE.Color(t.hemi[0]), ground: new THREE.Color(t.hemi[1]),
+      hemi: t.hemi[2], sun: new THREE.Color(t.sun[0]), sunI: t.sun[1], sunPos: new THREE.Vector3(8, 12, 6) };
+    var flat = t.stars
+      ? { bg: FLAT_BG, sky: planet.sky, ground: planet.ground, hemi: planet.hemi,
+        sun: planet.sun, sunI: planet.sunI * 0.6, sunPos: new THREE.Vector3(-3, 8, 5) }
+      : { bg: FLAT_BG, sky: new THREE.Color(0xffffff), ground: new THREE.Color(0xb3c0b6),
+        hemi: 1.0, sun: new THREE.Color(0xfff3d9), sunI: 0.7, sunPos: new THREE.Vector3(-3, 8, 5) };
+    VIEW_LIGHT = { planet: planet, flat: flat };
+  }
+
+  function applyViewLighting(mix) {
+    var a = VIEW_LIGHT.planet, b = VIEW_LIGHT.flat;
+    state.scene.background.copy(a.bg).lerp(b.bg, mix);
+    state.hemiLight.color.copy(a.sky).lerp(b.sky, mix);
+    state.hemiLight.groundColor.copy(a.ground).lerp(b.ground, mix);
+    state.hemiLight.intensity = a.hemi + (b.hemi - a.hemi) * mix;
+    state.sunLight.color.copy(a.sun).lerp(b.sun, mix);
+    state.sunLight.intensity = a.sunI + (b.sunI - a.sunI) * mix;
+    state.sunLight.position.copy(a.sunPos).lerp(b.sunPos, mix);
+  }
+
+  function animateP(durationMs, step) {
+    return new Promise(function (resolve) {
+      animate(durationMs, function (t) {
+        step(t);
+        if (t >= 1) resolve();
+      });
+    });
+  }
+
+  function clamp01(x) {
+    return Math.max(0, Math.min(1, x));
+  }
+
+  // Zero velocity and acceleration at both ends, including the handoff to either view.
+  function foldEase(t) {
+    t = clamp01(t);
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }
+
+  function planetScaleAt(u) {
+    return Math.max(0.0001, 1 - foldEase(u / 0.65));
+  }
+
+  function shortAngle(from, to) {
+    var d = to - from;
+    return Math.atan2(Math.sin(d), Math.cos(d));
+  }
+
+  // Re-express the current camera as an orbit around a new target, without moving it.
+  function orbitAround(target) {
+    var offset = state.camera.position.clone().sub(target);
+    var dist = offset.length();
+    state.camTarget.copy(target);
+    state.camDistance = dist;
+    state.camPhi = Math.acos(Math.max(-1, Math.min(1, offset.y / dist)));
+    state.camTheta = Math.atan2(offset.x, offset.z);
+  }
+
+  function cameraShot() {
+    return { target: state.camTarget.clone(), dist: state.camDistance,
+      phi: state.camPhi, theta: state.camTheta };
+  }
+
+  function blendCamera(from, to, e) {
+    state.camTarget.copy(from.target).lerp(to.target, e);
+    state.camDistance = from.dist + (to.dist - from.dist) * e;
+    state.camPhi = from.phi + (to.phi - from.phi) * e;
+    state.camTheta = from.theta + shortAngle(from.theta, to.theta) * e;
+    state.updateCamera();
+  }
+
+  // Orbit angles that look straight down at a direction from outside the planet.
+  function shotFacing(dir, target, dist) {
+    return {
+      target: target, dist: dist,
+      phi: Math.max(0.15, Math.min(Math.PI - 0.15, Math.acos(Math.max(-1, Math.min(1, dir.y))))),
+      theta: Math.atan2(dir.x, dir.z)
+    };
+  }
+
+  // Everything the fold/unfold needs, captured from the flat view as currently built: each
+  // piece's flat pose, and its pose on the sphere cap it came from, both in flatGroup space.
+  // The group itself moves between sitting on the planet (scaled down to sphere size) and
+  // its normal flat placement, so at u = 0 every piece sits on its own planet tile.
+  function makeFoldRig() {
+    var frame = state.flatFrame;
+    if (!frame || !state.flatLayout) return null;
+    var K = FLAT_SPACING / state.spacing; // flat units per sphere unit
+    var c = state.flatCentre;
+    var pieces = [], waterMeshes = [], shades = [], maxRing = 0;
+    var poseBySlot = {};
+    var planetQuat = state.planet.quaternion.clone();
+    var basis = new THREE.Matrix4().makeBasis(frame.e1, frame.n, frame.e2);
+    var sphereQuat = planetQuat.clone().multiply(new THREE.Quaternion().setFromRotationMatrix(basis));
+    var inverseBasis = new THREE.Quaternion().setFromRotationMatrix(basis).invert();
+    // The planet group is scaled by planet size (setPlanet), so sphere units -> world is
+    // worldScale, not 1.
+    var sphereScale = state.worldScale / K;
+    var home = frame.n.clone().applyQuaternion(planetQuat);
+    var homePoint = home.clone().multiplyScalar(RADIUS * state.worldScale);
+    var spherePos = homePoint.clone().add(
+      new THREE.Vector3(c.x, 0, c.z).applyQuaternion(sphereQuat).multiplyScalar(sphereScale));
+
+    // Where a tile sits on the sphere cap, in flatGroup space. `lift` raises it clear of the
+    // planet's own surface — the sea needs it or it fights with the planet's water.
+    function slotPose(slot) {
+      if (poseBySlot[slot]) return poseBySlot[slot];
+      var tile = state.tiles[slot];
+      var lay = state.flatLayout[slot];
+      if (!tile || !lay) return null;
+      var d = new THREE.Vector3().fromArray(tile.dir).normalize();
+      var lift = lay.land ? LAND_LIFT : waterFoldLift();
+      var normal = new THREE.Vector3(d.dot(frame.e1), d.dot(frame.n), d.dot(frame.e2));
+      var ring = Math.sqrt(lay.x * lay.x + lay.z * lay.z) / FLAT_SPACING;
+      maxRing = Math.max(maxRing, ring);
+      var pose = {
+        ring: ring,
+        tilt: new THREE.Quaternion().setFromUnitVectors(UP, normal),
+        cap: new THREE.Vector3(
+          K * (RADIUS + lift) * normal.x - c.x,
+          K * ((RADIUS + lift) * normal.y - RADIUS),
+          K * (RADIUS + lift) * normal.z - c.z
+        ),
+        flat: new THREE.Vector3(lay.x - c.x, 0, lay.z - c.z),
+        // Scratch values, refreshed once per frame and shared by every vertex of the tile.
+        blendQuat: new THREE.Quaternion(),
+        blendMat: new THREE.Matrix4(),
+        blendPos: new THREE.Vector3()
+      };
+      poseBySlot[slot] = pose;
+      return pose;
+    }
+
+    function addPiece(obj, slot) {
+      var pose = slotPose(slot);
+      if (!pose) return;
+      // Whatever the piece sits at relative to its tile centre (height, a person's step to
+      // the side) rides along with the tile as it tilts.
+      var restY = obj.userData.restY !== undefined ? obj.userData.restY : obj.position.y;
+      var local = new THREE.Vector3(obj.position.x - pose.flat.x, restY,
+        obj.position.z - pose.flat.z).applyQuaternion(pose.tilt);
+      var flatPos = obj.position.clone();
+      // A tile still rising from a just-written entry is captured at where it will rest.
+      flatPos.y = restY;
+      obj.visible = true;
+      var capPos = pose.cap.clone().add(local);
+      var capQuat = pose.tilt.clone().multiply(obj.quaternion);
+      var capScale = obj.scale.clone();
+      // Buildings and people must meet their real counterpart, including its saved
+      // heading, per-cell scale and the foundation removed from the planet model.
+      var tag = obj.userData.tag;
+      var source = tag && state.props.children.find(function (candidate) {
+        var other = candidate.userData.tag;
+        return other && (tag.type === 'person'
+          ? other.type === 'person' && other.id === tag.id
+          : tag.type === 'flat' && other.type === 'memory' && other.slot === slot);
+      });
+      if (source) {
+        capQuat.copy(inverseBasis).multiply(source.quaternion);
+        capScale.copy(source.userData.restScale || source.scale).multiplyScalar(K);
+        capPos.copy(source.position).applyQuaternion(inverseBasis).multiplyScalar(K);
+        capPos.sub(new THREE.Vector3(c.x, K * RADIUS, c.z));
+        var drop = source.userData.baseDrop || 0;
+        capPos.add(new THREE.Vector3(0, -drop * capScale.y, 0).applyQuaternion(capQuat));
+      }
+      pieces.push({
+        obj: obj, ring: pose.ring,
+        flatPos: flatPos, flatQuat: obj.quaternion.clone(),
+        flatScale: obj.scale.clone(), capScale: capScale,
+        capPos: capPos, capQuat: capQuat
+      });
+    }
+
+    // The sea is merged geometry, so it bends per vertex rather than per object: every
+    // vertex rides the tile it belongs to.
+    function addWaterMesh(mesh) {
+      var morph = mesh.userData.morph;
+      var attr = mesh.geometry.attributes.position;
+      var offsets = new Float32Array(morph.base.length);
+      for (var i = 0; i < morph.slots.length; i++) {
+        var pose = slotPose(morph.slots[i]);
+        if (!pose) return;
+        offsets[i * 3] = morph.base[i * 3] - pose.flat.x;
+        offsets[i * 3 + 1] = morph.base[i * 3 + 1];
+        offsets[i * 3 + 2] = morph.base[i * 3 + 2] - pose.flat.z;
+      }
+      // The original flat bounding sphere does not enclose a curled ocean.
+      waterMeshes.push({ mesh: mesh, culled: mesh.frustumCulled,
+        attr: attr, slots: morph.slots, offsets: offsets, base: morph.base });
+    }
+
+    state.flatGroup.children.forEach(function (obj) {
+      if (obj.userData.isFlatWaterGroup) {
+        obj.children.forEach(function (child) {
+          if (child.userData.morph) { addWaterMesh(child); return; }
+          // The pale rim around each water tile: one small object per tile.
+          child.children && child.children.forEach(function (loop) {
+            if (loop.userData.waterSlot !== undefined) addPiece(loop, loop.userData.waterSlot);
+          });
+        });
+        return;
+      }
+      if (obj.userData.isFlatWater) { shades.push(obj); return; } // the island's soft shadow
+      var tag = obj.userData.tag;
+      if (tag && tag.slot !== undefined) addPiece(obj, tag.slot);
+    });
+
+    var flatQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, state.flatAngle, 0));
+    var group = state.flatGroup;
+    var ORIGIN = new THREE.Vector3();
+
+    // Inner tiles open first, so the island unfurls outward like petals.
+    function progressFor(ring, u) {
+      var delay = 0.12 * (maxRing ? ring / maxRing : 0);
+      return foldEase((u - delay) / 0.88);
+    }
+
+    function liftAt(k) {
+      return Math.sin(Math.PI * k) * 0.12;
+    }
+
+    // u: 0 = wrapped on the planet, 1 = laid flat.
+    function pose(u) {
+      var e = foldEase(u);
+      group.position.copy(spherePos).lerp(ORIGIN, e);
+      group.quaternion.copy(sphereQuat).slerp(flatQuat, e);
+      group.scale.setScalar(Math.pow(sphereScale, 1 - e));
+
+      pieces.forEach(function (p) {
+        var k = progressFor(p.ring, u);
+        p.obj.position.copy(p.capPos).lerp(p.flatPos, k);
+        p.obj.position.y += liftAt(k);
+        p.obj.quaternion.copy(p.capQuat).slerp(p.flatQuat, k);
+        p.obj.scale.copy(p.capScale).lerp(p.flatScale, k);
+      });
+
+      Object.keys(poseBySlot).forEach(function (slot) {
+        var sp = poseBySlot[slot];
+        var k = progressFor(sp.ring, u);
+        sp.blendQuat.copy(sp.tilt).slerp(FLAT_QUAT, k);
+        sp.blendMat.makeRotationFromQuaternion(sp.blendQuat);
+        sp.blendPos.copy(sp.cap).lerp(sp.flat, k);
+        sp.blendPos.y += liftAt(k);
+      });
+      waterMeshes.forEach(function (w) {
+        w.mesh.frustumCulled = false;
+        var out = w.attr.array;
+        for (var i = 0; i < w.slots.length; i++) {
+          var sp = poseBySlot[w.slots[i]];
+          var m = sp.blendMat.elements, t = sp.blendPos;
+          var x = w.offsets[i * 3], y = w.offsets[i * 3 + 1], z = w.offsets[i * 3 + 2];
+          out[i * 3] = m[0] * x + m[4] * y + m[8] * z + t.x;
+          out[i * 3 + 1] = m[1] * x + m[5] * y + m[9] * z + t.y;
+          out[i * 3 + 2] = m[2] * x + m[6] * y + m[10] * z + t.z;
+        }
+        w.attr.needsUpdate = true;
+      });
+
+      // The island's shadow only means anything once there is an island lying flat.
+      shades.forEach(function (obj) {
+        obj.visible = u > 0.01;
+        obj.material.opacity = u * u;
+      });
+    }
+
+    function reset() {
+      pose(1);
+      waterMeshes.forEach(function (w) {
+        w.attr.array.set(w.base); // exact flat geometry, free of any drift from the blend
+        w.attr.needsUpdate = true;
+        w.mesh.frustumCulled = w.culled;
+      });
+      shades.forEach(function (obj) { obj.visible = true; obj.material.opacity = 1; });
+    }
+
+    return { pose: pose, reset: reset, home: home, homePoint: homePoint };
+  }
+
+  function setPlanetDressing(visible) {
+    state.props.visible = visible;
+    if (state.roadGroup) state.roadGroup.visible = visible;
+  }
+
+  // The flat kit and the sphere have different ground, roads and water geometry.
+  // Blend their coverage before exchanging visibility, rather than replacing a whole
+  // island in the last frame. Complementary pixel masks retain depth testing and avoid
+  // transparent meshes showing their backs through one another. Shadows fade as well.
+  function makeViewHandoff() {
+    var coverage = { value: 1 };
+    var records = [], materials = [], caches = [new Map(), new Map()];
+
+    function fadeMaterial(original, inverse) {
+      var cache = caches[inverse];
+      if (cache.has(original)) return cache.get(original);
+      var material = original.clone();
+      var compile = original.onBeforeCompile;
+      material.onBeforeCompile = function (shader, renderer) {
+        // Preserve the procedural ocean shader and its live time uniforms.
+        compile.call(original, shader, renderer);
+        shader.uniforms.uFoldCoverage = coverage;
+        shader.fragmentShader = 'uniform float uFoldCoverage;\n'
+          + shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+            '#include <clipping_planes_fragment>\n'
+            + 'float foldNoise = fract(52.9829189 * fract(dot(floor(gl_FragCoord.xy), vec2(0.06711056, 0.00583715))));\n'
+            + 'if (foldNoise ' + (inverse ? '<' : '>=') + ' uFoldCoverage) discard;');
+      };
+      var key = original.customProgramCacheKey();
+      material.customProgramCacheKey = function () { return key + ':fold-coverage:' + inverse; };
+      cache.set(original, material);
+      materials.push(material);
+      return material;
+    }
+
+    function visit(root, inverse) {
+      root.traverse(function (obj) {
+        if (!obj.material || (obj.userData.isFlatWater && !obj.userData.isFlatWaterGroup)) return;
+        var original = obj.material;
+        records.push({ obj: obj, material: original, depth: obj.customDepthMaterial });
+        obj.material = Array.isArray(original)
+          ? original.map(function (m) { return fadeMaterial(m, inverse); })
+          : fadeMaterial(original, inverse);
+        if (obj.castShadow) {
+          var depth = obj.customDepthMaterial;
+          if (!depth) {
+            var surface = Array.isArray(original) ? original[0] : original;
+            depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking,
+              map: surface.map, alphaMap: surface.alphaMap, alphaTest: surface.alphaTest });
+            materials.push(depth);
+          }
+          obj.customDepthMaterial = fadeMaterial(depth, inverse);
+        }
+      });
+    }
+
+    visit(state.flatGroup, 0);
+    visit(state.props, 1);
+    if (state.roadGroup) visit(state.roadGroup, 1);
+    setPlanetDressing(true);
+
+    return {
+      pose: function (u) { coverage.value = foldEase((u - 0.03) / 0.29); },
+      restore: function () {
+        records.forEach(function (r) {
+          r.obj.material = r.material;
+          r.obj.customDepthMaterial = r.depth;
+        });
+        materials.forEach(function (m) { m.dispose(); });
+      }
+    };
+  }
+
+  function turnToward(dir) {
+    var from = cameraShot();
+    var to = shotFacing(dir, from.target, from.dist);
+    var turn = Math.abs(shortAngle(from.theta, to.theta)) + Math.abs(to.phi - from.phi);
+    if (turn < 0.02) return Promise.resolve();
+    return animateP(TURN_MS, function (t) { blendCamera(from, to, easeInOut(t)); });
+  }
+
+  // Planet -> flat: face the island, then peel it off the sphere and press it flat while
+  // the rest of the planet shrinks away beneath it.
+  function unfoldToFlat() {
+    return buildFlatView().then(function () {
+      var rig = makeFoldRig();
+      if (!rig) return setFlatViewInstant(true);
+      rig.reset(); // pieces start from their flat pose so the rig captured it cleanly
+
+      return turnToward(rig.home).then(function () {
+        var handoff = makeViewHandoff();
+        handoff.pose(0);
+        rig.pose(0);
+        state.flatGroup.visible = true;
+        var from = cameraShot();
+        var to = {
+          target: new THREE.Vector3(), dist: state.flatFitDistance || 8,
+          phi: FLAT_VIEW_PHI, theta: 0
+        };
+
+        return animateP(UNFOLD_MS, function (t) {
+          rig.pose(t);
+          handoff.pose(t);
+          state.planet.scale.setScalar(planetScaleAt(t) * state.worldScale);
+          var e = foldEase(t);
+          blendCamera(from, to, e);
+          applyViewLighting(e);
+        }).finally(function () { handoff.restore(); });
+      }).then(function () {
+        state.planet.visible = false;
+        state.planet.scale.setScalar(state.worldScale);
+        setPlanetDressing(true);
+        rig.reset();
+        state.flatMode = true;
+        applyViewLighting(1);
+        orbitAround(new THREE.Vector3());
+        state.updateCamera();
+      });
+    });
+  }
+
+  // Flat -> planet: the same motion run backwards. The sea drains, the island curls back
+  // into a cap and settles onto a planet that grows up underneath it.
+  function foldToPlanet() {
+    var rig = makeFoldRig();
+    if (!rig) return setFlatViewInstant(false);
+    rig.reset();
+
+    var handoff = makeViewHandoff();
+    handoff.pose(1);
+    state.planet.scale.setScalar(0.0001);
+    state.planet.visible = true;
+    orbitAround(new THREE.Vector3());
+    var from = cameraShot();
+    var to = shotFacing(rig.home, new THREE.Vector3(), cameraRange().rest);
+
+    return animateP(FOLD_MS, function (t) {
+      rig.pose(1 - t);
+      handoff.pose(1 - t);
+      state.planet.scale.setScalar(planetScaleAt(1 - t) * state.worldScale);
+      var e = foldEase(t);
+      blendCamera(from, to, e);
+      applyViewLighting(1 - e);
+    }).then(function () {
+      state.flatGroup.visible = false;
+      rig.reset();
+      state.planet.scale.setScalar(state.worldScale);
+      setPlanetDressing(true);
+      state.flatMode = false;
+      applyViewLighting(0);
+      orbitAround(new THREE.Vector3());
+      state.updateCamera();
+    }).finally(function () { handoff.restore(); });
+  }
+
+  function setFlatViewInstant(on) {
     if (!state) return Promise.resolve();
     state.flatMode = !!on;
     var done = on ? buildFlatView() : Promise.resolve();
@@ -1057,13 +1625,12 @@
       state.planet.visible = !on;
       state.flatGroup.visible = !!on;
 
-      // The sandbox's warm off-white backdrop and softer key light — the blue planet
-      // lighting makes these tiles read as murky.
-      applyLighting();
+      applyViewLighting(on ? 1 : 0);
+      state.camTarget.set(0, 0, 0);
 
       if (on) {
         state.camDistance = state.flatFitDistance || 8;
-        state.camPhi = 0.18; // near-overhead, so the island fills the view without a horizon
+        state.camPhi = FLAT_VIEW_PHI;
         state.camTheta = 0;
         animateFlatEntry();
       } else {
@@ -1073,30 +1640,12 @@
     });
   }
 
-  // Sky and lights for the current view + theme. The flat view keeps the sandbox's warm,
-  // softer key light (the planet's blue lighting makes kit tiles read as murky); its sky
-  // colour comes from the theme.
+  // Re-light for the current theme and view — the theme feeds VIEW_LIGHT, and the same
+  // blend the fold animates through snaps to whichever view is showing.
   function applyLighting() {
-    var flat = state.flatMode;
-    var t = currentTheme;
-    PLANET_BG.set(t.sky);
-    FLAT_BG.set(t.flatSky);
-    state.scene.background = flat ? FLAT_BG : PLANET_BG;
-    if (flat && !t.stars) {
-      state.hemiLight.color.set(0xffffff);
-      state.hemiLight.groundColor.set(0xb3c0b6);
-      state.hemiLight.intensity = 1.0;
-      state.sunLight.color.set(0xfff3d9);
-      state.sunLight.intensity = 0.7;
-    } else {
-      state.hemiLight.color.set(t.hemi[0]);
-      state.hemiLight.groundColor.set(t.hemi[1]);
-      state.hemiLight.intensity = t.hemi[2];
-      state.sunLight.color.set(t.sun[0]);
-      state.sunLight.intensity = flat ? t.sun[1] * 0.6 : t.sun[1];
-    }
-    state.sunLight.position.set(flat ? -3 : 8, flat ? 8 : 12, flat ? 5 : 6);
-    if (state.stars) state.stars.visible = !!t.stars;
+    refreshViewLight();
+    applyViewLighting(state.flatMode ? 1 : 0);
+    if (state.stars) state.stars.visible = !!currentTheme.stars;
   }
 
   function isFlatView() {
@@ -1204,7 +1753,9 @@
   function popIn(obj) {
     var target = obj.scale.x;
     animate(480, function (t) {
+      if (state.transition) t = 1;
       obj.scale.setScalar(target * easeOutBack(t));
+      return t >= 1;
     });
   }
 
@@ -1328,6 +1879,7 @@
       kept.forEach(function (part) { lowest = Math.min(lowest, part.minY); });
       if (isFinite(lowest)) drop = lowest;
     }
+    group.userData.baseDrop = drop;
 
     kept.forEach(function (part, i) {
       var mesh = new THREE.Mesh(part.geometry, part.material);
@@ -1355,6 +1907,7 @@
     // Must outlast the last piece: max delay (0.42 + 1.25) + its 0.65s fall = 2.32s.
     var DURATION = 2400;
     animate(DURATION, function (t) {
+      if (state.transition) t = 1;
       elapsed = t * (DURATION / 1000);
       group.children.forEach(function (piece, i) {
         var data = piece.userData;
@@ -1373,6 +1926,7 @@
           piece.rotation.z = (1 - fall) * 0.12 * Math.sin(i * 1.7);
         }
       });
+      return t >= 1;
     });
   }
 
@@ -1422,6 +1976,7 @@
       if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
     });
     obj.scale.setScalar(scale);
+    obj.userData.restScale = obj.scale.clone();
     var dir = MI.world.sphere.slotToDir(placement.slot);
     // Props stand on claimed tiles, which are raised out of the sea by LAND_LIFT.
     MI.world.sphere.orientToSurface(obj, dir, rotY || 0, RADIUS + LAND_LIFT);
@@ -1727,7 +2282,9 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     var scene = new THREE.Scene();
-    scene.background = PLANET_BG;
+    // Its own colour: applyViewLighting blends into it in place, so it must not be
+    // PLANET_BG or FLAT_BG themselves.
+    scene.background = PLANET_BG.clone();
 
     var camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 1000);
     var hemi = new THREE.HemisphereLight(0xcfe9f5, 0x6f9c5e, 1.1);
@@ -1774,8 +2331,8 @@
       planet: planet, props: props, flatGroup: flatGroup,
       hemiLight: hemi, sunLight: sun,
       loader: new THREE.GLTFLoader(manager), glbCache: {}, partsCache: {}, spinners: [],
-      camTheta: 0.7, camPhi: 1.1, camDistance: 13,
-      flatMode: false, flatRadius: 3,
+      camTheta: 0.7, camPhi: 1.1, camDistance: 13, camTarget: new THREE.Vector3(),
+      flatMode: false, flatRadius: 3, transition: null,
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
       frequency: null, worldScale: 1, unit: 1, gridCache: {},
       landAsset: {},            // slot -> terrain asset, for repainting on a theme change
@@ -1796,8 +2353,8 @@
         state.camDistance * Math.sin(state.camPhi) * Math.sin(state.camTheta),
         state.camDistance * Math.cos(state.camPhi),
         state.camDistance * Math.sin(state.camPhi) * Math.cos(state.camTheta)
-      );
-      camera.lookAt(0, 0, 0);
+      ).add(state.camTarget);
+      camera.lookAt(state.camTarget);
     };
     state.updateCamera();
 
@@ -1808,7 +2365,7 @@
     });
     window.addEventListener('mouseup', function () { dragging = false; canvasEl.style.cursor = 'grab'; });
     window.addEventListener('mousemove', function (e) {
-      if (!dragging) return;
+      if (!dragging || state.transition) return;
       var dx = e.clientX - lastX, dy = e.clientY - lastY;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
       state.camTheta -= dx * 0.006;
@@ -1818,6 +2375,7 @@
     });
     canvasEl.addEventListener('wheel', function (e) {
       e.preventDefault();
+      if (state.transition) return;
       // The flat layout is much smaller than the planet, so it needs its own zoom range.
       var range = cameraRange();
       var min = state.flatMode ? 2.5 : range.min;
@@ -1828,7 +2386,7 @@
     canvasEl.style.cursor = 'grab';
 
     canvasEl.addEventListener('click', function (e) {
-      if (dragMoved) return; // that was a camera drag, not a tile click
+      if (dragMoved || state.transition) return; // a camera drag or mid-unfold, not a pick
       var slot = pickSlot(e, canvasEl);
       pickListeners.forEach(function (cb) { cb(slot); });
     });
@@ -2047,6 +2605,7 @@
   MI.world.onPick = onPick;
   MI.world.setFlatView = setFlatView;
   MI.world.isFlatView = isFlatView;
+  MI.world.isTransitioning = isTransitioning;
   // Exposed because they're pure and worth testing without a GPU.
   MI.world.computeFlatLayout = computeFlatLayout;
   MI.world.computeRoads = computeRoads;

@@ -279,7 +279,8 @@
   function startOver() {
     MI.store.reset();
     var world = MI.store.get();
-    var ready = MI.world.isFlatView() ? MI.world.setFlatView(false) : Promise.resolve();
+    // Nothing left to lay out flat, and nothing worth animating on the way out.
+    var ready = MI.world.isFlatView() ? MI.world.setFlatView(false, { instant: true }) : Promise.resolve();
     return ready.then(function () {
       return MI.world.setPlanet(world.planet.frequency, { animate: false });
     }).then(function () {

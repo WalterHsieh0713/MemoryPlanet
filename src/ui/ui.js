@@ -355,6 +355,7 @@
   // native confirm() box would land like a brick in the middle of this.
   var resetArmed = null;
   function handleReset() {
+    if (MI.world.isTransitioning()) return;
     if (!resetArmed) {
       el['reset-btn'].textContent = 'sure? sinks everything';
       el['reset-btn'].classList.add('confirming');
@@ -386,6 +387,7 @@
 
   function toggleView() {
     if (MI.store.get().memories.length === 0) return; // nothing to lay out yet
+    if (MI.world.isTransitioning()) return; // let the fold finish before reversing it
     var goingFlat = !MI.world.isFlatView();
     el['view-icon'].textContent = goingFlat ? '🪐' : '🗺';
     el['view-label'].textContent = goingFlat ? 'back to the planet' : 'see your land flat';
