@@ -1082,6 +1082,7 @@
       state.sky.material.opacity = mix;
       state.sky.visible = mix > 0.01;
     }
+    state.viewMix = mix;
   }
 
   function animateP(durationMs, step) {
@@ -1839,7 +1840,6 @@
       // plates far enough to break the silhouette into steps.
       WAVE_AMPLITUDE = BASE_WAVE_AMPLITUDE * Math.sqrt(state.unit);
       buildPlanetMesh(grid);
-      if (state.pet) sizePet();
 
       var target = state.worldScale;
       var rest = cameraRange().rest;
@@ -1974,6 +1974,16 @@
 
   // --- Pets and skins (models in src/world/cosmetics.js) ------------------------------
 
+  // How high the pet flies, in tile widths above the surface it is circling, and how wide
+  // its loop is. It lives in the scene rather than on the planet, so it keeps flying when
+  // the planet folds away into the island.
+  var PET_HEIGHT = 3.4;
+  // ...but never more than this much of the planet's own radius: tiles are huge next to a
+  // 42-tile planet, and a height in tile widths alone flies the pet out of frame there.
+  var PET_HEIGHT_CAP = 0.55;
+  var PET_ISLAND_HEIGHT = 1.7;
+  var PET_SPEED = 0.32;
+
   function setPet(id) {
     if (state.pet) {
       state.petGroup.remove(state.pet);
@@ -1982,47 +1992,68 @@
     state.petId = id || null;
     var model = id ? MI.world.cosmetics.makePet(id) : null;
     if (!model) return;
-    // The holder is steered around the island each frame; the model inside it keeps its own
-    // little motions (wagging, spinning) without fighting that orientation.
+    // The holder is steered each frame; the model inside it keeps its own little motions
+    // (wagging, spinning) without fighting that orientation.
     var holder = new THREE.Group();
     holder.add(model);
     holder.userData.tick = model.userData.tick;
     state.pet = holder;
     state.petGroup.add(holder);
-    sizePet();
-    if (state.tiles) animatePet(performance.now() / 1000);
-    popIn(holder);
-  }
-
-  function sizePet() {
-    if (state.pet) state.pet.scale.setScalar(state.spacing * 0.85);
+    state.petPop = 0;
+    animate(520, function (t) { state.petPop = easeOutBack(t); });
+    animatePet(performance.now() / 1000);
   }
 
   var SIDEWAYS = new THREE.Vector3(1, 0, 0);
+  var petPlanetPos = new THREE.Vector3(), petIslandPos = new THREE.Vector3();
+  var petPlanetQuat = new THREE.Quaternion(), petIslandQuat = new THREE.Quaternion();
+  var petBasis = new THREE.Matrix4();
 
-  // A slow loop just above the rooftops, circling home so it stays by your island.
+  function aimAlong(quat, up, forward) {
+    forward.sub(up.clone().multiplyScalar(forward.dot(up))).normalize();
+    var right = new THREE.Vector3().crossVectors(up, forward).normalize();
+    quat.setFromRotationMatrix(petBasis.makeBasis(right, up, forward));
+  }
+
+  // A slow, high loop: around home on the planet, around the island in island view, eased
+  // between the two as the views change (state.viewMix), so the pet never pops away.
   function animatePet(t) {
     var pet = state.pet;
     if (!pet || !state.tiles) return;
-    var world = MI.store && MI.store.get();
-    var home = world && typeof world.home === 'number' ? state.tiles[world.home] : null;
-    var h = home ? new THREE.Vector3().fromArray(home.dir)
-      : new THREE.Vector3(0.6, 0.45, 0.66).normalize(); // roughly where the camera starts
+    var a = t * PET_SPEED;
+    var bob = 0.08 * Math.sin(t * 2.1);
+    var mix = state.viewMix;
 
+    // --- around the planet, in world space (the planet sits at the origin) ---
+    var planetScale = state.planet.scale.x;
+    var world = MI.store && MI.store.get();
+    var homeTile = world && typeof world.home === 'number' ? state.tiles[world.home] : null;
+    var h = homeTile ? new THREE.Vector3().fromArray(homeTile.dir)
+      : new THREE.Vector3(0.6, 0.45, 0.66).normalize(); // roughly where the camera starts
+    h.applyQuaternion(state.planet.quaternion);
     var t1 = new THREE.Vector3().crossVectors(Math.abs(h.y) > 0.95 ? SIDEWAYS : UP, h).normalize();
     var t2 = new THREE.Vector3().crossVectors(h, t1);
-    var beta = Math.min(0.9, 1.7 * state.spacing / RADIUS); // loop radius, as an angle
-    var a = t * 0.32;
+    var beta = Math.min(1.0, 2.1 * state.spacing / RADIUS); // loop radius, as an angle
     var ring = t1.clone().multiplyScalar(Math.cos(a)).add(t2.clone().multiplyScalar(Math.sin(a)));
     var radial = h.clone().multiplyScalar(Math.cos(beta))
       .add(ring.multiplyScalar(Math.sin(beta))).normalize();
-    var altitude = RADIUS + LAND_LIFT + state.spacing * (1.15 + 0.08 * Math.sin(t * 2.1));
-    pet.position.copy(radial).multiplyScalar(altitude);
+    var altitude = RADIUS + LAND_LIFT
+      + Math.min(state.spacing * PET_HEIGHT, RADIUS * PET_HEIGHT_CAP) * (1 + bob * 0.3);
+    petPlanetPos.copy(radial).multiplyScalar(altitude * planetScale);
+    aimAlong(petPlanetQuat, radial,
+      t1.clone().multiplyScalar(-Math.sin(a)).add(t2.clone().multiplyScalar(Math.cos(a))));
+    var planetSize = state.spacing * 0.85 * planetScale;
 
-    var forward = t1.clone().multiplyScalar(-Math.sin(a)).add(t2.clone().multiplyScalar(Math.cos(a)));
-    forward.sub(radial.clone().multiplyScalar(forward.dot(radial))).normalize();
-    var right = new THREE.Vector3().crossVectors(radial, forward).normalize();
-    pet.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, radial, forward));
+    // --- around the island, level, above the rooftops ---
+    var loop = Math.max(2.5, (state.flatRadius || 4) * 0.62);
+    petIslandPos.set(Math.cos(a) * loop,
+      FLAT_BASE_Y + FLAT_SPACING * (PET_ISLAND_HEIGHT + bob), Math.sin(a) * loop);
+    aimAlong(petIslandQuat, UP, new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)));
+    var islandSize = FLAT_MODEL_SCALE * 0.6;
+
+    pet.position.copy(petPlanetPos).lerp(petIslandPos, mix);
+    pet.quaternion.copy(petPlanetQuat).slerp(petIslandQuat, mix);
+    pet.scale.setScalar((planetSize + (islandSize - planetSize) * mix) * state.petPop);
     if (pet.userData.tick) pet.userData.tick(t);
   }
 
@@ -2083,9 +2114,9 @@
     var flatGroup = new THREE.Group();
     flatGroup.visible = false;
     scene.add(flatGroup);
-    // Inside the planet group, so the pet is hidden with it in flat mode and scales with it.
+    // In the scene, not on the planet: the pet keeps flying when the planet folds away.
     var petGroup = new THREE.Group();
-    planet.add(petGroup);
+    scene.add(petGroup);
 
     var manager = new THREE.LoadingManager();
     manager.setURLModifier(function (url) {
@@ -2105,6 +2136,7 @@
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
       frequency: null, worldScale: 1, unit: 1, gridCache: {},
       island: null, islandFocus: new THREE.Vector3(), sky: null, skyCache: {},
+      viewMix: 0, petPop: 1, // 0 = planet view, 1 = island view; petPop scales a pet in
       landAsset: {},            // slot -> terrain asset, for repainting on a theme change
       // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
       // what's already on screen; one recoloured atlas per theme.
@@ -2393,6 +2425,11 @@
   // Test hooks (scripts/ and the browser console): the island layout, the planet scale
   // and a way to swing the camera without a mouse.
   MI.world.__island = function () { return state && state.island; };
+  MI.world.__pet = function () {
+    if (!state || !state.pet) return null;
+    var p = state.pet.getWorldPosition(new THREE.Vector3());
+    return { x: p.x, y: p.y, z: p.z, scale: state.pet.scale.x, visible: state.pet.visible, mix: state.viewMix };
+  };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
   MI.world.__camera = function (phi) { state.camPhi = clampPhi(phi); state.updateCamera(); };
   MI.world.setPlanet = setPlanet;

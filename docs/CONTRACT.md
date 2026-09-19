@@ -57,7 +57,7 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 ## MI.world  (owners: A = scene/planet/controls, B = spawn/assets/characters)
 - `init(canvasEl, { frequency, theme, pet, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
 - `setPlanet(frequency, { animate }) -> Promise` — swap to that grid (planet group scaled by frequency/10, so tiles keep their world size); clears props, caller replays the remapped world. `loadGrid(f)`, `currentTiles()`, `planetInfo()`
-- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js` and `src/world/cosmetics.js`.
+- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js` and `src/world/cosmetics.js`. The pet lives in the scene, not on the planet: `animatePet` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
 - `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
 - `onPick(cb(slot | null))`
