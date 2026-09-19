@@ -780,7 +780,7 @@
       state.flatGroup.add(obj);
     });
 
-    state.flatGroup.add(buildIslandRock(ids, centres, spread));
+    state.flatGroup.add(buildIslandUnderside(ids, centres, spread));
 
     return Promise.all(jobs).then(function () {
       state.flatRadius = extent + FLAT_SPACING;
@@ -818,10 +818,10 @@
   }
 
   // The floating island's underside: a hexagonal column under every tile, deepest in the
-  // middle and shallow at the rim, so the land sits on a rough chunk of earth that tapers
-  // to a point. Dirt just under the grass (the theme's land-side colour), rock below.
+  // middle and shallow at the rim, so the island tapers to a blunt point. A thin band of
+  // earth under the grass, and below it the sea, carrying the planet's own water shader.
   var ROCK_TOP_Y = FLAT_BASE_Y + 0.02; // tucked just under the kit tiles' base plates
-  var ROCK_DIRT = 0.5;                 // thickness of the dirt band
+  var ROCK_DIRT = 0.38;                // thickness of the earth band under the grass
 
   // Depth of the rock under a tile, by how far that tile is from the middle of the island
   // (in tile widths). A rounded falloff: thin lip at the rim, thick through the middle, so
@@ -837,28 +837,27 @@
     return Math.sqrt(centre.x * centre.x + centre.z * centre.z) / FLAT_SPACING;
   }
 
-  function buildIslandRock(ids, centres, radius) {
+  function buildIslandUnderside(ids, centres, radius) {
     var dirt = new THREE.Color(currentTheme.landSide);
-    var rock = new THREE.Color(currentTheme.rock);
-    var deep = rock.clone().multiplyScalar(0.55);
-    var positions = [], colors = [];
-    function vert(p, c) {
+    var water = WATER_COLOR, deep = WATER_SIDE_COLOR;
+    var positions = [], colors = [], uvs = [], land = [];
+    // aLand 1 keeps the vertex colour (the earth band); 0 hands the face to the procedural
+    // ocean shader, the same one the planet's sea uses.
+    function vert(p, c, isLand) {
       positions.push(p[0], p[1], p[2]);
       colors.push(c.r, c.g, c.b);
+      uvs.push(isLand ? 0.75 : 0.25, 0.5);
+      land.push(isLand);
     }
     // a, b along the top edge; c under b, d under a. Wound to face outward.
-    function wall(a, b, c, d, top, bottom) {
-      vert(a, top); vert(b, top); vert(c, bottom);
-      vert(a, top); vert(c, bottom); vert(d, bottom);
+    function wall(a, b, c, d, top, bottom, isLand) {
+      vert(a, top, isLand); vert(b, top, isLand); vert(c, bottom, isLand);
+      vert(a, top, isLand); vert(c, bottom, isLand); vert(d, bottom, isLand);
     }
 
     ids.forEach(function (id) {
       var x = centres[id].x, z = centres[id].z;
       var depth = rockDepthAt(cellDistance(centres[id]), radius, Number(id));
-      // A little colour variation per column, so the rock reads as rough rather than moulded.
-      var shade = 0.92 + 0.16 * hash(Number(id) * 31 + 3);
-      var rockHere = rock.clone().multiplyScalar(shade);
-      var deepHere = deep.clone().multiplyScalar(shade);
       var dirtHere = dirt.clone().multiplyScalar(0.96 + 0.08 * hash(Number(id) * 17 + 5));
       var yDirt = ROCK_TOP_Y - Math.min(ROCK_DIRT, depth * 0.5);
       var yBottom = ROCK_TOP_Y - depth;
@@ -871,28 +870,100 @@
       for (k = 0; k < 6; k++) {
         var p = rim[k], q = rim[(k + 1) % 6];
         wall([p[0], ROCK_TOP_Y, p[1]], [q[0], ROCK_TOP_Y, q[1]],
-          [q[0], yDirt, q[1]], [p[0], yDirt, p[1]], dirtHere, dirtHere);
+          [q[0], yDirt, q[1]], [p[0], yDirt, p[1]], dirtHere, dirtHere, 1);
         wall([p[0], yDirt, p[1]], [q[0], yDirt, q[1]],
-          [q[0], yBottom, q[1]], [p[0], yBottom, p[1]], rockHere, deepHere);
+          [q[0], yBottom, q[1]], [p[0], yBottom, p[1]], water, deep, 0);
         // Underside, facing down.
-        vert([x, yBottom, z], deepHere); vert([p[0], yBottom, p[1]], deepHere); vert([q[0], yBottom, q[1]], deepHere);
+        vert([x, yBottom, z], deep, 0);
+        vert([p[0], yBottom, p[1]], deep, 0);
+        vert([q[0], yBottom, q[1]], deep, 0);
       }
     });
 
     var geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    geometry.setAttribute('aLand', new THREE.Float32BufferAttribute(land, 1));
     geometry.computeVertexNormals();
-    // Neighbouring columns share walls, which only ever meet inside the solid; DoubleSide
-    // keeps any face the eye does reach lit from the right side.
-    var mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
-      vertexColors: true, flatShading: true, roughness: 0.95, side: THREE.DoubleSide
-    }));
-    mesh.castShadow = true;
+
+    var material = new THREE.MeshStandardMaterial({
+      map: makeSurfaceTexture(), vertexColors: true, flatShading: true, roughness: 0.85,
+      // Neighbouring columns share walls, which only ever meet inside the block; DoubleSide
+      // keeps any face the eye does reach lit from the right side.
+      side: THREE.DoubleSide
+    });
+    installWaterShader(material);
+    // These tiles are the sandbox's size, where its own pattern scale of 1.0 is right.
+    material.userData.waterUniforms.uWaterScale.value = 1.0;
+    state.islandWaterMaterial = material;
+
+    var mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;
     mesh.userData.isBackdrop = true; // not a tile: the entry animation leaves it be
-    mesh.userData.isRock = true;
+    mesh.userData.isUnderside = true;
     return mesh;
+  }
+
+  // --- Sky ------------------------------------------------------------------------------
+  // The island hangs in open sky, so the island view gets a real one: a big painted dome,
+  // wider than the starfield so starlight keeps its stars in front of it.
+  var SKY_RADIUS = 300;
+
+  function makeSkyTexture(theme) {
+    var canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 256;
+    var ctx = canvas.getContext('2d');
+    var gradient = ctx.createLinearGradient(0, 0, 0, 256); // canvas top = dome top
+    gradient.addColorStop(0, '#' + theme.skyTop.toString(16).padStart(6, '0'));
+    gradient.addColorStop(1, '#' + theme.skyBottom.toString(16).padStart(6, '0'));
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, 512, 256);
+
+    if (theme.clouds) {
+      var seed = 11;
+      function random() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+      // Soft puffs, each a few overlapping blobs, low in the sky where they read as distant.
+      for (var c = 0; c < 30; c++) {
+        var cx = random() * 512;
+        var cy = 84 + random() * 150;
+        var scale = 18 + random() * 34;
+        var alpha = 0.3 + random() * 0.45;
+        for (var b = 0; b < 5; b++) {
+          var bx = cx + (random() - 0.5) * scale * 2.2;
+          var by = cy + (random() - 0.5) * scale * 0.5;
+          var r = scale * (0.45 + random() * 0.55);
+          var puff = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+          puff.addColorStop(0, 'rgba(255, 255, 255, ' + alpha.toFixed(3) + ')');
+          puff.addColorStop(1, 'rgba(255, 255, 255, 0)');
+          ctx.fillStyle = puff;
+          ctx.beginPath();
+          ctx.arc(bx, by, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    var texture = new THREE.CanvasTexture(canvas);
+    texture.encoding = THREE.sRGBEncoding;
+    return texture;
+  }
+
+  function makeSky() {
+    var mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(SKY_RADIUS, 24, 16),
+      new THREE.MeshBasicMaterial({ side: THREE.BackSide, depthWrite: false, transparent: true, opacity: 0 })
+    );
+    mesh.visible = false;
+    mesh.renderOrder = -1;
+    return mesh;
+  }
+
+  function refreshSky() {
+    if (!state.sky) return;
+    if (!state.skyCache[state.themeId]) state.skyCache[state.themeId] = makeSkyTexture(currentTheme);
+    state.sky.material.map = state.skyCache[state.themeId];
+    state.sky.material.needsUpdate = true;
   }
 
   // Tiles rise into place from the middle outward, so entering the island view reads as
@@ -1007,6 +1078,10 @@
     state.sunLight.color.copy(a.sun).lerp(b.sun, mix);
     state.sunLight.intensity = a.sunI + (b.sunI - a.sunI) * mix;
     state.sunLight.position.copy(a.sunPos).lerp(b.sunPos, mix);
+    if (state.sky) {
+      state.sky.material.opacity = mix;
+      state.sky.visible = mix > 0.01;
+    }
   }
 
   function animateP(durationMs, step) {
@@ -1089,7 +1164,7 @@
     var maxRing = 0;
 
     state.flatGroup.children.forEach(function (obj) {
-      if (obj.userData.isRock) { rocks.push(obj); return; }
+      if (obj.userData.isUnderside) { rocks.push(obj); return; }
       if (obj.userData.isShadow) { shades.push(obj); return; }
       var tag = obj.userData.tag;
       if (!tag || !cells[tag.slot] || !state.tiles[tag.slot]) return;
@@ -1809,13 +1884,14 @@
     LAND_SIDE_COLOR.set(currentTheme.landSide);
     WATER_SIDE_COLOR.set(currentTheme.waterSide);
     applyLighting();
-    [state.material].forEach(function (material) {
+    [state.material, state.islandWaterMaterial].forEach(function (material) {
       if (!material) return;
       var u = material.userData.waterUniforms;
       u.uDeep.value.set(currentTheme.deep).convertSRGBToLinear();
       u.uShallow.value.set(currentTheme.shallow).convertSRGBToLinear();
       u.uFoam.value.set(currentTheme.foam).convertSRGBToLinear();
     });
+    refreshSky();
     restyleKit();
     if (state.tiles) repaintTiles();
     if (state.flatMode) refreshFlatView(); // the island rock is coloured at build time
@@ -2028,7 +2104,7 @@
       flatMode: false, flatRadius: 3, transition: null,
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
       frequency: null, worldScale: 1, unit: 1, gridCache: {},
-      island: null, islandFocus: new THREE.Vector3(),
+      island: null, islandFocus: new THREE.Vector3(), sky: null, skyCache: {},
       landAsset: {},            // slot -> terrain asset, for repainting on a theme change
       // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
       // what's already on screen; one recoloured atlas per theme.
@@ -2037,6 +2113,8 @@
     };
     state.stars = makeStars();
     scene.add(state.stars);
+    state.sky = makeSky();
+    scene.add(state.sky);
     setTheme(opts.theme || 'meadow');
 
     // Orbit camera, shared by both views: eye on a sphere around the origin, looking in.
@@ -2231,6 +2309,9 @@
       lastFrame = now;
 
       state.material.userData.waterUniforms.uTime.value = now / 1000;
+      if (state.islandWaterMaterial) {
+        state.islandWaterMaterial.userData.waterUniforms.uTime.value = now / 1000;
+      }
       animateWater(now / 1000);
       animatePet(now / 1000);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });

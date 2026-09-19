@@ -63,7 +63,7 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `onPick(cb(slot | null))`
 - `clear()`
 - Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (the island view; animated lift-and-gather unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
-- The island's shape and roads come from `MI.island`; `world.js` draws it (`buildFlatView`, `buildIslandRock`) and animates the change of view (`makeFoldRig`). `MI.world.computeFlatLayout` / `computeRoads` are gone with the strip layout.
+- The island's shape and roads come from `MI.island`; `world.js` draws it (`buildFlatView`, `buildIslandUnderside`, `makeSky`) and animates the change of view (`makeFoldRig`). `MI.world.computeFlatLayout` / `computeRoads` are gone with the strip layout.
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - **Planned:** wandering people (walkers) on person-linked roads.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
