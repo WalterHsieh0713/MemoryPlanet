@@ -33,7 +33,8 @@
       'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
-      'journal', 'book', 'book-list', 'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
+      'journal', 'book', 'book-list', 'title-suggest',
+      'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
       'tag-mood', 'tag-cat', 'tag-big']
       .forEach(function (id) { el[id] = $(id); });
   }
@@ -551,8 +552,10 @@
   function showDetail(memory) {
     var world = MI.store.get();
     openSlot = memory.placement ? memory.placement.slot : null;
+    openMemory = memory;
     if (openSlot !== null) MI.world.highlightSlot(openSlot);
     markOpenRow(true);
+    el['title-suggest'].hidden = claudeAvailable === false;
     el['detail-cat'].textContent = memory.category + ' · ' + (memory.mood && memory.mood.label || '');
     el['detail-title'].textContent = memory.title;
     el['detail-date'].textContent = formatDate(memory.occurredOn || memory.createdAt);
@@ -598,9 +601,55 @@
     });
   }
 
+  // --- Renaming an entry -------------------------------------------------------------------
+  // A title is a guess until someone says otherwise, so it is editable in place. Claude can
+  // offer a nicer one when a key is configured; the button hides itself when it can't.
+
+  var openMemory = null;
+  var claudeAvailable = null; // unknown until the first attempt
+
+  function saveTitle() {
+    if (!openMemory) return;
+    var next = el['detail-title'].textContent.trim().replace(/\s+/g, ' ');
+    if (!next) { el['detail-title'].textContent = openMemory.title; return; }
+    if (next === openMemory.title) return;
+    openMemory.title = next;
+    MI.store.save();
+    renderBook();
+    markOpenRow(false);
+  }
+
+  function suggestTitle() {
+    if (!openMemory) return;
+    var memory = openMemory;
+    el['title-suggest'].disabled = true;
+    el['title-suggest'].textContent = 'thinking…';
+    MI.ai.classify(memory.text).then(function (result) {
+      el['title-suggest'].disabled = false;
+      el['title-suggest'].textContent = '✨ suggest a title';
+      // classify() falls back to the local guess when Claude is unreachable, and that would
+      // just hand back the title we already have.
+      if (result.source !== 'claude') {
+        claudeAvailable = false;
+        el['title-suggest'].hidden = true;
+        toast('🔌', 'No title suggestions', 'Claude is not configured for this planet.', 0, 3000);
+        return;
+      }
+      claudeAvailable = true;
+      if (memory !== openMemory) return; // they moved on while it was thinking
+      memory.title = result.title;
+      el['detail-title'].textContent = result.title;
+      MI.store.save();
+      renderBook();
+      markOpenRow(false);
+    });
+  }
+
   function hideDetail() {
+    saveTitle(); // a rename in progress counts, even if they click away
     el.detail.classList.remove('show');
     openSlot = null;
+    openMemory = null;
     MI.world.clearHighlight();
     markOpenRow(false);
   }
@@ -731,6 +780,16 @@
     });
     el['demo-btn'].addEventListener('click', loadDemoPlanet);
     el['detail-close'].addEventListener('click', hideDetail);
+
+    el['detail-title'].addEventListener('blur', saveTitle);
+    el['detail-title'].addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); el['detail-title'].blur(); }
+      if (e.key === 'Escape' && openMemory) {
+        el['detail-title'].textContent = openMemory.title;
+        el['detail-title'].blur();
+      }
+    });
+    el['title-suggest'].addEventListener('click', suggestTitle);
 
     MI.app.onEvent(handleAppEvent);
     el['shop-btn'].addEventListener('click', openShop);

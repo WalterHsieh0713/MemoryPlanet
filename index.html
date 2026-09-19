@@ -369,6 +369,20 @@
     letter-spacing: .08em; color: var(--accent-deep); }
   #detail h3 { margin: 6px 0 2px; font-size: 19px; font-weight: 700; line-height: 1.25; }
   #detail .date { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  #detail h3:hover { background: #f4fafc; }
+  #detail h3:focus {
+    outline: none; background: #f4fafc; box-shadow: 0 0 0 2px #dcf0f7;
+    border-radius: 8px;
+  }
+  #detail .title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  #title-suggest {
+    border: none; cursor: pointer; font-family: inherit; white-space: nowrap;
+    padding: 4px 10px; border-radius: 999px; background: #f3eefd;
+    color: var(--shard); font-size: 11px; font-weight: 700;
+    transition: background .2s ease, transform .25s var(--spring);
+  }
+  #title-suggest:hover { background: #e9e1fb; transform: translateY(-1px); }
+  #title-suggest:disabled { opacity: .6; cursor: default; transform: none; }
   #detail p { margin: 12px 0 0; font-size: 14px; font-weight: 500; line-height: 1.55; }
   #detail .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
   #detail .swap-label {
@@ -429,8 +443,12 @@
 <div id="detail">
   <button class="close" id="detail-close" aria-label="Close">✕</button>
   <div class="cat" id="detail-cat"></div>
-  <h3 id="detail-title"></h3>
-  <div class="date" id="detail-date"></div>
+  <h3 id="detail-title" contenteditable="true" spellcheck="false"
+      role="textbox" aria-label="Memory title, click to rename"></h3>
+  <div class="title-row">
+    <div class="date" id="detail-date"></div>
+    <button id="title-suggest" hidden>✨ suggest a title</button>
+  </div>
   <p id="detail-text"></p>
   <div class="pills" id="detail-pills"></div>
   <div class="swap-label">building</div>
