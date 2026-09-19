@@ -10,4 +10,6 @@ The optional Claude classifier needs `ANTHROPIC_API_KEY` in a local `.env` file 
 
 Write a memory and press Enter. Click a land tile to read its memory and change its building. Use **see your land flat** for the map view. **Start over** clears browser storage after a second click.
 
+You start on a small 42-tile planet. Once half of it is land, it grows to the next size, up to 1002 tiles. Every memory earns shards (✦). You get more for big days, new friends and daily streaks, plus a bonus each time the planet grows. Spend shards in the **Shop** on themes, pets and character skins.
+
 The 3D models are from Kenney's CC0 Hexagon Kit. The app loads Three.js r128 from the included local file and has no build step.

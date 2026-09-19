@@ -30,7 +30,9 @@
     ['stats-chip', 'stats-text', 'entry-input', 'submit-btn', 'empty-hint', 'demo-btn',
       'toast', 'toast-emoji', 'toast-headline', 'toast-sub', 'detail', 'detail-close',
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
-      'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps']
+      'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
+      'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
+      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -55,16 +57,191 @@
 
     el['stats-chip'].classList.add('bump');
     setTimeout(function () { el['stats-chip'].classList.remove('bump'); }, 400);
+    refreshWallet();
+    refreshPlanet();
   }
 
-  function showToast(memory) {
-    var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
-    el['toast-emoji'].textContent = flavor.emoji;
-    el['toast-headline'].textContent = flavor.line;
-    el['toast-sub'].textContent = memory.title;
+  // --- Shards + planet size ------------------------------------------------------------
+
+  function refreshWallet() {
+    var shards = MI.economy.balance();
+    el['wallet-count'].textContent = shards;
+    el['shop-balance'].textContent = shards;
+    if (el.shop.classList.contains('open')) renderShop();
+  }
+
+  function refreshPlanet() {
+    var world = MI.store.get();
+    var tiles = MI.world.currentTiles();
+    if (!tiles) return;
+    var p = MI.growth.progress(world, tiles, world.planet.frequency);
+    var size = MI.growth.tierIndex(p.frequency) + 1;
+    el['planet-size'].textContent = '🪐 Size ' + size + ' of ' + MI.growth.LADDER.length;
+    el['planet-tiles'].textContent = tiles.length + ' tiles';
+    var pct = p.next === null ? 100 : Math.min(100, Math.round(100 * p.land / p.threshold));
+    el['planet-bar'].firstElementChild.style.transform = 'scaleX(' + (pct / 100) + ')';
+    el['planet-bar'].setAttribute('aria-valuenow', pct);
+    el['planet-hint'].textContent = p.next === null
+      ? 'full size — the biggest planet there is'
+      : 'grows when half of it is land · ' + pct + '%';
+  }
+
+  function bump(node, className) {
+    node.classList.remove(className);
+    void node.offsetWidth; // restart the transition if it's mid-bump
+    node.classList.add(className);
+    setTimeout(function () { node.classList.remove(className); }, 450);
+  }
+
+  // A "+18 ✦" that drifts up off the wallet.
+  function floatShards(amount) {
+    if (!amount) return;
+    var rect = el.wallet.getBoundingClientRect();
+    var tag = document.createElement('div');
+    tag.className = 'shard-float';
+    tag.textContent = '+' + amount + ' ✦';
+    tag.style.left = (rect.left + 10) + 'px';
+    tag.style.top = (rect.bottom + 6) + 'px';
+    document.body.appendChild(tag);
+    setTimeout(function () { tag.remove(); }, 1300);
+  }
+
+  function toast(emoji, headline, sub, shards, holdMs) {
+    el['toast-emoji'].textContent = emoji;
+    el['toast-headline'].textContent = headline;
+    el['toast-sub'].textContent = sub || '';
+    el['toast-shards'].textContent = shards ? '+' + shards + ' ✦' : '';
     el.toast.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.toast.classList.remove('show'); }, 3200);
+    toastTimer = setTimeout(function () { el.toast.classList.remove('show'); }, holdMs || 3200);
+  }
+
+  function showToast(memory, reward) {
+    var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
+    toast(flavor.emoji, flavor.line, memory.title, reward && reward.total);
+  }
+
+  function handleAppEvent(event) {
+    if (event.type === 'reward') {
+      showToast(event.memory, event.reward);
+      refreshStats(); // counts, wallet and planet bar, the moment the memory lands
+      bump(el.wallet, 'bump');
+      floatShards(event.reward.total);
+    } else if (event.type === 'grew') {
+      syncViewButton(); // growing always returns to the planet view
+      refreshStats();
+      bump(el['planet-card'], 'grew');
+      bump(el.wallet, 'bump');
+      floatShards(event.reward.total);
+      toast('🪐', 'Your planet grew!',
+        'Size ' + event.size + ' of ' + event.sizes + ' · ' + event.tiles + ' tiles of room',
+        event.reward.total, 4200);
+    }
+  }
+
+  // --- Shop ------------------------------------------------------------------------------
+
+  var shopKind = 'themes';
+  var shopOpener = null;
+
+  function openShop() {
+    shopOpener = document.activeElement;
+    renderShop();
+    el.shop.classList.add('open');
+    el['shop-close'].focus();
+  }
+
+  function closeShop() {
+    el.shop.classList.remove('open');
+    if (shopOpener && shopOpener.focus) shopOpener.focus();
+  }
+
+  function themeThumb(id) {
+    var theme = MI.world.themes.get(id);
+    function hex(n) { return '#' + n.toString(16).padStart(6, '0'); }
+    var thumb = document.createElement('div');
+    thumb.className = 'thumb';
+    thumb.style.background = hex(theme.sky);
+    var planet = document.createElement('div');
+    planet.className = 'mini-planet';
+    planet.style.background = 'conic-gradient(from 200deg, ' + hex(theme.land) + ' 0 42%, ' +
+      hex(theme.water) + ' 0 100%)';
+    thumb.appendChild(planet);
+    return thumb;
+  }
+
+  function renderShop() {
+    var kind = shopKind;
+    var balance = MI.economy.balance();
+    el['shop-balance'].textContent = balance;
+    Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
+      tab.setAttribute('aria-selected', String(tab.dataset.kind === kind));
+    });
+
+    var equippedId = MI.economy.equipped(kind);
+    el['shop-items'].innerHTML = '';
+    MI.economy.CATALOG[kind].forEach(function (item) {
+      var owned = MI.economy.owns(kind, item.id);
+      var inUse = equippedId === item.id;
+      var card = document.createElement('div');
+      card.className = 'item' + (inUse ? ' equipped' : '');
+
+      var thumb;
+      if (kind === 'themes') thumb = themeThumb(item.id);
+      else {
+        thumb = document.createElement('div');
+        thumb.className = 'thumb';
+        thumb.textContent = item.icon;
+      }
+      thumb.setAttribute('aria-hidden', 'true');
+      card.appendChild(thumb);
+
+      var info = document.createElement('div');
+      info.className = 'info';
+      var name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = item.name;
+      var blurb = document.createElement('div');
+      blurb.className = 'blurb';
+      blurb.textContent = item.blurb;
+      info.appendChild(name);
+      info.appendChild(blurb);
+
+      var action = document.createElement('button');
+      action.className = 'action';
+      if (inUse && kind === 'pets') {
+        action.className += ' use';
+        action.textContent = 'Put away';
+        action.addEventListener('click', function () { MI.app.equip(kind, null); renderShop(); });
+      } else if (inUse) {
+        action.className += ' in-use';
+        action.textContent = 'In use ✓';
+        action.disabled = true;
+      } else if (owned) {
+        action.className += ' use';
+        action.textContent = 'Use';
+        action.addEventListener('click', function () { MI.app.equip(kind, item.id); renderShop(); });
+      } else if (balance >= item.price) {
+        action.textContent = 'Unlock · ✦ ' + item.price;
+        action.addEventListener('click', function () { buy(kind, item); });
+      } else {
+        action.className += ' short';
+        action.textContent = '✦ ' + item.price + ' · ' + (item.price - balance) + ' to go';
+        action.disabled = true;
+      }
+      info.appendChild(action);
+      card.appendChild(info);
+      el['shop-items'].appendChild(card);
+    });
+  }
+
+  function buy(kind, item) {
+    var result = MI.economy.buy(kind, item.id);
+    if (!result.ok) return;
+    MI.app.equip(kind, item.id); // a new unlock goes straight on
+    refreshWallet();
+    renderShop();
+    toast(item.icon, item.name + ' unlocked!', 'Now on your planet.', 0, 2600);
   }
 
   function formatDate(iso) {
@@ -138,17 +315,15 @@
     el['entry-input'].value = '';
     hideDetail();
 
+    // The memory's toast comes from the app's 'reward' event as it lands, and a growth toast
+    // from 'grew' — this only has to handle the end of the whole thing.
     MI.app.addEntry(text).then(function (memory) {
       setBusy(false);
       if (!memory) {
-        el['toast-emoji'].textContent = '🌊';
-        el['toast-headline'].textContent = 'Your planet is full!';
-        el['toast-sub'].textContent = 'Every buildable tile has a memory on it.';
-        el.toast.classList.add('show');
+        toast('🌊', 'Your planet is full!', 'Every buildable tile has a memory on it.', 0, 4200);
         return;
       }
       refreshStats();
-      showToast(memory);
     }, function (err) {
       setBusy(false);
       console.error('[MI.ui] addEntry failed', err);
@@ -187,14 +362,20 @@
       return;
     }
     disarmReset();
-    MI.store.reset();
-    if (MI.world.isFlatView()) MI.world.setFlatView(false); // nothing left to lay out flat
-    MI.world.clear();
-    el['view-icon'].textContent = '🗺';
-    el['view-label'].textContent = 'see your land flat';
     hideDetail();
+    closeShop();
     el.toast.classList.remove('show');
-    refreshStats();
+    // Back to the smallest planet, with shards and unlocks wiped too.
+    MI.app.startOver().then(function () {
+      syncViewButton();
+      refreshStats();
+    });
+  }
+
+  function syncViewButton() {
+    var flat = MI.world.isFlatView();
+    el['view-icon'].textContent = flat ? '🪐' : '🗺';
+    el['view-label'].textContent = flat ? 'back to the planet' : 'see your land flat';
   }
   function disarmReset() {
     clearTimeout(resetArmed);
@@ -223,6 +404,22 @@
     });
     el['demo-btn'].addEventListener('click', loadDemoPlanet);
     el['detail-close'].addEventListener('click', hideDetail);
+
+    MI.app.onEvent(handleAppEvent);
+    el['shop-btn'].addEventListener('click', openShop);
+    el['shop-close'].addEventListener('click', closeShop);
+    el.shop.addEventListener('click', function (e) {
+      if (e.target === el.shop) closeShop(); // a click on the backdrop, not the sheet
+    });
+    Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
+      tab.addEventListener('click', function () {
+        shopKind = tab.dataset.kind;
+        renderShop();
+      });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && el.shop.classList.contains('open')) closeShop();
+    });
 
     MI.world.onPick(function (slot) {
       if (slot === null || slot === undefined) { hideDetail(); return; }

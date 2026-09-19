@@ -4,20 +4,62 @@
 (function () {
   window.MI = window.MI || {};
 
-  var STORAGE_KEY = 'memory-planet.world.v2';
+  var STORAGE_KEY = 'memory-planet.world.v3';
+  // v2 worlds are migrated on first load; the v2 copy is left alone for older builds.
+  var LEGACY_KEY = 'memory-planet.world.v2';
   var world = null;
+
+  function firstFrequency() {
+    return MI.growth ? MI.growth.LADDER[0] : 2;
+  }
 
   function emptyWorld() {
     return {
-      version: 2, nextSlot: null, home: null, seed: Date.now(),
+      version: 3, nextSlot: null, home: null, seed: Date.now(),
       // The direction the island is currently growing in, as a tangent vector. Persisted so
       // the chain keeps heading the same way across reloads.
       heading: null,
       memories: [], people: [],
       // Plain terrain seeded around memories so the island reads as a landscape with
       // buildings in it, rather than a solid block of buildings.
-      landscape: []
+      landscape: [],
+      // Planet size: a frequency on MI.growth.LADDER. Every slot above indexes into the grid
+      // for this frequency, so it must change together with them (MI.app.growPlanet).
+      planet: { frequency: firstFrequency() },
+      // Progression — see src/game/economy.js.
+      wallet: { shards: 0, lifetime: 0, streak: 0, lastDay: null },
+      unlocks: { themes: ['meadow'], pets: [], skins: ['classic'] },
+      equipped: { theme: 'meadow', pet: null, skin: 'classic' }
     };
+  }
+
+  function read(key) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null; // private mode / blocked storage / corrupt JSON
+    }
+  }
+
+  // Fill anything an older save is missing, so the rest of the app can rely on the v3 shape.
+  function normalize(w) {
+    var fresh = emptyWorld();
+    if (!w.memories) w.memories = [];
+    if (!w.people) w.people = [];
+    if (!w.landscape) w.landscape = []; // worlds saved before landscape existed
+    if (!w.planet) {
+      // Every v2 world was built on the original 1002-tile grid (frequency 10).
+      w.planet = { frequency: w.version === 3 ? fresh.planet.frequency : 10 };
+    }
+    ['wallet', 'unlocks', 'equipped'].forEach(function (key) {
+      if (!w[key]) w[key] = fresh[key];
+      Object.keys(fresh[key]).forEach(function (field) {
+        if (w[key][field] === undefined) w[key][field] = fresh[key][field];
+      });
+    });
+    w.version = 3;
+    return w;
   }
 
   function newId(prefix) {
@@ -26,15 +68,10 @@
   var idCounter = 0;
 
   function load() {
-    try {
-      var raw = localStorage.getItem(STORAGE_KEY);
-      world = raw ? JSON.parse(raw) : emptyWorld();
-    } catch (e) {
-      world = emptyWorld(); // private mode / blocked storage / corrupt JSON — start fresh
-    }
-    if (!world.memories) world.memories = [];
-    if (!world.people) world.people = [];
-    if (!world.landscape) world.landscape = []; // worlds saved before landscape existed
+    var saved = read(STORAGE_KEY);
+    var legacy = saved ? null : read(LEGACY_KEY);
+    world = normalize(saved || legacy || emptyWorld());
+    if (legacy) save(); // write the migrated copy once
     return world;
   }
 
@@ -111,7 +148,7 @@
   }
 
   function importJSON(str) {
-    world = JSON.parse(str);
+    world = normalize(JSON.parse(str));
     save();
     return world;
   }

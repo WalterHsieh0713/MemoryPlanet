@@ -126,59 +126,92 @@
     return created;
   }
 
+  // --- Progress events (shards earned, planet grew) for the UI -------------------------
+  var listeners = [];
+  function onEvent(cb) { listeners.push(cb); }
+  function emit(event) { listeners.forEach(function (cb) { cb(event); }); }
+
+  function currentFrequency() {
+    return MI.store.get().planet.frequency;
+  }
+
+  function wait(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // The planet grows when enough of it is land (MI.growth.shouldGrow). Before growing it
+  // gets a beat to finish building the new memory, so you see it land first.
   function addEntry(text, options) {
     var opts = options || {};
-    var world = MI.store.get();
+    var animated = opts.animate !== false;
 
     return MI.ai.classify(text).then(function (classified) {
-      var placement = chooseSlot(world);
-      if (placement === null) return null; // planet full — nothing sensible to do
-      var slot = placement.slot;
-
-      if (world.home === null || world.home === undefined) {
-        world.home = slot; // first memory anchors where the continent grows from
-      }
-
-      var memoryId = MI.store.newId('memory');
-      var seed = world.memories.length + 1;
-      var people = resolvePeople(classified, memoryId);
-
-      var memory = {
-        id: memoryId,
-        createdAt: nowISO(),
-        occurredOn: opts.occurredOn || nowISO().slice(0, 10),
-        text: text,
-        title: classified.title,
-        category: classified.category,
-        mood: classified.mood,
-        people: people.ids,
-        importance: classified.importance,
-        placement: makePlacement(slot, seed),
-        asset: MI.world.pickAssetFor(classified.category, slot),
-        source: opts.source || 'user'
-      };
-
-      // New people stand on the tile of the memory that introduced them.
-      people.created.forEach(function (person) {
-        person.placement = { slot: slot, dir: memory.placement.dir, rotY: memory.placement.rotY };
+      var placement = chooseSlot(MI.store.get());
+      if (placement !== null) return placeMemory(text, classified, placement, opts);
+      // Out of room before the planet had a chance to grow — grow first, then place.
+      if (MI.growth.nextFrequency(currentFrequency()) === null) return null; // truly full
+      return growPlanet({ animate: animated }).then(function () {
+        var retry = chooseSlot(MI.store.get());
+        return retry === null ? null : placeMemory(text, classified, retry, opts);
       });
+    }).then(function (memory) {
+      if (!memory) return memory;
+      if (!MI.growth.shouldGrow(MI.store.get(), MI.world.currentTiles(), currentFrequency())) return memory;
+      return wait(animated ? 1800 : 0)
+        .then(function () { return growPlanet({ animate: animated, focus: opts.focus !== false ? memory : null }); })
+        .then(function () { return memory; });
+    });
+  }
 
-      MI.store.addMemory(memory);
-      var seeded = seedLandscape(memory, placement.via);
-      MI.store.save();
+  function placeMemory(text, classified, placement, opts) {
+    var world = MI.store.get();
+    var slot = placement.slot;
 
-      var spawns = [MI.world.spawnMemory(memory, { animate: opts.animate !== false })];
-      seeded.forEach(function (entry) {
-        MI.world.spawnLandscape(entry, { animate: opts.animate !== false });
-      });
-      people.created.forEach(function (person) {
-        spawns.push(MI.world.spawnPerson(person, { animate: opts.animate !== false }));
-      });
+    if (world.home === null || world.home === undefined) {
+      world.home = slot; // first memory anchors where the continent grows from
+    }
 
-      return Promise.all(spawns).then(function () {
-        if (opts.focus !== false) MI.world.focus(slot, { instant: opts.instant === true });
-        return memory;
-      });
+    var memoryId = MI.store.newId('memory');
+    var seed = world.memories.length + 1;
+    var people = resolvePeople(classified, memoryId);
+
+    var memory = {
+      id: memoryId,
+      createdAt: nowISO(),
+      occurredOn: opts.occurredOn || nowISO().slice(0, 10),
+      text: text,
+      title: classified.title,
+      category: classified.category,
+      mood: classified.mood,
+      people: people.ids,
+      importance: classified.importance,
+      placement: makePlacement(slot, seed),
+      asset: MI.world.pickAssetFor(classified.category, slot),
+      source: opts.source || 'user'
+    };
+
+    // New people stand on the tile of the memory that introduced them.
+    people.created.forEach(function (person) {
+      person.placement = { slot: slot, dir: memory.placement.dir, rotY: memory.placement.rotY };
+    });
+
+    MI.store.addMemory(memory);
+    var seeded = seedLandscape(memory, placement.via);
+    MI.store.save();
+    emit({ type: 'reward', memory: memory,
+      reward: MI.economy.rewardMemory(memory, { newPeople: people.created.length }) });
+
+    var spawns = [MI.world.spawnMemory(memory, { animate: opts.animate !== false })];
+    seeded.forEach(function (entry) {
+      MI.world.spawnLandscape(entry, { animate: opts.animate !== false });
+    });
+    people.created.forEach(function (person) {
+      spawns.push(MI.world.spawnPerson(person, { animate: opts.animate !== false }));
+    });
+
+    return Promise.all(spawns).then(function () {
+      if (opts.focus !== false) MI.world.focus(slot, { instant: opts.instant === true });
+      return memory;
     });
   }
 
@@ -199,5 +232,65 @@
     });
   }
 
-  MI.app = { addEntry: addEntry, restore: restore };
+  // One size up the ladder: carry every saved slot onto the bigger grid (MI.growth.remap),
+  // swap the planet, and replay the world on it. Slots and planet.frequency are saved
+  // together, so a reload mid-way can't pair old slots with the new grid.
+  // options: { animate, focus: memory to look at afterwards }
+  function growPlanet(options) {
+    var opts = options || {};
+    var world = MI.store.get();
+    var from = currentFrequency();
+    var to = MI.growth.nextFrequency(from);
+    if (to === null) return Promise.resolve(false);
+    var oldTiles = MI.world.currentTiles();
+    var tileCount = 0;
+
+    // Growing is a planet moment — leave the flat map so you can watch it.
+    var ready = MI.world.isFlatView() ? MI.world.setFlatView(false) : Promise.resolve();
+    return ready.then(function () {
+      return MI.world.loadGrid(to);
+    }).then(function (grid) {
+      tileCount = grid.tiles.length;
+      MI.growth.remap(world, oldTiles, grid.tiles, from, to);
+      world.planet.frequency = to;
+      MI.store.save();
+      return MI.world.setPlanet(to, { animate: opts.animate !== false });
+    }).then(restore).then(function () {
+      if (opts.focus && opts.focus.placement) MI.world.focus(opts.focus.placement.slot);
+      emit({
+        type: 'grew', from: from, to: to, tiles: tileCount,
+        size: MI.growth.tierIndex(to) + 1, sizes: MI.growth.LADDER.length,
+        reward: MI.economy.rewardGrowth(MI.growth.tierIndex(to))
+      });
+      return true;
+    });
+  }
+
+  // Unlock-aware equip: records it (MI.economy) and shows it on the planet.
+  function equip(kind, id) {
+    if (!MI.economy.equip(kind, id)) return false;
+    if (kind === 'themes') MI.world.setTheme(id);
+    else if (kind === 'pets') MI.world.setPet(id);
+    else if (kind === 'skins') MI.world.setSkin(id);
+    return true;
+  }
+
+  // Wipe everything — memories, shards, unlocks — back to the smallest planet.
+  function startOver() {
+    MI.store.reset();
+    var world = MI.store.get();
+    var ready = MI.world.isFlatView() ? MI.world.setFlatView(false) : Promise.resolve();
+    return ready.then(function () {
+      return MI.world.setPlanet(world.planet.frequency, { animate: false });
+    }).then(function () {
+      MI.world.setTheme(world.equipped.theme);
+      MI.world.setPet(world.equipped.pet);
+      MI.world.setSkin(world.equipped.skin);
+    });
+  }
+
+  MI.app = {
+    addEntry: addEntry, restore: restore, growPlanet: growPlanet,
+    equip: equip, startOver: startOver, onEvent: onEvent
+  };
 })();

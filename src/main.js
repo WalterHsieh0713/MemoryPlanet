@@ -2,8 +2,13 @@
 (function () {
   var canvas = document.getElementById('scene-canvas');
 
-  MI.store.load();
-  MI.world.init(canvas)
+  var saved = MI.store.load();
+  MI.world.init(canvas, {
+    frequency: saved.planet.frequency,
+    theme: saved.equipped.theme,
+    pet: saved.equipped.pet,
+    skin: saved.equipped.skin
+  })
     .then(function () {
       MI.ui.init();
       return MI.app.restore();

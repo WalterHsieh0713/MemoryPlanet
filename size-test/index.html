@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Memory Planet — Size Test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  /* Same tokens as the main app (index.html) so this reads like part of the same product. */
+  :root {
+    --card: #fffdf8;
+    --ink: #2c5f6f;
+    --ink-soft: #7fa3ae;
+    --accent: #ff9f68;
+    --accent-deep: #f4804a;
+    --shadow: 0 10px 30px rgba(44, 95, 111, .16);
+    --shadow-soft: 0 4px 14px rgba(44, 95, 111, .12);
+    --spring: cubic-bezier(.34, 1.56, .64, 1);
+  }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #dff1f7;
+    font-family: Quicksand, system-ui, sans-serif; color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  #scene-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  #back-link {
+    position: fixed; left: 20px; top: 20px; z-index: 5;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 8px 16px; border-radius: 999px; text-decoration: none;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    font-size: 12px; font-weight: 700; color: var(--ink-soft);
+    transition: color .2s ease, transform .25s var(--spring);
+  }
+  #back-link:hover { color: var(--ink); transform: translateY(-1px); }
+
+  #header-card {
+    position: fixed; left: 20px; top: 66px; z-index: 5;
+    max-width: min(320px, calc(100vw - 40px));
+    padding: 16px 20px; border-radius: 22px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+  }
+  #header-card h1 { margin: 0 0 6px; font-size: 18px; font-weight: 700; }
+  #header-card p { margin: 0; font-size: 12.5px; font-weight: 500; line-height: 1.5; color: var(--ink-soft); }
+
+  /* --- segmented control --- */
+  #size-picker {
+    position: fixed; left: 50%; top: 20px; transform: translateX(-50%); z-index: 6;
+    display: flex; gap: 4px; padding: 5px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow);
+  }
+  #size-picker button {
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 9px 20px; border-radius: 999px;
+    background: transparent; color: var(--ink-soft);
+    font-size: 13px; font-weight: 700; letter-spacing: .01em;
+    transition: background .2s ease, color .2s ease, transform .2s var(--spring);
+  }
+  #size-picker button:hover { color: var(--ink); }
+  #size-picker button.active { background: var(--accent); color: #fff; }
+  #size-picker button.active:hover { color: #fff; }
+
+  /* --- preset info panel --- */
+  #info-panel {
+    position: fixed; right: 20px; top: 20px; z-index: 5;
+    width: min(220px, calc(100vw - 40px));
+    padding: 18px 20px; border-radius: 22px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+  }
+  #info-panel .row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 8px; }
+  #info-panel .row:first-child { margin-top: 0; }
+  #info-panel .label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-soft); }
+  #info-panel .value { font-size: 15px; font-weight: 700; color: var(--ink); }
+  #info-panel .freq { margin-top: 12px; padding-top: 12px; border-top: 1px solid #eef4f6;
+    font-size: 12px; font-weight: 600; color: var(--ink-soft); text-align: center; }
+
+  /* --- tile hover chip --- */
+  #tile-chip {
+    position: fixed; left: 20px; bottom: 24px; z-index: 5;
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 20px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    font-size: 13px; font-weight: 600;
+    transition: transform .3s var(--spring);
+  }
+  #tile-chip .shape-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--ink-soft); flex-shrink: 0; }
+  #tile-chip.pentagon .shape-dot { background: var(--accent); }
+  #tile-chip b { color: var(--ink); }
+  #tile-chip .muted { color: var(--ink-soft); }
+
+  #legend {
+    position: fixed; right: 20px; bottom: 24px; z-index: 5;
+    display: flex; gap: 14px;
+    padding: 10px 18px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    font-size: 12px; font-weight: 700; color: var(--ink-soft);
+  }
+  #legend span { display: inline-flex; align-items: center; gap: 6px; }
+  #legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  #legend .hex-dot { background: #8fc75a; }
+  #legend .pent-dot { background: var(--accent); }
+
+  #loading {
+    position: fixed; inset: 0; display: grid; place-items: center; z-index: 10;
+    background: #dff1f7; font-size: 15px; font-weight: 600; color: var(--ink-soft);
+    transition: opacity .4s ease;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
+
+  @media (max-width: 640px) {
+    #header-card { display: none; }
+    #info-panel { top: auto; bottom: 90px; right: 12px; }
+    #legend { display: none; }
+  }
+</style>
+</head>
+<body>
+<canvas id="scene-canvas"></canvas>
+
+<a id="back-link" href="/">← Memory Planet</a>
+<div id="header-card">
+  <h1>Planet Size Test</h1>
+  <p>Compares low-resolution spherical hex/pentagon tile counts before we commit to one for the real planet. Drag to orbit, scroll to zoom, hover a tile for details.</p>
+</div>
+
+<div id="size-picker">
+  <button data-size="42">42</button>
+  <button data-size="92">92</button>
+  <button data-size="162">162</button>
+</div>
+
+<div id="info-panel">
+  <div class="row"><span class="label">Total tiles</span><span class="value" id="info-total">—</span></div>
+  <div class="row"><span class="label">Pentagons</span><span class="value" id="info-pentagons">—</span></div>
+  <div class="row"><span class="label">Hexagons</span><span class="value" id="info-hexagons">—</span></div>
+  <div class="freq" id="info-freq">f = —</div>
+</div>
+
+<div id="tile-chip">
+  <span class="shape-dot"></span>
+  <span id="tile-chip-text" class="muted">Hover a tile for details</span>
+</div>
+
+<div id="legend">
+  <span><i class="hex-dot"></i>hexagon</span>
+  <span><i class="pent-dot"></i>pentagon</span>
+</div>
+
+<div id="loading">spinning up the test planets…</div>
+
+<script src="../three-r128.min.js"></script>
+<script src="size-test.js"></script>
+</body>
+</html>

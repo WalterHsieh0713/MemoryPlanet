@@ -17,20 +17,22 @@
 ## Status (2026-09-19)
 Core loop is built and working: journal text -> classify -> people/slot/asset -> persist -> spawn on a 1002-tile hex-sphere (frequency 10), with terrain/landscape tiles, roads, procedural minifigure people, a flat-map view toggle, building swap in the detail panel, demo seed and reset. Persistence reproduces the world on reload.
 
+Progression (built 2026-09-19): worlds start on the smallest planet (42 tiles) and grow up the size ladder 42 -> 92 -> 162 -> 362 -> 642 -> 1002 once half the land is claimed (`src/world/growth.js`; grids in `data/grids/`, f=10 stays `data/hexgrid.json`). Growing remaps every saved slot and keeps tile size constant, so the island keeps its size while new ocean opens around it. Journaling earns shards (`src/game/economy.js`), spent in the shop on 4 themes, 4 pets and 5 character skins (visuals in `src/world/themes.js` and `src/world/cosmetics.js`, all procedural, no new assets). Store is v3 (`memory-planet.world.v3`, v2 saves migrate as frequency 10). Checks: `node scripts/test-growth.js`.
+
 Known gaps:
 - Classifier mostly runs on the keyword heuristic (no `.env`, substring-matching bugs, weak people detection); the Claude path is untested live.
 - Roads currently link ALL memories chronologically; people are static (no walking).
-- Single fixed planet size; saved slots are indices into `data/hexgrid.json` and no grid/size is stored.
-- One theme only (Kenney `variation-a`; `variation-b` texture is unused).
+- Input method is still being decided; shards currently pay per entry via `MI.app.addEntry`, so any new input path that goes through it earns automatically.
+- "Start over" wipes shards and unlocks along with the planet.
 - `docs/CONTRACT.md` was stale (listed `highlight/setTimeCutoff/onHover` that were never built); now corrected, with the planned APIs marked as planned.
 
 ## Planned (not built yet, in build order)
 1. **People, paths, NPCs + classifier.** Roads only between memories that share a person. If a new entry mentions a name similar to an earlier person, ask "is this the same person?". Same -> link the two buildings with a road and the existing figure walks between them like an NPC. Different -> new figure on the new tile that stays near its building until another memory mentions them. Fix the classifier (word-boundary matching, log Claude failures, show "classified by ...") and add an explicit "who was there?" input so people names are reliable.
-2. **Flat island start, planet size ladder.** Start on a small flat island (the existing flat view); at ~5 memories unlock a real planet; more memories unlock larger planets. Sizes are hex grids from `scripts/generate-hexgrid.js [frequency]` (10*f^2+2 tiles: f=6 -> 362, 8 -> 642, 10 -> 1002, 14 -> 1962, 20 -> 4002). The 4002 planet is multiplayer-only (later). Needs: store `version` 3 with the grid size saved, remap of saved slots by direction when the grid grows, `world.js` refactored so the planet can be rebuilt at runtime.
-3. **Whole-planet themes.** Texture (`variation-a`/`variation-b`), water/land/sky colours and lighting, stored on the world. Per-category building style picks are deferred.
+2. ~~Flat island start, planet size ladder.~~ **Built**, starting on the 42-tile planet rather than a flat island (team call, 2026-09-19). Still open: 1962 / 4002 tiles (the 4002 planet is multiplayer-only).
+3. ~~Whole-planet themes.~~ **Built** as shop unlocks (meadow, frostfall, blossom, starlight), and themes recolour the kit atlas at runtime. Per-category building style picks are still deferred.
 
 ## Decisions / open questions for later
-- Planet radius per size: keep tile size constant (bigger planet = bigger radius) or keep radius 5 (tiles shrink)? Decide after seeing the size tests.
-- Exact memory-count thresholds for each size unlock (5 for the first planet is the only fixed number).
+- ~~Planet radius per size~~: decided after the `/size-test` page — tile size is constant, so a bigger planet is a bigger ball (planet group scaled by frequency/10).
+- Growth threshold is "half the hexagons are land" (`GROW_AT`), which works out to growing at roughly 5-7, 12, 21, 48 and 89 memories. Shard prices and rewards are one table each in `src/game/economy.js`.
 - Whether to spend an API key on the Claude classifier for the demo, or ship heuristic-only.
 - Multiplayer (gates the 4002 planet) has no design yet.

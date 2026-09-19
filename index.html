@@ -17,6 +17,9 @@
     --shadow: 0 10px 30px rgba(44, 95, 111, .16);
     --shadow-soft: 0 4px 14px rgba(44, 95, 111, .12);
     --spring: cubic-bezier(.34, 1.56, .64, 1);
+    --ink-mid: #537682;   /* small text on cards; --ink-soft is too light below ~16px */
+    --shard: #6a4bd6;
+    --shard-soft: #efeafd;
   }
   html, body {
     margin: 0; height: 100%; overflow: hidden; background: #dff1f7;
@@ -36,8 +39,28 @@
   }
   #stats-chip.bump { transform: scale(1.08); }
 
-  #view-btn {
+  /* --- planet size card --- */
+  #planet-card {
     position: fixed; left: 20px; top: 66px; z-index: 5;
+    width: 214px; padding: 12px 16px 13px; border-radius: 20px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    transition: transform .45s var(--spring);
+  }
+  #planet-card.grew { transform: scale(1.06); }
+  #planet-card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  #planet-size { font-size: 13px; font-weight: 700; }
+  #planet-tiles { font-size: 12px; font-weight: 600; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+  #planet-bar { height: 8px; margin-top: 9px; border-radius: 999px; background: #e8f1f4; overflow: hidden; }
+  #planet-bar i {
+    display: block; height: 100%; width: 100%; border-radius: inherit;
+    background: linear-gradient(90deg, #8fc75a, #6fd8c0);
+    transform: scaleX(0); transform-origin: left center;
+    transition: transform .7s var(--spring);
+  }
+  #planet-hint { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--ink-mid); }
+
+  #view-btn {
+    position: fixed; left: 20px; top: 160px; z-index: 5;
     display: flex; align-items: center; gap: 7px;
     border: none; cursor: pointer; font-family: inherit;
     padding: 8px 15px; border-radius: 999px;
@@ -51,7 +74,7 @@
   #view-btn:active { transform: scale(.96); }
 
   #reset-btn {
-    position: fixed; left: 20px; top: 108px; z-index: 5;
+    position: fixed; left: 20px; top: 202px; z-index: 5;
     border: none; cursor: pointer; font-family: inherit;
     padding: 7px 14px; border-radius: 999px;
     background: var(--card); box-shadow: var(--shadow-soft);
@@ -115,7 +138,7 @@
   /* --- toast --- */
   #toast {
     position: fixed; left: 50%; bottom: 110px; transform: translate(-50%, 14px);
-    z-index: 7; padding: 14px 22px; border-radius: 20px;
+    z-index: 25; padding: 14px 22px; border-radius: 20px; /* above the shop, for unlocks */
     background: var(--card); box-shadow: var(--shadow);
     display: flex; align-items: center; gap: 12px;
     opacity: 0; pointer-events: none;
@@ -125,10 +148,108 @@
   #toast .emoji { font-size: 26px; }
   #toast .headline { font-size: 15px; font-weight: 700; }
   #toast .sub { font-size: 13px; font-weight: 500; color: var(--ink-soft); margin-top: 2px; }
+  #toast-shards {
+    margin-left: 4px; padding: 6px 11px; border-radius: 999px; white-space: nowrap;
+    background: var(--shard-soft); color: var(--shard); font-size: 13px; font-weight: 700;
+  }
+  #toast-shards:empty { display: none; }
+
+  /* --- wallet + shop button (top right) --- */
+  #wallet {
+    position: fixed; right: 20px; top: 20px; z-index: 6;
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 5px 5px 16px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    transition: transform .4s var(--spring);
+  }
+  #wallet.bump { transform: scale(1.08); }
+  .shard { color: var(--shard); }
+  #wallet-count { font-size: 15px; font-weight: 700; min-width: 2ch; font-variant-numeric: tabular-nums; }
+  #shop-btn {
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 8px 15px; border-radius: 999px;
+    background: var(--shard); color: #fff; font-size: 13px; font-weight: 700;
+    transition: transform .25s var(--spring), background .2s ease;
+  }
+  #shop-btn:hover { background: #5a3cc4; transform: translateY(-1px); }
+  #shop-btn:active { transform: scale(.96); }
+  .shard-float {
+    position: fixed; z-index: 8; pointer-events: none;
+    font-size: 15px; font-weight: 700; color: var(--shard);
+    animation: shard-float 1.2s ease-out forwards;
+  }
+  @keyframes shard-float {
+    0% { opacity: 0; transform: translateY(8px) scale(.9); }
+    18% { opacity: 1; transform: translateY(0) scale(1.05); }
+    100% { opacity: 0; transform: translateY(-28px) scale(1); }
+  }
+
+  /* --- shop --- */
+  #shop {
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
+    background: rgba(44, 95, 111, .22); backdrop-filter: blur(3px);
+    opacity: 0; visibility: hidden; transition: opacity .25s ease, visibility .25s;
+  }
+  #shop.open { opacity: 1; visibility: visible; }
+  #shop .sheet {
+    width: min(580px, 100%); max-height: min(720px, calc(100vh - 32px)); overflow-y: auto;
+    padding: 22px 22px 18px; border-radius: 28px;
+    background: var(--card); box-shadow: 0 24px 60px rgba(44, 95, 111, .28);
+    transform: translateY(14px) scale(.97); transition: transform .45s var(--spring);
+  }
+  #shop.open .sheet { transform: none; }
+  #shop header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  #shop h2 { margin: 0; font-size: 21px; font-weight: 700; }
+  #shop .balance { margin-top: 3px; font-size: 14px; font-weight: 600; color: var(--ink-mid); }
+  #shop .balance b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  #shop .close {
+    flex-shrink: 0; width: 32px; height: 32px; border: none; cursor: pointer; border-radius: 50%;
+    background: #eef4f6; color: var(--ink-mid); font-size: 15px; font-family: inherit;
+    display: grid; place-items: center;
+  }
+  #shop .close:hover { background: #e2ecef; color: var(--ink); }
+  #shop .tabs {
+    display: flex; gap: 4px; margin: 16px 0 14px; padding: 4px; border-radius: 999px; background: #eef4f6;
+  }
+  #shop .tabs button {
+    flex: 1; border: none; cursor: pointer; font-family: inherit;
+    padding: 8px 12px; border-radius: 999px; background: transparent;
+    color: var(--ink-mid); font-size: 13px; font-weight: 700;
+    transition: background .2s ease, color .2s ease;
+  }
+  #shop .tabs button:hover { color: var(--ink); }
+  #shop .tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); box-shadow: var(--shadow-soft); }
+  #shop-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
+  .item {
+    display: flex; gap: 12px; align-items: center;
+    padding: 12px; border-radius: 20px; background: #f6fafb;
+    border: 2px solid transparent; transition: border-color .2s ease;
+  }
+  .item.equipped { border-color: #cfe9d9; background: #f3faf5; }
+  .item .thumb {
+    flex-shrink: 0; width: 54px; height: 54px; border-radius: 16px;
+    display: grid; place-items: center; font-size: 28px; background: #fff;
+  }
+  .item .mini-planet { width: 34px; height: 34px; border-radius: 50%; box-shadow: inset -5px -5px 0 rgba(0, 0, 0, .12); }
+  .item .info { flex: 1; min-width: 0; }
+  .item .name { font-size: 14px; font-weight: 700; }
+  .item .blurb { margin-top: 2px; font-size: 12px; font-weight: 500; line-height: 1.4; color: var(--ink-mid); }
+  .item .action {
+    margin-top: 8px; border: none; cursor: pointer; font-family: inherit;
+    padding: 6px 13px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: var(--shard); color: #fff;
+    transition: transform .2s var(--spring), background .2s ease, color .2s ease;
+  }
+  .item .action:hover { transform: translateY(-1px); }
+  .item .action.use { background: #e4f1f5; color: var(--ink); }
+  .item .action.use:hover { background: #d6eaf0; }
+  .item .action.short { background: #eceff1; color: #4f6973; cursor: default; transform: none; }
+  .item .action.in-use { background: #dff3e6; color: #2a6e46; cursor: default; transform: none; }
+  #shop .earn-hint { margin: 14px 2px 0; font-size: 12px; font-weight: 600; line-height: 1.5; color: var(--ink-mid); }
 
   /* --- tile detail card --- */
   #detail {
-    position: fixed; right: 20px; top: 20px; z-index: 6;
+    position: fixed; right: 20px; top: 76px; z-index: 6;
     width: min(320px, calc(100vw - 40px));
     padding: 20px 22px; border-radius: 24px;
     background: var(--card); box-shadow: var(--shadow);
@@ -179,6 +300,16 @@
 <canvas id="scene-canvas"></canvas>
 
 <div id="stats-chip"><span>🌍</span><span id="stats-text">a quiet ocean</span></div>
+<div id="planet-card" aria-live="polite">
+  <div class="row"><span id="planet-size">🪐 Size 1 of 6</span><span id="planet-tiles">42 tiles</span></div>
+  <div id="planet-bar" role="progressbar" aria-label="Land until the planet grows" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+  <div id="planet-hint">grows when half of it is land</div>
+</div>
+<div id="wallet">
+  <span class="shard" aria-hidden="true">✦</span>
+  <span id="wallet-count" aria-label="shards">0</span>
+  <button id="shop-btn" aria-haspopup="dialog">Shop</button>
+</div>
 <button id="view-btn"><span id="view-icon">🗺</span><span id="view-label">see your land flat</span></button>
 <button id="reset-btn">start over</button>
 
@@ -199,11 +330,31 @@
     <div class="headline" id="toast-headline"></div>
     <div class="sub" id="toast-sub"></div>
   </div>
+  <div id="toast-shards"></div>
+</div>
+
+<div id="shop">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+    <header>
+      <div>
+        <h2 id="shop-title">Shop</h2>
+        <div class="balance"><span class="shard" aria-hidden="true">✦</span> <b id="shop-balance">0</b> shards to spend</div>
+      </div>
+      <button class="close" id="shop-close" aria-label="Close shop">✕</button>
+    </header>
+    <div class="tabs" role="tablist">
+      <button role="tab" data-kind="themes" aria-selected="true">Themes</button>
+      <button role="tab" data-kind="pets" aria-selected="false">Pets</button>
+      <button role="tab" data-kind="skins" aria-selected="false">Skins</button>
+    </div>
+    <div id="shop-items" role="tabpanel"></div>
+    <p class="earn-hint">Every memory earns shards: 10 for writing, more for big days, new friends and daily streaks, and a bonus each time your planet grows.</p>
+  </div>
 </div>
 
 <div id="journal">
   <div id="empty-hint">
-    <div>Your planet is all ocean.<br /><b>Write a memory to make land ✨</b></div>
+    <div>Your planet is all ocean.<br /><b>Write a memory to make land ✨</b><br />Each one earns <span class="shard">✦</span> shards, and your planet grows as it fills.</div>
     <button id="demo-btn">or load a demo planet</button>
   </div>
   <div id="journal-card">
@@ -218,9 +369,13 @@
 <script src="vendor/GLTFLoader.js"></script>
 <script>window.MI = window.MI || {};</script>
 <script src="src/world/sphere.js"></script>
+<script src="src/world/growth.js"></script>
+<script src="src/world/themes.js"></script>
+<script src="src/world/cosmetics.js"></script>
 <script src="src/world/connectors.js"></script>
 <script src="src/world/world.js"></script>
 <script src="src/store/store.js"></script>
+<script src="src/game/economy.js"></script>
 <script src="src/ai/classify.js"></script>
 <script src="src/app.js"></script>
 <script src="src/ui/ui.js"></script>

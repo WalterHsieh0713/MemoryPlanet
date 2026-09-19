@@ -8,22 +8,34 @@
   window.MI = window.MI || {};
   MI.world = MI.world || {};
 
+  // The planet mesh is always built at RADIUS in its own space; the planet group is scaled
+  // by frequency / 10 (see setPlanet), so every size keeps the same world-space tile size —
+  // a bigger planet is a bigger ball, not a finer one. Anything measured "per tile" below is
+  // tuned at frequency 10 and multiplied by `unit` (10 / frequency) to stay in proportion.
   var RADIUS = 5;
+  var REFERENCE_FREQUENCY = 10;
   var GAP_AMOUNT = 0; // 0 = tiles share exact edges, no gaps — a seamless connected sphere
 
+  // Palette comes from the active theme (src/world/themes.js); applyThemeColors() writes
+  // into these in place, so everything that reads them picks the theme up.
   var WATER_COLOR = new THREE.Color(0x3f8fc4);
   var LAND_COLOR = new THREE.Color(0x8fc75a);
   var LAND_SIDE_COLOR = new THREE.Color(0x8a6239);  // dirt under the grass
   var WATER_SIDE_COLOR = new THREE.Color(0x24668c); // deep water below the surface
+  var currentTheme = null; // set in init()
   // Deep enough that a bobbing tile never separates from its neighbours far enough to
   // show a crack through to the background (waves peak at WAVE_AMPLITUDE either way).
-  var TILE_DEPTH = 0.16;
+  var BASE_TILE_DEPTH = 0.16;
   // How far a claimed tile rises out of the sea. Everything standing on land (buildings,
   // people) is offset by the same amount so it doesn't sink into the raised surface.
   // Kept just clear of WAVE_AMPLITUDE so water never washes over land, but low enough that
   // the planet reads like the flat view rather than a plateau.
-  var LAND_LIFT = 0.07;
-  var WAVE_AMPLITUDE = 0.035; // subtle — a fraction of the tile spacing
+  var BASE_LAND_LIFT = 0.07;
+  var BASE_WAVE_AMPLITUDE = 0.035; // subtle — a fraction of the tile spacing
+  // Scaled copies of the above for the current planet size (set by applyPlanetScale).
+  var TILE_DEPTH = BASE_TILE_DEPTH;
+  var LAND_LIFT = BASE_LAND_LIFT;
+  var WAVE_AMPLITUDE = BASE_WAVE_AMPLITUDE;
   var WAVE_SPEED = 1.3;
   // Pattern size relative to the planet. Tuned against this grid's ~0.6-unit tile spacing;
   // the sandbox in tools/water-tile.js used 1.0 for tiles ~3.5x larger.
@@ -46,14 +58,7 @@
   };
 
   // The sphere can't place whole kit tiles on its irregular cells, so terrain shows up
-  // there as the cell's own colour instead.
-  var TERRAIN_TINT = {
-    'grass.glb': 0x8fc75a, 'grass-forest.glb': 0x6da844, 'grass-hill.glb': 0x7cb850,
-    'sand.glb': 0xdcc27a, 'sand-desert.glb': 0xe2cd8a, 'sand-rocks.glb': 0xd0b66c,
-    'stone.glb': 0x99a2aa, 'stone-hill.glb': 0x8c959d, 'stone-rocks.glb': 0x8f989f,
-    'stone-mountain.glb': 0xa9b3bb,
-    'dirt.glb': 0xa8794e, 'dirt-lumber.glb': 0x95693f
-  };
+  // there as the cell's own colour instead — each theme's `tint` table (themes.js).
 
   // Every building in the kit, spread across the categories, so repeat entries of the same
   // kind don't look stamped out.
@@ -215,13 +220,14 @@
   ].join('\n');
 
   function installWaterShader(material) {
+    var theme = currentTheme || MI.world.themes.get('meadow');
     material.userData.waterUniforms = {
       uTime: { value: 0 },
       uWaterScale: { value: WATER_PATTERN_SCALE },
       uShimmer: { value: 0.65 },
-      uDeep: { value: new THREE.Color('#167faa').convertSRGBToLinear() },
-      uShallow: { value: new THREE.Color('#45c6cf').convertSRGBToLinear() },
-      uFoam: { value: new THREE.Color('#d6fff0').convertSRGBToLinear() }
+      uDeep: { value: new THREE.Color(theme.deep).convertSRGBToLinear() },
+      uShallow: { value: new THREE.Color(theme.shallow).convertSRGBToLinear() },
+      uFoam: { value: new THREE.Color(theme.foam).convertSRGBToLinear() }
     };
 
     material.onBeforeCompile = function (shader) {
@@ -321,9 +327,16 @@
 
   function spawnLandscape(entry, options) {
     if (!state || typeof entry.slot !== 'number') return;
-    var tint = TERRAIN_TINT[entry.asset] || LAND_COLOR.getHex();
-    setTileLand(entry.slot, new THREE.Color(tint));
+    // Remembered so a theme change can repaint this tile in place.
+    if (state.waterTileIds.has(entry.slot)) state.landAsset[entry.slot] = entry.asset;
+    setTileLand(entry.slot, landTopColor(entry.slot));
     if (!options || options.animate !== false) popTile(entry.slot);
+  }
+
+  function landTopColor(slot) {
+    var asset = state.landAsset[slot];
+    var hex = asset ? currentTheme.tint[asset] : undefined;
+    return hex === undefined ? LAND_COLOR : new THREE.Color(hex);
   }
 
   function spawnMemory(memory, options) {
@@ -365,6 +378,10 @@
     part(new THREE.SphereGeometry(0.16, 8, 6), skin, 0, 0.66, 0);
     part(new THREE.CylinderGeometry(0.07, 0.07, 0.24, 5), dark, -0.09, 0.08, 0);
     part(new THREE.CylinderGeometry(0.07, 0.07, 0.24, 5), dark, 0.09, 0.08, 0);
+    // Tagged so setSkin() can find and re-dress every figure in place, in either view.
+    person.userData.isPerson = true;
+    person.userData.color = colorHex || PERSON_COLORS[0];
+    MI.world.cosmetics.dressPerson(person, state ? state.skin : 'classic', person.userData.color);
     return person;
   }
 
@@ -596,7 +613,7 @@
   // than a rigid hexagon, it follows the planet's irregular cells without any of the fitting
   // problems a whole tile would have.
   function placeRoadStrip(parts, dirA, dirB, width) {
-    var height = RADIUS + LAND_LIFT + 0.008;
+    var height = RADIUS + LAND_LIFT + 0.008 * state.unit;
     var p0 = dirA.clone().multiplyScalar(height);
     var p1 = dirB.clone().multiplyScalar(height);
     var up = p0.clone().add(p1).normalize();
@@ -940,8 +957,8 @@
     var occupied = {};
     centres.forEach(function (c) { occupied[key(c.x, c.z)] = true; });
 
-    var top = new THREE.Color('#298fa8').convertSRGBToLinear();
-    var bottom = new THREE.Color('#196c8d').convertSRGBToLinear();
+    var top = new THREE.Color(currentTheme.skirt[0]).convertSRGBToLinear();
+    var bottom = new THREE.Color(currentTheme.skirt[1]).convertSRGBToLinear();
     var positions = [], colors = [];
 
     centres.forEach(function (c) {
@@ -1042,13 +1059,7 @@
 
       // The sandbox's warm off-white backdrop and softer key light — the blue planet
       // lighting makes these tiles read as murky.
-      state.scene.background = on ? FLAT_BG : PLANET_BG;
-      state.hemiLight.color.set(on ? 0xffffff : 0xcfe9f5);
-      state.hemiLight.groundColor.set(on ? 0xb3c0b6 : 0x6f9c5e);
-      state.hemiLight.intensity = on ? 1.0 : 1.1;
-      state.sunLight.color.set(on ? 0xfff3d9 : 0xfff1d6);
-      state.sunLight.intensity = on ? 0.7 : 1.3;
-      state.sunLight.position.set(on ? -3 : 8, on ? 8 : 12, on ? 5 : 6);
+      applyLighting();
 
       if (on) {
         state.camDistance = state.flatFitDistance || 8;
@@ -1056,10 +1067,36 @@
         state.camTheta = 0;
         animateFlatEntry();
       } else {
-        state.camDistance = 13;
+        state.camDistance = cameraRange().rest;
       }
       state.updateCamera();
     });
+  }
+
+  // Sky and lights for the current view + theme. The flat view keeps the sandbox's warm,
+  // softer key light (the planet's blue lighting makes kit tiles read as murky); its sky
+  // colour comes from the theme.
+  function applyLighting() {
+    var flat = state.flatMode;
+    var t = currentTheme;
+    PLANET_BG.set(t.sky);
+    FLAT_BG.set(t.flatSky);
+    state.scene.background = flat ? FLAT_BG : PLANET_BG;
+    if (flat && !t.stars) {
+      state.hemiLight.color.set(0xffffff);
+      state.hemiLight.groundColor.set(0xb3c0b6);
+      state.hemiLight.intensity = 1.0;
+      state.sunLight.color.set(0xfff3d9);
+      state.sunLight.intensity = 0.7;
+    } else {
+      state.hemiLight.color.set(t.hemi[0]);
+      state.hemiLight.groundColor.set(t.hemi[1]);
+      state.hemiLight.intensity = t.hemi[2];
+      state.sunLight.color.set(t.sun[0]);
+      state.sunLight.intensity = flat ? t.sun[1] * 0.6 : t.sun[1];
+    }
+    state.sunLight.position.set(flat ? -3 : 8, flat ? 8 : 12, flat ? 5 : 6);
+    if (state.stars) state.stars.visible = !!t.stars;
   }
 
   function isFlatView() {
@@ -1068,13 +1105,7 @@
 
   function clear() {
     if (!state) return;
-    while (state.props.children.length) state.props.remove(state.props.children[0]);
-    while (state.flatGroup.children.length) state.flatGroup.remove(state.flatGroup.children[0]);
-    if (state.roadGroup) {
-      state.planet.remove(state.roadGroup);
-      state.roadGroup = null;
-    }
-    state.spinners.length = 0;
+    clearProps();
     state.tiles.forEach(function (tile) {
       if (!state.waterTileIds.has(tile.id) && tile.sides === 6) setTileWater(tile.id);
     });
@@ -1127,6 +1158,7 @@
   function setTileWater(tileId) {
     var range = state.tileVertexRange[tileId];
     if (!range || state.waterTileIds.has(tileId)) return;
+    delete state.landAsset[tileId];
     var colorAttr = state.geometry.attributes.color;
     var uvAttr = state.geometry.attributes.uv;
     var landAttr = state.geometry.attributes.aLand;
@@ -1222,10 +1254,21 @@
       var kitMaterial = node.material.clone();
       kitMaterial.vertexColors = true;
       kitMaterial.roughness = 0.9;
-      var grass = new THREE.Color('#92bf65').convertSRGBToLinear();
+      // Keep the shipped atlas so every theme recolours from the original, not from the
+      // previous theme's output.
+      kitMaterial.userData.baseMap = kitMaterial.map;
+      if (kitMaterial.map) kitMaterial.map = themedAtlas(kitMaterial.map);
+      state.kitMaterials.push(kitMaterial);
+      // The kit's ground grass and its tree leaves share one atlas column; the ground sits on
+      // the tile's base plate (the 'foundation' part), leaves are separate parts above it —
+      // so a theme can have pink trees on green grass.
+      var foliageColor = new THREE.Color(currentTheme.foliage).convertSRGBToLinear();
+      var groundColor = new THREE.Color(currentTheme.ground).convertSRGBToLinear();
 
       groups.forEach(function (triangles, key) {
-        var p = [], n = [], u = [], colors = [];
+        var p = [], n = [], u = [], colors = [], grassVerts = [];
+        var grassRole = key === 'foundation' ? 'ground' : 'foliage';
+        var grass = grassRole === 'ground' ? groundColor : foliageColor;
         var partMinY = Infinity; // lowest point in the model's own space, before re-centring
         triangles.forEach(function (tri) {
           for (var k = tri * 3; k < tri * 3 + 3; k++) {
@@ -1234,8 +1277,10 @@
             n.push(normal.getX(k), normal.getY(k), normal.getZ(k));
             u.push(uv.getX(k), uv.getY(k));
             // variation-a makes this vegetation column white. Tint its grass and foliage
-            // shades back, leaving the building's own colours alone.
+            // shades back (in the theme's foliage colour), leaving the building's own
+            // colours alone.
             var isGrass = Math.abs(uv.getX(k) - 0.34375) < 0.002;
+            if (isGrass) grassVerts.push(colors.length / 3);
             colors.push(isGrass ? grass.r : 1, isGrass ? grass.g : 1, isGrass ? grass.b : 1);
           }
         });
@@ -1244,6 +1289,11 @@
         g.setAttribute('normal', new THREE.Float32BufferAttribute(n, 3));
         g.setAttribute('uv', new THREE.Float32BufferAttribute(u, 2));
         g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+        if (grassVerts.length) {
+          g.userData.grassVerts = grassVerts;
+          g.userData.grassRole = grassRole;
+          state.foliageGeometries.push(g);
+        }
         g.computeBoundingBox();
         var home = spin ? node.getWorldPosition(new THREE.Vector3())
           : g.boundingBox.getCenter(new THREE.Vector3());
@@ -1413,9 +1463,262 @@
     return PERSON_COLORS[index % PERSON_COLORS.length];
   }
 
+  // --- Planet size (the growth ladder lives in src/world/growth.js) -------------------
+
+  function loadGrid(frequency) {
+    if (!state.gridCache[frequency]) {
+      state.gridCache[frequency] = fetch(MI.growth.gridUrl(frequency)).then(function (res) {
+        if (!res.ok) throw new Error('hex grid f=' + frequency + ': HTTP ' + res.status);
+        return res.json();
+      });
+    }
+    return state.gridCache[frequency];
+  }
+
+  // World-space camera distances for the current planet. The planet's share of the view grows
+  // with its size — radius/distance goes from 0.13 on the 42-tile planet to 0.33 on the
+  // 1002-tile one, which still fits the frame — so a small planet looks small next to a big
+  // one instead of every size being zoomed to fill the screen.
+  function cameraRange() {
+    var r = RADIUS * state.worldScale;
+    var rest = r / (0.13 + 0.05 * (r - 1));
+    return { rest: rest, min: Math.max(r * 1.4, r + 0.9), max: Math.max(r * 6, rest * 2) };
+  }
+
+  // Everything standing on the planet or laid out flat — but not the tiles themselves.
+  function clearProps() {
+    while (state.props.children.length) state.props.remove(state.props.children[0]);
+    while (state.flatGroup.children.length) state.flatGroup.remove(state.flatGroup.children[0]);
+    if (state.roadGroup) {
+      state.planet.remove(state.roadGroup);
+      state.roadGroup = null;
+    }
+    state.spinners.length = 0;
+  }
+
+  // Swap to the grid for `frequency`: a fresh all-water mesh, scaled so tiles keep their
+  // world size (bigger planet = bigger ball). Clears everything standing on the old grid;
+  // the caller replays the world, remapped onto the new slots (MI.app does both).
+  // options.animate: the planet swells from its old size while the camera eases out.
+  function setPlanet(frequency, options) {
+    var opts = options || {};
+    return loadGrid(frequency).then(function (grid) {
+      var fromScale = state.worldScale;
+      var fromDistance = state.camDistance;
+      clearProps();
+      state.frequency = frequency;
+      state.worldScale = frequency / REFERENCE_FREQUENCY;
+      state.unit = 1 / state.worldScale;
+      TILE_DEPTH = BASE_TILE_DEPTH * state.unit;
+      LAND_LIFT = BASE_LAND_LIFT * state.unit;
+      // Calmer than full tile scale: on a 42-tile planet, per-tile-scale swells lift whole
+      // plates far enough to break the silhouette into steps.
+      WAVE_AMPLITUDE = BASE_WAVE_AMPLITUDE * Math.sqrt(state.unit);
+      buildPlanetMesh(grid);
+      if (state.pet) sizePet();
+
+      var target = state.worldScale;
+      var rest = cameraRange().rest;
+      if (opts.animate && fromScale !== target && !state.flatMode) {
+        animate(1700, function (t) {
+          state.planet.scale.setScalar(fromScale + (target - fromScale) * easeOutBack(t));
+          state.camDistance = fromDistance + (rest - fromDistance) * easeInOut(t);
+          state.updateCamera();
+        });
+      } else {
+        state.planet.scale.setScalar(target);
+        if (!state.flatMode) {
+          state.camDistance = rest;
+          state.updateCamera();
+        }
+      }
+    });
+  }
+
+  function planetInfo() {
+    if (!state || !state.tiles) return null;
+    return {
+      frequency: state.frequency,
+      tiles: state.tiles.length,
+      hexagons: state.tiles.filter(function (t) { return t.sides === 6; }).length
+    };
+  }
+
+  function currentTiles() {
+    return state && state.tiles;
+  }
+
+  // --- Themes -------------------------------------------------------------------------
+
+  // Restyles what's already on screen in place — tiles, water, sky, lights, and every kit
+  // building and tree — so nothing needs respawning.
+  function setTheme(id) {
+    state.themeId = MI.world.themes.ids.indexOf(id) !== -1 ? id : 'meadow';
+    currentTheme = MI.world.themes.get(state.themeId);
+    WATER_COLOR.set(currentTheme.water);
+    LAND_COLOR.set(currentTheme.land);
+    LAND_SIDE_COLOR.set(currentTheme.landSide);
+    WATER_SIDE_COLOR.set(currentTheme.waterSide);
+    applyLighting();
+    [state.material, state.flatWaterMaterial].forEach(function (material) {
+      if (!material) return;
+      var u = material.userData.waterUniforms;
+      u.uDeep.value.set(currentTheme.deep).convertSRGBToLinear();
+      u.uShallow.value.set(currentTheme.shallow).convertSRGBToLinear();
+      u.uFoam.value.set(currentTheme.foam).convertSRGBToLinear();
+    });
+    restyleKit();
+    if (state.tiles) repaintTiles();
+    if (state.flatMode) refreshFlatView(); // its sea skirt is baked, so rebuild it
+  }
+
+  // All kit models share one atlas layout (every colormap is redirected to variation-a),
+  // so one recoloured copy per theme serves them all.
+  function themedAtlas(baseMap) {
+    if (!currentTheme.atlas || !baseMap || !baseMap.image) return baseMap;
+    if (!state.atlasCache[state.themeId]) {
+      var texture = new THREE.CanvasTexture(
+        MI.world.themes.recolorAtlas(baseMap.image, currentTheme.atlas));
+      ['flipY', 'encoding', 'wrapS', 'wrapT', 'magFilter', 'minFilter', 'anisotropy']
+        .forEach(function (key) { texture[key] = baseMap[key]; });
+      state.atlasCache[state.themeId] = texture;
+    }
+    return state.atlasCache[state.themeId];
+  }
+
+  function restyleKit() {
+    state.kitMaterials.forEach(function (material) {
+      if (!material.userData.baseMap) return;
+      material.map = themedAtlas(material.userData.baseMap);
+      material.needsUpdate = true;
+    });
+    var tints = {
+      foliage: new THREE.Color(currentTheme.foliage).convertSRGBToLinear(),
+      ground: new THREE.Color(currentTheme.ground).convertSRGBToLinear()
+    };
+    state.foliageGeometries.forEach(function (geometry) {
+      var colors = geometry.attributes.color;
+      var tint = tints[geometry.userData.grassRole];
+      geometry.userData.grassVerts.forEach(function (v) {
+        colors.setXYZ(v, tint.r, tint.g, tint.b);
+      });
+      colors.needsUpdate = true;
+    });
+  }
+
+  function writeTileColors(tileId, top, side) {
+    var range = state.tileVertexRange[tileId];
+    if (!range) return;
+    var colors = state.geometry.attributes.color.array;
+    for (var i = 0; i < range[1]; i++) {
+      var c = i < range[2] ? top : side;
+      var vi = (range[0] + i) * 3;
+      colors[vi] = c.r;
+      colors[vi + 1] = c.g;
+      colors[vi + 2] = c.b;
+    }
+    state.geometry.attributes.color.needsUpdate = true;
+  }
+
+  function repaintTiles() {
+    state.tiles.forEach(function (tile) {
+      if (state.waterTileIds.has(tile.id)) writeTileColors(tile.id, WATER_COLOR, WATER_SIDE_COLOR);
+      else writeTileColors(tile.id, landTopColor(tile.id), LAND_SIDE_COLOR);
+    });
+  }
+
+  // A far shell of stars, shown only by themes that ask for it (starlight).
+  function makeStars() {
+    var count = 700, positions = new Float32Array(count * 3), seed = 7;
+    function random() { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; }
+    for (var i = 0; i < count; i++) {
+      var y = random() * 2 - 1, a = random() * Math.PI * 2, r = 70 + random() * 40;
+      var ring = Math.sqrt(1 - y * y);
+      positions[i * 3] = r * ring * Math.cos(a);
+      positions[i * 3 + 1] = r * y;
+      positions[i * 3 + 2] = r * ring * Math.sin(a);
+    }
+    var geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    var stars = new THREE.Points(geometry, new THREE.PointsMaterial({
+      color: 0xdfe6ff, size: 0.4, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false
+    }));
+    stars.visible = false;
+    return stars;
+  }
+
+  // --- Pets and skins (models in src/world/cosmetics.js) ------------------------------
+
+  function setPet(id) {
+    if (state.pet) {
+      state.petGroup.remove(state.pet);
+      state.pet = null;
+    }
+    state.petId = id || null;
+    var model = id ? MI.world.cosmetics.makePet(id) : null;
+    if (!model) return;
+    // The holder is steered around the island each frame; the model inside it keeps its own
+    // little motions (wagging, spinning) without fighting that orientation.
+    var holder = new THREE.Group();
+    holder.add(model);
+    holder.userData.tick = model.userData.tick;
+    state.pet = holder;
+    state.petGroup.add(holder);
+    sizePet();
+    if (state.tiles) animatePet(performance.now() / 1000);
+    popIn(holder);
+  }
+
+  function sizePet() {
+    if (state.pet) state.pet.scale.setScalar(state.spacing * 0.85);
+  }
+
+  var UP = new THREE.Vector3(0, 1, 0);
+  var SIDEWAYS = new THREE.Vector3(1, 0, 0);
+
+  // A slow loop just above the rooftops, circling home so it stays by your island.
+  function animatePet(t) {
+    var pet = state.pet;
+    if (!pet || !state.tiles) return;
+    var world = MI.store && MI.store.get();
+    var home = world && typeof world.home === 'number' ? state.tiles[world.home] : null;
+    var h = home ? new THREE.Vector3().fromArray(home.dir)
+      : new THREE.Vector3(0.6, 0.45, 0.66).normalize(); // roughly where the camera starts
+
+    var t1 = new THREE.Vector3().crossVectors(Math.abs(h.y) > 0.95 ? SIDEWAYS : UP, h).normalize();
+    var t2 = new THREE.Vector3().crossVectors(h, t1);
+    var beta = Math.min(0.9, 1.7 * state.spacing / RADIUS); // loop radius, as an angle
+    var a = t * 0.32;
+    var ring = t1.clone().multiplyScalar(Math.cos(a)).add(t2.clone().multiplyScalar(Math.sin(a)));
+    var radial = h.clone().multiplyScalar(Math.cos(beta))
+      .add(ring.multiplyScalar(Math.sin(beta))).normalize();
+    var altitude = RADIUS + LAND_LIFT + state.spacing * (1.15 + 0.08 * Math.sin(t * 2.1));
+    pet.position.copy(radial).multiplyScalar(altitude);
+
+    var forward = t1.clone().multiplyScalar(-Math.sin(a)).add(t2.clone().multiplyScalar(Math.cos(a)));
+    forward.sub(radial.clone().multiplyScalar(forward.dot(radial))).normalize();
+    var right = new THREE.Vector3().crossVectors(radial, forward).normalize();
+    pet.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, radial, forward));
+    if (pet.userData.tick) pet.userData.tick(t);
+  }
+
+  // Re-dress every figure on screen, in both views, without respawning anything.
+  function setSkin(id) {
+    state.skin = id || 'classic';
+    var people = [];
+    [state.props, state.flatGroup].forEach(function (group) {
+      group.traverse(function (node) { if (node.userData && node.userData.isPerson) people.push(node); });
+    });
+    people.forEach(function (person) {
+      MI.world.cosmetics.dressPerson(person, state.skin, person.userData.color);
+    });
+  }
+
   // --- Init ---------------------------------------------------------------------------
 
-  function init(canvasEl) {
+  // options (all optional, from the saved world): { frequency, theme, pet, skin }.
+  function init(canvasEl, options) {
+    var opts = options || {};
     var renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio || 1);
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -1424,7 +1727,7 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     var scene = new THREE.Scene();
-    scene.background = PLANET_BG.clone();
+    scene.background = PLANET_BG;
 
     var camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 1000);
     var hemi = new THREE.HemisphereLight(0xcfe9f5, 0x6f9c5e, 1.1);
@@ -1454,6 +1757,9 @@
     var flatGroup = new THREE.Group();
     flatGroup.visible = false;
     scene.add(flatGroup);
+    // Inside the planet group, so the pet is hidden with it in flat mode and scales with it.
+    var petGroup = new THREE.Group();
+    planet.add(petGroup);
 
     var manager = new THREE.LoadingManager();
     manager.setURLModifier(function (url) {
@@ -1469,8 +1775,18 @@
       hemiLight: hemi, sunLight: sun,
       loader: new THREE.GLTFLoader(manager), glbCache: {}, partsCache: {}, spinners: [],
       camTheta: 0.7, camPhi: 1.1, camDistance: 13,
-      flatMode: false, flatRadius: 3
+      flatMode: false, flatRadius: 3,
+      // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
+      frequency: null, worldScale: 1, unit: 1, gridCache: {},
+      landAsset: {},            // slot -> terrain asset, for repainting on a theme change
+      // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
+      // what's already on screen; one recoloured atlas per theme.
+      kitMaterials: [], foliageGeometries: [], atlasCache: {},
+      themeId: null, skin: opts.skin || 'classic', petId: null, pet: null, petGroup: petGroup
     };
+    state.stars = makeStars();
+    scene.add(state.stars);
+    setTheme(opts.theme || 'meadow');
 
     // Orbit camera, shared by both views: eye on a sphere around the origin, looking in.
     // Dragging phi toward PI/2 puts the eye level with the ground, which is exactly the
@@ -1485,7 +1801,6 @@
     };
     state.updateCamera();
 
-    var MIN_DIST = 7, MAX_DIST = 30;
     var dragging = false, dragMoved = false, lastX = 0, lastY = 0;
     canvasEl.addEventListener('mousedown', function (e) {
       dragging = true; dragMoved = false; lastX = e.clientX; lastY = e.clientY;
@@ -1504,8 +1819,9 @@
     canvasEl.addEventListener('wheel', function (e) {
       e.preventDefault();
       // The flat layout is much smaller than the planet, so it needs its own zoom range.
-      var min = state.flatMode ? 2.5 : MIN_DIST;
-      var max = state.flatMode ? Math.max(8, state.flatRadius * 6) : MAX_DIST;
+      var range = cameraRange();
+      var min = state.flatMode ? 2.5 : range.min;
+      var max = state.flatMode ? Math.max(8, state.flatRadius * 6) : range.max;
       state.camDistance = Math.max(min, Math.min(max, state.camDistance * (1 + e.deltaY * 0.001)));
       state.updateCamera();
     }, { passive: false });
@@ -1517,147 +1833,163 @@
       pickListeners.forEach(function (cb) { cb(slot); });
     });
 
-    return fetch('data/hexgrid.json')
-      .then(function (res) { return res.json(); })
-      .then(function (hexgrid) {
-        MI.world.sphere.setGrid(hexgrid);
-        var tiles = hexgrid.tiles;
-        state.tiles = tiles;
+    return setPlanet(opts.frequency || REFERENCE_FREQUENCY, { animate: false }).then(function () {
+      setPet(opts.pet || null);
+      startLoop();
+    });
+  }
 
-        // Typical cell size, measured across hexagons only — tile 0 is always a pentagon
-        // (icosahedron vertices are), and pentagons are noticeably tighter than the rest.
-        var sample = tiles.filter(function (t) { return t.sides === 6; }).slice(0, 64);
-        state.spacing = sample.reduce(function (sum, t) {
-          return sum + tileApothem(t) * 2;
-        }, 0) / sample.length;
+  // Builds the merged planet mesh for `hexgrid`, replacing any previous one. Every tile starts
+  // as water; the caller replays the saved world on top (MI.app.restore).
+  function buildPlanetMesh(hexgrid) {
+    if (state.planetMesh) {
+      state.planet.remove(state.planetMesh);
+      state.planetMesh.geometry.dispose();
+      state.planetMesh = null;
+    }
+    MI.world.sphere.setGrid(hexgrid);
+    var tiles = hexgrid.tiles;
+    state.tiles = tiles;
+    state.landAsset = {};
 
-        // Per tile: one fan triangle per edge for the top, plus two for that edge's wall.
-        var totalTriangles = tiles.reduce(function (sum, t) { return sum + t.sides * 3; }, 0);
-        var positions = new Float32Array(totalTriangles * 3 * 3);
-        var colors = new Float32Array(totalTriangles * 3 * 3);
-        var uvs = new Float32Array(totalTriangles * 3 * 2);
-        var land = new Float32Array(totalTriangles * 3); // 0 = water (procedural), 1 = land
-        var faceToTileId = new Int32Array(totalTriangles);
-        var tileVertexRange = {};
-        var vCursor = 0, triCursor = 0;
+    // Typical cell size, measured across hexagons only — tile 0 is always a pentagon
+    // (icosahedron vertices are), and pentagons are noticeably tighter than the rest.
+    var sample = tiles.filter(function (t) { return t.sides === 6; }).slice(0, 64);
+    state.spacing = sample.reduce(function (sum, t) {
+      return sum + tileApothem(t) * 2;
+    }, 0) / sample.length;
 
-        tiles.forEach(function (tile) {
-          var center = tile.dir.map(function (c) { return c * RADIUS; });
-          var normal = new THREE.Vector3().fromArray(tile.dir);
-          var tangent = new THREE.Vector3(0, 1, 0);
-          if (Math.abs(normal.y) > 0.9) tangent.set(1, 0, 0);
-          tangent.cross(normal).normalize();
-          var bitangent = new THREE.Vector3().crossVectors(normal, tangent);
-          // Rotate each tile's sampling deterministically so the atlas doesn't
-          // look stamped. UVs are fixed at rest, so the pattern moves with water.
-          var angle = tile.id * 2.399963229728653;
-          tangent.applyAxisAngle(normal, angle);
-          bitangent.crossVectors(normal, tangent);
-          var uvScale = 0;
-          tile.corners.forEach(function (corner) {
-            var delta = new THREE.Vector3().fromArray(corner).sub(normal);
-            uvScale = Math.max(uvScale, Math.abs(delta.dot(tangent)), Math.abs(delta.dot(bitangent)));
-          });
-          var startVert = vCursor;
-          for (var k = 0; k < tile.sides; k++) {
-            var c0 = normalize(lerp3(tile.corners[k], tile.dir, GAP_AMOUNT));
-            var c1 = normalize(lerp3(tile.corners[(k + 1) % tile.sides], tile.dir, GAP_AMOUNT));
-            var tri = [center, c0.map(function (c) { return c * RADIUS; }), c1.map(function (c) { return c * RADIUS; })];
-            for (var v = 0; v < 3; v++) {
-              positions[vCursor * 3] = tri[v][0];
-              positions[vCursor * 3 + 1] = tri[v][1];
-              positions[vCursor * 3 + 2] = tri[v][2];
-              colors[vCursor * 3] = WATER_COLOR.r;
-              colors[vCursor * 3 + 1] = WATER_COLOR.g;
-              colors[vCursor * 3 + 2] = WATER_COLOR.b;
-              var point = new THREE.Vector3().fromArray(tri[v]).multiplyScalar(1 / RADIUS).sub(normal);
-              // Inset samples from atlas borders to prevent filtering bleed.
-              uvs[vCursor * 2] = 0.25 + 0.20 * point.dot(tangent) / uvScale;
-              uvs[vCursor * 2 + 1] = 0.5 + 0.4 * point.dot(bitangent) / uvScale;
-              vCursor++;
-            }
-            faceToTileId[triCursor++] = tile.id;
-          }
-          var topVerts = vCursor - startVert;
+    // Per tile: one fan triangle per edge for the top, plus two for that edge's wall.
+    var totalTriangles = tiles.reduce(function (sum, t) { return sum + t.sides * 3; }, 0);
+    var positions = new Float32Array(totalTriangles * 3 * 3);
+    var colors = new Float32Array(totalTriangles * 3 * 3);
+    var uvs = new Float32Array(totalTriangles * 3 * 2);
+    var land = new Float32Array(totalTriangles * 3); // 0 = water (procedural), 1 = land
+    var faceToTileId = new Int32Array(totalTriangles);
+    var tileVertexRange = {};
+    var vCursor = 0, triCursor = 0;
 
-          // Walls dropping inward from every edge. Without them, a bobbing water tile
-          // separates from its neighbours and you see straight through the crack to the
-          // background. They also give land its Minecraft-style dirt side.
-          for (k = 0; k < tile.sides; k++) {
-            var e0 = normalize(lerp3(tile.corners[k], tile.dir, GAP_AMOUNT));
-            var e1 = normalize(lerp3(tile.corners[(k + 1) % tile.sides], tile.dir, GAP_AMOUNT));
-            var top0 = e0.map(function (c) { return c * RADIUS; });
-            var top1 = e1.map(function (c) { return c * RADIUS; });
-            var low0 = e0.map(function (c) { return c * (RADIUS - TILE_DEPTH); });
-            var low1 = e1.map(function (c) { return c * (RADIUS - TILE_DEPTH); });
-            // (t0, b1, t1) is the winding that faces outward here — verified against the grid.
-            var wall = [top0, low1, top1, top0, low0, low1];
-            for (var w = 0; w < wall.length; w++) {
-              positions[vCursor * 3] = wall[w][0];
-              positions[vCursor * 3 + 1] = wall[w][1];
-              positions[vCursor * 3 + 2] = wall[w][2];
-              colors[vCursor * 3] = WATER_SIDE_COLOR.r;
-              colors[vCursor * 3 + 1] = WATER_SIDE_COLOR.g;
-              colors[vCursor * 3 + 2] = WATER_SIDE_COLOR.b;
-              // Sides always take the plain vertex-colour path: the procedural water reads
-              // badly on a vertical face, and these should be solid rock/deep-water anyway.
-              land[vCursor] = 1;
-              uvs[vCursor * 2] = 0.25;
-              uvs[vCursor * 2 + 1] = 0.5;
-              vCursor++;
-            }
-            faceToTileId[triCursor++] = tile.id;
-            faceToTileId[triCursor++] = tile.id;
-          }
-          tileVertexRange[tile.id] = [startVert, vCursor - startVert, topVerts];
-        });
-
-        state.basePositions = positions.slice(); // pristine sea-level geometry
-        // Where each vertex currently belongs at rest — identical to basePositions except
-        // for tiles that have been raised into land. Animations offset from this.
-        state.restPositions = positions.slice();
-        state.waterTileIds = new Set(tiles.map(function (t) { return t.id; }));
-        state.tileVertexRange = tileVertexRange;
-        state.faceToTileId = faceToTileId;
-
-        var geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-        geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-        geometry.setAttribute('aLand', new THREE.BufferAttribute(land, 1));
-        geometry.computeVertexNormals();
-        state.geometry = geometry;
-
-        var material = new THREE.MeshStandardMaterial({
-          map: makeSurfaceTexture(), vertexColors: true, flatShading: true, roughness: 0.85
-        });
-        installWaterShader(material);
-        state.material = material;
-        var planetMesh = new THREE.Mesh(geometry, material);
-        planetMesh.castShadow = true;
-        planetMesh.receiveShadow = true;
-        planet.add(planetMesh);
-        state.planetMesh = planetMesh;
-
-        var lastFrame = 0;
-        (function loop(timestampMs) {
-          requestAnimationFrame(loop);
-          var now = timestampMs || 0;
-          var dt = Math.min((now - lastFrame) / 1000, 0.05);
-          lastFrame = now;
-
-          state.material.userData.waterUniforms.uTime.value = now / 1000;
-          if (state.flatWaterMaterial) {
-            state.flatWaterMaterial.userData.waterUniforms.uTime.value = now / 1000;
-          }
-          animateWater(now / 1000);
-          state.spinners.forEach(function (group) { spinRotors(group, dt); });
-          for (var i = animations.length - 1; i >= 0; i--) {
-            if (animations[i](now)) animations.splice(i, 1);
-          }
-          renderer.render(scene, camera);
-        })();
+    tiles.forEach(function (tile) {
+      var center = tile.dir.map(function (c) { return c * RADIUS; });
+      var normal = new THREE.Vector3().fromArray(tile.dir);
+      var tangent = new THREE.Vector3(0, 1, 0);
+      if (Math.abs(normal.y) > 0.9) tangent.set(1, 0, 0);
+      tangent.cross(normal).normalize();
+      var bitangent = new THREE.Vector3().crossVectors(normal, tangent);
+      // Rotate each tile's sampling deterministically so the atlas doesn't
+      // look stamped. UVs are fixed at rest, so the pattern moves with water.
+      var angle = tile.id * 2.399963229728653;
+      tangent.applyAxisAngle(normal, angle);
+      bitangent.crossVectors(normal, tangent);
+      var uvScale = 0;
+      tile.corners.forEach(function (corner) {
+        var delta = new THREE.Vector3().fromArray(corner).sub(normal);
+        uvScale = Math.max(uvScale, Math.abs(delta.dot(tangent)), Math.abs(delta.dot(bitangent)));
       });
+      var startVert = vCursor;
+      for (var k = 0; k < tile.sides; k++) {
+        var c0 = normalize(lerp3(tile.corners[k], tile.dir, GAP_AMOUNT));
+        var c1 = normalize(lerp3(tile.corners[(k + 1) % tile.sides], tile.dir, GAP_AMOUNT));
+        var tri = [center, c0.map(function (c) { return c * RADIUS; }), c1.map(function (c) { return c * RADIUS; })];
+        for (var v = 0; v < 3; v++) {
+          positions[vCursor * 3] = tri[v][0];
+          positions[vCursor * 3 + 1] = tri[v][1];
+          positions[vCursor * 3 + 2] = tri[v][2];
+          colors[vCursor * 3] = WATER_COLOR.r;
+          colors[vCursor * 3 + 1] = WATER_COLOR.g;
+          colors[vCursor * 3 + 2] = WATER_COLOR.b;
+          var point = new THREE.Vector3().fromArray(tri[v]).multiplyScalar(1 / RADIUS).sub(normal);
+          // Inset samples from atlas borders to prevent filtering bleed.
+          uvs[vCursor * 2] = 0.25 + 0.20 * point.dot(tangent) / uvScale;
+          uvs[vCursor * 2 + 1] = 0.5 + 0.4 * point.dot(bitangent) / uvScale;
+          vCursor++;
+        }
+        faceToTileId[triCursor++] = tile.id;
+      }
+      var topVerts = vCursor - startVert;
+
+      // Walls dropping inward from every edge. Without them, a bobbing water tile
+      // separates from its neighbours and you see straight through the crack to the
+      // background. They also give land its Minecraft-style dirt side.
+      for (k = 0; k < tile.sides; k++) {
+        var e0 = normalize(lerp3(tile.corners[k], tile.dir, GAP_AMOUNT));
+        var e1 = normalize(lerp3(tile.corners[(k + 1) % tile.sides], tile.dir, GAP_AMOUNT));
+        var top0 = e0.map(function (c) { return c * RADIUS; });
+        var top1 = e1.map(function (c) { return c * RADIUS; });
+        var low0 = e0.map(function (c) { return c * (RADIUS - TILE_DEPTH); });
+        var low1 = e1.map(function (c) { return c * (RADIUS - TILE_DEPTH); });
+        // (t0, b1, t1) is the winding that faces outward here — verified against the grid.
+        var wall = [top0, low1, top1, top0, low0, low1];
+        for (var w = 0; w < wall.length; w++) {
+          positions[vCursor * 3] = wall[w][0];
+          positions[vCursor * 3 + 1] = wall[w][1];
+          positions[vCursor * 3 + 2] = wall[w][2];
+          colors[vCursor * 3] = WATER_SIDE_COLOR.r;
+          colors[vCursor * 3 + 1] = WATER_SIDE_COLOR.g;
+          colors[vCursor * 3 + 2] = WATER_SIDE_COLOR.b;
+          // Sides always take the plain vertex-colour path: the procedural water reads
+          // badly on a vertical face, and these should be solid rock/deep-water anyway.
+          land[vCursor] = 1;
+          uvs[vCursor * 2] = 0.25;
+          uvs[vCursor * 2 + 1] = 0.5;
+          vCursor++;
+        }
+        faceToTileId[triCursor++] = tile.id;
+        faceToTileId[triCursor++] = tile.id;
+      }
+      tileVertexRange[tile.id] = [startVert, vCursor - startVert, topVerts];
+    });
+
+    state.basePositions = positions.slice(); // pristine sea-level geometry
+    // Where each vertex currently belongs at rest — identical to basePositions except
+    // for tiles that have been raised into land. Animations offset from this.
+    state.restPositions = positions.slice();
+    state.waterTileIds = new Set(tiles.map(function (t) { return t.id; }));
+    state.tileVertexRange = tileVertexRange;
+    state.faceToTileId = faceToTileId;
+
+    var geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('aLand', new THREE.BufferAttribute(land, 1));
+    geometry.computeVertexNormals();
+    state.geometry = geometry;
+
+    // One material for the life of the page — a rebuild only swaps geometry.
+    if (!state.material) {
+      state.material = new THREE.MeshStandardMaterial({
+        map: makeSurfaceTexture(), vertexColors: true, flatShading: true, roughness: 0.85
+      });
+      installWaterShader(state.material);
+    }
+    var planetMesh = new THREE.Mesh(geometry, state.material);
+    planetMesh.castShadow = true;
+    planetMesh.receiveShadow = true;
+    state.planet.add(planetMesh);
+    state.planetMesh = planetMesh;
+  }
+
+  function startLoop() {
+    var lastFrame = 0;
+    (function loop(timestampMs) {
+      requestAnimationFrame(loop);
+      var now = timestampMs || 0;
+      var dt = Math.min((now - lastFrame) / 1000, 0.05);
+      lastFrame = now;
+
+      state.material.userData.waterUniforms.uTime.value = now / 1000;
+      if (state.flatWaterMaterial) {
+        state.flatWaterMaterial.userData.waterUniforms.uTime.value = now / 1000;
+      }
+      animateWater(now / 1000);
+      animatePet(now / 1000);
+      state.spinners.forEach(function (group) { spinRotors(group, dt); });
+      for (var i = animations.length - 1; i >= 0; i--) {
+        if (animations[i](now)) animations.splice(i, 1);
+      }
+      state.renderer.render(state.scene, state.camera);
+    })();
   }
 
   // Rigid per-tile bob along its own outward normal — a traveling-looking swell rather
@@ -1729,4 +2061,11 @@
   MI.world.landscapeCountFor = landscapeCountFor;
   MI.world.spawnLandscape = spawnLandscape;
   MI.world.personColor = personColor;
+  MI.world.setPlanet = setPlanet;
+  MI.world.loadGrid = loadGrid;
+  MI.world.planetInfo = planetInfo;
+  MI.world.currentTiles = currentTiles;
+  MI.world.setTheme = setTheme;
+  MI.world.setPet = setPet;
+  MI.world.setSkin = setSkin;
 })();

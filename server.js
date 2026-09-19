@@ -200,10 +200,20 @@ http.createServer(async (req, res) => {
     if (rel.endsWith('/')) rel += 'index.html';
     const file = path.normalize(path.join(ROOT, rel));
     if (!file.startsWith(ROOT) || /(^|[\\/])\.env/.test(file)) { res.writeHead(403); return res.end('Forbidden'); }
-    fs.readFile(file, (err, buf) => {
-      if (err) { res.writeHead(404); return res.end('Not found'); }
-      res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
-      res.end(buf);
+    fs.stat(file, (statErr, stat) => {
+      // Directory requested without a trailing slash (e.g. /size-test) — redirect to add
+      // the slash rather than serving index.html's content at that URL: the page's own
+      // relative asset paths (e.g. "size-test.js") resolve against the URL's directory,
+      // so serving it at a slash-less URL would silently 404 every relative reference.
+      if (!statErr && stat.isDirectory()) {
+        res.writeHead(301, { Location: url.pathname + '/' });
+        return res.end();
+      }
+      fs.readFile(file, (err, buf) => {
+        if (err) { res.writeHead(404); return res.end('Not found'); }
+        res.writeHead(200, { 'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+        res.end(buf);
+      });
     });
   } catch (e) {
     res.writeHead(500); res.end(String(e));
