@@ -1,0 +1,7 @@
+# Dev-only: the deployed site is the static files plus api/.
+server.js
+scripts/
+tools/
+docs/
+.claude/
+CLAUDE.md
