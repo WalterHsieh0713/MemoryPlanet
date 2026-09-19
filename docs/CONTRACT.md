@@ -65,6 +65,8 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (the island view; animated lift-and-gather unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
 - The island's shape and roads come from `MI.island`; `world.js` draws it (`buildFlatView`, `buildIslandUnderside`, `makeSky`) and animates the change of view (`makeFoldRig`). `MI.world.computeFlatLayout` / `computeRoads` are gone with the strip layout.
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
+- `highlightSlot(slot, { soft })` / `clearHighlight()` / `highlightedSlot()` — marks one tile: a vertex tint on the planet, a gold rim and a lift on the island. Survives theme changes and the fold.
+- `onHover(cb(slot | null) -> bool)` — one raycast per frame; return true for tiles that open something and the cursor becomes a pointer.
 - **Planned:** wandering people (walkers) on person-linked roads.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
   `slotToDir(slot, homeDir) -> [x,y,z]`, `orientToSurface(object3d, dir, rotY, height)`,
@@ -76,7 +78,7 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `addEntry` also pays shards and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
 - `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset to the smallest planet).
 - `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`.
-- **Planned opts:** `people: [{ name, personId? }]` (explicit "who was there?") and `confirmPerson(name, candidates) -> Promise<Person|null>` (the "same person?" prompt; with no callback, an exact name reuses the person and a merely similar name creates a new one).
+- `opts.tags = { people: [{ name, personId? }], category, mood, importance }` from the tag row; each field falls back to `MI.ai.guess`. A `personId` is reused directly, so there is no name matching and no "same person?" prompt.
 
 ## Rules
 - One owner per file; need a change in someone else's file? Ask them (or open a small PR to them).
