@@ -5,6 +5,9 @@
 ## Run
 `node server.js` then open http://localhost:8000 (must be served over HTTP; `file://` blocks GLB loading). Optional `.env` with `ANTHROPIC_API_KEY=...` (never commit it).
 
+## Deploy
+Live on Vercel from `main`: it serves the repo as static files and runs `api/` as serverless functions, so **`server.js` is local-only** and is not deployed. The Claude call lives in `api/_classify.js`, shared by `server.js` and `api/classify.js` — change it in one place. `vercel.json` states outright that there is no framework, no build and no install step (without it a deploy answered the page itself with `FUNCTION_INVOCATION_FAILED`, having read `server.js` as a server entrypoint). Set `ANTHROPIC_API_KEY` in the Vercel project's environment variables; without it the endpoint 503s and the browser falls back to the keyword classifier.
+
 ## Conventions
 - **Vanilla Three.js r128 from the local `three-r128.min.js`, no build step, no ES modules.** Plain `<script>` tags in `index.html`, everything attached to the global `MI` namespace. Do not introduce npm packages, bundlers, React or R3F.
 - `vendor/GLTFLoader.js` provides `THREE.GLTFLoader` (r128's CDN bundle doesn't include it).
@@ -22,8 +25,10 @@ Progression (built 2026-09-19): worlds start on the smallest planet (42 tiles) a
 
 Island view (was the flat view): the planet's land is coiled into a compact floating island rather than unrolled tile-for-tile, because the land grows as a winding chain and pressing it flat gave a strip. `src/world/island.js` (pure, `node scripts/test-island.js`) places each tile outward from home beside a planet neighbour, on the free cell nearest the middle, and re-routes the roads across the island (cheapest path, reusing paved cells). The land sits on a block of sea built per tile in `buildIslandUnderside` (deepest in the middle, a thin band of earth under the grass, the rest running the planet’s own water shader with `aLand` 0), with a soft shadow far below. The island hangs in a painted sky dome (`makeSky`/`makeSkyTexture`, per-theme `skyTop`/`skyBottom`/`clouds`, drawn wider than the starfield) that fades in with the view. Switching views is animated: the camera turns to home, tiles lift off the sphere and gather into the island while the planet shrinks away, and the sea grows down once they land (`makeFoldRig`, `unfoldToFlat`/`foldToPlanet`); the dithered cross-fade, lighting blend and mid-flight input lock are unchanged. Buttons read "island view" / "planet view".
 
+Assets (merged 2026-09-19 from `asset_packs_and_textures`): six more Kenney packs — fantasy town, factory, holiday, castle, pirate, cube pets — plus `assets/standalone/`, a staging area of individual objects sorted by kind. GLB and textures only; the `.fbx`/`.obj`/`.mtl` copies were dropped since only `vendor/GLTFLoader.js` reads models, and they were 40MB of the 74MB. **No code loads any of them yet** — see the `.vercelignore` rule above before you do.
+
 Known gaps:
-- Classifier mostly runs on the keyword heuristic (no `.env`, substring-matching bugs, weak people detection); the Claude path is untested live.
+- Classifier: `api/classify.js` makes the Claude path deployable, but it has still never been seen working — there is no local `.env`, and the deployed key may not be set either, so every entry in practice goes through the keyword heuristic, which has substring-matching bugs and weak people detection.
 - Roads currently link ALL memories chronologically; people are static (no walking).
 - Input method is still being decided; shards currently pay per entry via `MI.app.addEntry`, so any new input path that goes through it earns automatically.
 - "Start over" wipes shards and unlocks along with the planet.
