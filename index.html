@@ -162,6 +162,61 @@
   #demo-btn:hover { background: #dcf0f7; transform: translateY(-1px); }
   #demo-btn:active { transform: scale(.96); }
 
+  /* --- the tag row: who, how it felt, what kind. Shown while you're writing. --- */
+  #tag-row {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; width: 100%;
+    padding: 10px 14px; border-radius: 20px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    opacity: 0; transform: translateY(6px); pointer-events: none;
+    max-height: 0; padding-top: 0; padding-bottom: 0;
+    transition: opacity .2s ease, transform .3s var(--spring), max-height .3s ease,
+                padding .3s ease;
+  }
+  #tag-row.show {
+    opacity: 1; transform: none; pointer-events: auto;
+    max-height: 120px; padding-top: 10px; padding-bottom: 10px;
+  }
+  .tag-group { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+  .tag-label {
+    font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--ink-soft);
+  }
+  #tag-people { display: flex; gap: 4px; flex-wrap: wrap; }
+  #tag-mood, #tag-cat { display: flex; gap: 3px; }
+  #tag-person-input {
+    border: none; outline: none; font-family: inherit; width: 74px;
+    padding: 5px 10px; border-radius: 999px; background: #eef4f6;
+    font-size: 12px; font-weight: 600; color: var(--ink);
+  }
+  #tag-person-input::placeholder { color: var(--ink-soft); font-weight: 600; }
+  .tag-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 8px 4px 10px; border-radius: 999px;
+    background: #eaf6fa; font-size: 12px; font-weight: 700; color: var(--ink);
+  }
+  .tag-chip .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .tag-chip button {
+    border: none; cursor: pointer; font-family: inherit; background: none;
+    color: var(--ink-soft); font-size: 13px; line-height: 1; padding: 0 1px;
+  }
+  .tag-chip button:hover { color: var(--ink); }
+  .tag-opt {
+    border: none; cursor: pointer; font-family: inherit;
+    width: 24px; height: 24px; border-radius: 50%; background: #eef4f6;
+    font-size: 13px; line-height: 1; display: grid; place-items: center;
+    transition: background .18s ease, transform .25s var(--spring);
+  }
+  .tag-opt:hover { background: #e2ecef; transform: translateY(-1px); }
+  .tag-opt[aria-pressed="true"] { background: var(--accent); box-shadow: var(--shadow-soft); }
+  #tag-big {
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 6px 11px; border-radius: 999px; background: #eef4f6;
+    color: var(--ink-soft); font-size: 11px; font-weight: 700;
+    transition: background .18s ease, color .18s ease, transform .25s var(--spring);
+  }
+  #tag-big:hover { transform: translateY(-1px); }
+  #tag-big[aria-pressed="true"] { background: #fff1d6; color: #b45309; }
+
   #journal-card {
     display: flex; align-items: center; gap: 10px; width: 100%;
     padding: 10px 10px 10px 22px; border-radius: 999px;
@@ -414,6 +469,24 @@
   <div id="empty-hint">
     <div>Your planet is all ocean.<br /><b>Write a memory to make land ✨</b><br />Each one earns <span class="shard">✦</span> shards, and your planet grows as it fills.</div>
     <button id="demo-btn">or load a demo planet</button>
+  </div>
+  <div id="tag-row">
+    <div class="tag-group" id="tag-people-group">
+      <span class="tag-label">who</span>
+      <div id="tag-people"></div>
+      <input id="tag-person-input" type="text" autocomplete="off" placeholder="name…"
+             list="tag-person-list" aria-label="Who was there?" />
+      <datalist id="tag-person-list"></datalist>
+    </div>
+    <div class="tag-group">
+      <span class="tag-label">felt</span>
+      <div id="tag-mood" role="group" aria-label="How it felt"></div>
+    </div>
+    <div class="tag-group">
+      <span class="tag-label">kind</span>
+      <div id="tag-cat" role="group" aria-label="What kind of memory"></div>
+    </div>
+    <button id="tag-big" aria-pressed="false" title="Mark this as a big day">★ big day</button>
   </div>
   <div id="journal-card">
     <input id="entry-input" type="text" autocomplete="off" placeholder="What happened today?" />

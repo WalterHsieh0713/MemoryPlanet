@@ -33,7 +33,8 @@
       'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
-      'book', 'book-list']
+      'journal', 'book', 'book-list', 'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
+      'tag-mood', 'tag-cat', 'tag-big']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -61,6 +62,189 @@
     refreshWallet();
     refreshPlanet();
     renderBook();
+    refreshPersonList();
+  }
+
+  // --- The tag row ------------------------------------------------------------------------
+  // Who was there, how it felt, what kind of day: asked rather than guessed. The keyword
+  // guess pre-selects as you type, so the fast path is still type-and-enter, but a control
+  // you have touched is never overwritten by a later guess.
+
+  // Faces map onto the same mood shape the rest of the app stores.
+  var MOODS = [
+    { key: 'rough', emoji: '😞', label: 'rough', valence: -0.8, intensity: 0.8 },
+    { key: 'low', emoji: '😕', label: 'low', valence: -0.35, intensity: 0.5 },
+    { key: 'steady', emoji: '😐', label: 'steady', valence: 0.05, intensity: 0.3 },
+    { key: 'good', emoji: '🙂', label: 'good', valence: 0.45, intensity: 0.5 },
+    { key: 'joyful', emoji: '😄', label: 'joyful', valence: 0.9, intensity: 0.85 }
+  ];
+  var CATEGORIES = ['achievement', 'everyday', 'travel', 'home', 'social', 'other'];
+
+  // people: [{ name, personId? }] — personId set when picked from the people you already have.
+  var tags = { people: [], mood: null, category: null, big: false };
+  var touched = {};   // controls the writer has set by hand; guesses leave these alone
+  var guessTimer = null;
+
+  function moodFor(key) {
+    return MOODS.filter(function (m) { return m.key === key; })[0] || null;
+  }
+
+  // The stored mood label comes from thresholds in classify.js, so a guess arrives as a
+  // label rather than one of our keys.
+  function moodKeyFromLabel(label) {
+    return moodFor(label) ? label : 'steady';
+  }
+
+  function buildTagRow() {
+    MOODS.forEach(function (mood) {
+      var button = document.createElement('button');
+      button.className = 'tag-opt';
+      button.textContent = mood.emoji;
+      button.title = mood.label;
+      button.setAttribute('aria-label', mood.label);
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', function () {
+        touched.mood = true;
+        tags.mood = tags.mood === mood.key ? null : mood.key;
+        paintTagRow();
+      });
+      el['tag-mood'].appendChild(button);
+    });
+
+    CATEGORIES.forEach(function (category) {
+      var flavor = CATEGORY_FLAVOR[category] || CATEGORY_FLAVOR.other;
+      var button = document.createElement('button');
+      button.className = 'tag-opt';
+      button.textContent = flavor.emoji;
+      button.title = category;
+      button.setAttribute('aria-label', category);
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', function () {
+        touched.category = true;
+        tags.category = tags.category === category ? null : category;
+        paintTagRow();
+      });
+      el['tag-cat'].appendChild(button);
+    });
+
+    el['tag-big'].addEventListener('click', function () {
+      touched.importance = true;
+      tags.big = !tags.big;
+      paintTagRow();
+    });
+
+    el['tag-person-input'].addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitPerson(); }
+      if (e.key === 'Backspace' && !el['tag-person-input'].value && tags.people.length) {
+        tags.people.pop();
+        paintTagRow();
+      }
+    });
+    // Picking from the datalist fires input, not change, in some browsers; both are cheap.
+    el['tag-person-input'].addEventListener('change', commitPerson);
+    el['tag-person-input'].addEventListener('blur', commitPerson);
+  }
+
+  function commitPerson() {
+    var name = el['tag-person-input'].value.trim();
+    if (!name) return;
+    touched.people = true;
+    el['tag-person-input'].value = '';
+    addPersonTag(name);
+  }
+
+  function addPersonTag(name, personId) {
+    var key = name.trim().toLowerCase();
+    if (!key) return;
+    var already = tags.people.filter(function (p) { return p.name.toLowerCase() === key; });
+    if (already.length) return;
+    // Typing a name you already have is the same person — no need to ask.
+    var known = personId ? null : MI.store.findPerson(name);
+    tags.people.push({ name: name.trim(), personId: personId || (known && known.id) || null });
+    paintTagRow();
+  }
+
+  function paintTagRow() {
+    el['tag-people'].innerHTML = '';
+    tags.people.forEach(function (entry, index) {
+      var person = entry.personId
+        ? MI.store.get().people.filter(function (p) { return p.id === entry.personId; })[0]
+        : null;
+      var chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      if (person && person.appearance && person.appearance.color !== undefined) {
+        var dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = '#' + person.appearance.color.toString(16).padStart(6, '0');
+        chip.appendChild(dot);
+      }
+      chip.appendChild(document.createTextNode(entry.name));
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Remove ' + entry.name);
+      remove.addEventListener('click', function () {
+        touched.people = true;
+        tags.people.splice(index, 1);
+        paintTagRow();
+      });
+      chip.appendChild(remove);
+      el['tag-people'].appendChild(chip);
+    });
+
+    Array.prototype.forEach.call(el['tag-mood'].children, function (button, i) {
+      button.setAttribute('aria-pressed', String(MOODS[i].key === tags.mood));
+    });
+    Array.prototype.forEach.call(el['tag-cat'].children, function (button, i) {
+      button.setAttribute('aria-pressed', String(CATEGORIES[i] === tags.category));
+    });
+    el['tag-big'].setAttribute('aria-pressed', String(tags.big));
+  }
+
+  // Offer the people this world already knows, so the same name means the same person.
+  function refreshPersonList() {
+    el['tag-person-list'].innerHTML = '';
+    MI.store.get().people.forEach(function (person) {
+      var option = document.createElement('option');
+      option.value = person.name;
+      el['tag-person-list'].appendChild(option);
+    });
+  }
+
+  function guessTags() {
+    var text = el['entry-input'].value.trim();
+    if (!text) { resetTags(); return; }
+    var guess = MI.ai.guess(text);
+    if (!touched.category) tags.category = guess.category;
+    if (!touched.mood) tags.mood = moodKeyFromLabel(guess.mood.label);
+    if (!touched.people) {
+      tags.people = (guess.people || []).map(function (p) {
+        var known = MI.store.findPerson(p.name);
+        return { name: p.name, personId: known ? known.id : null };
+      });
+    }
+    paintTagRow();
+  }
+
+  function resetTags() {
+    tags = { people: [], mood: null, category: null, big: false };
+    touched = {};
+    el['tag-person-input'].value = '';
+    paintTagRow();
+  }
+
+  function currentTags() {
+    var mood = moodFor(tags.mood);
+    return {
+      people: tags.people.slice(),
+      category: tags.category,
+      mood: mood ? { label: mood.label, valence: mood.valence, intensity: mood.intensity } : null,
+      importance: tags.big ? 4 : null
+    };
+  }
+
+  function showTagRow(on) {
+    el['tag-row'].classList.toggle('show', !!on);
   }
 
   // --- The book ---------------------------------------------------------------------------
@@ -429,13 +613,17 @@
   function submitEntry() {
     var text = el['entry-input'].value.trim();
     if (!text) return;
+    commitPerson(); // a name still sitting in the box counts
+    var entryTags = currentTags();
     setBusy(true);
     el['entry-input'].value = '';
+    resetTags();
+    showTagRow(false);
     hideDetail();
 
     // The memory's toast comes from the app's 'reward' event as it lands, and a growth toast
     // from 'grew' — this only has to handle the end of the whole thing.
-    MI.app.addEntry(text).then(function (memory) {
+    MI.app.addEntry(text, { tags: entryTags }).then(function (memory) {
       setBusy(false);
       if (!memory) {
         toast('🌊', 'Your planet is full!', 'Every buildable tile has a memory on it.', 0, 4200);
@@ -521,6 +709,25 @@
     el['submit-btn'].addEventListener('click', submitEntry);
     el['entry-input'].addEventListener('keydown', function (e) {
       if (e.key === 'Enter') submitEntry();
+    });
+
+    buildTagRow();
+    paintTagRow();
+    el['entry-input'].addEventListener('input', function () {
+      showTagRow(!!el['entry-input'].value.trim());
+      clearTimeout(guessTimer);
+      guessTimer = setTimeout(guessTags, 220); // after the typing pauses, not on every key
+    });
+    el['entry-input'].addEventListener('focus', function () {
+      refreshPersonList();
+      if (el['entry-input'].value.trim()) showTagRow(true);
+    });
+    // Leaving the whole journal area puts the row away, unless something is tagged.
+    el.journal.addEventListener('focusout', function () {
+      setTimeout(function () {
+        if (el.journal.contains(document.activeElement)) return;
+        if (!el['entry-input'].value.trim()) showTagRow(false);
+      }, 0);
     });
     el['demo-btn'].addEventListener('click', loadDemoPlanet);
     el['detail-close'].addEventListener('click', hideDetail);

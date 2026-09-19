@@ -42,22 +42,38 @@
     { words: ['friend', 'buddy', 'roommate'], relationship: 'friend' }
   ];
 
+  // Whole words only, give or take a plural or a tense: matching anywhere inside a word
+  // found "met" in "something", "won" in "wonderful" and "home" in "homework", which is how
+  // a quiet evening at home used to get filed as work.
+  var wordCache = {};
+  function wordPattern(word) {
+    if (!wordCache[word]) {
+      var escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+      wordCache[word] = new RegExp('\\b' + escaped + '(?:s|es|ed|d|ing)?\\b', 'i');
+    }
+    return wordCache[word];
+  }
+
   function countHits(lower, words) {
     var n = 0;
     words.forEach(function (w) {
-      if (lower.indexOf(w) !== -1) n++;
+      if (wordPattern(w).test(lower)) n++;
     });
     return n;
   }
 
+  // Ties go to the more specific category: 'everyday' is the fallback for anything with no
+  // signal, so it should never win a category that actually matched the same number of words.
+  var CATEGORY_ORDER = ['achievement', 'travel', 'home', 'social', 'everyday'];
+
   function pickCategory(lower) {
-    var best = 'other';
+    var best = null;
     var bestScore = 0;
-    Object.keys(CATEGORY_KEYWORDS).forEach(function (cat) {
+    CATEGORY_ORDER.forEach(function (cat) {
       var score = countHits(lower, CATEGORY_KEYWORDS[cat]);
       if (score > bestScore) { bestScore = score; best = cat; }
     });
-    return bestScore > 0 ? best : 'everyday';
+    return best || 'other';
   }
 
   function pickMood(lower) {
@@ -181,5 +197,8 @@
     });
   }
 
-  MI.ai = { classify: classify, heuristic: heuristic };
+  // guess() is what the entry flow uses: instant, offline, and only ever a starting point —
+  // the tag row beside the text box is what actually decides a memory's fields. classify()
+  // is Claude, kept for the title suggestion and called from nowhere else.
+  MI.ai = { guess: safeHeuristic, classify: classify, heuristic: heuristic };
 })();
