@@ -44,6 +44,11 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `shouldGrow(world, tiles, f)` — true once half the hexagons are land and a bigger size exists
 - `remap(world, oldTiles, newTiles, oldF, newF)` — mutates every saved slot onto the new grid, keeping tile size constant (island keeps its shape; new ocean appears around it) and bridging any gap so the island stays connected. Returns `{ mapping, added }`.
 
+## MI.island  (`src/world/island.js`, pure — runs under Node: `node scripts/test-island.js`)
+- `layout(landSlots, homeSlot, tiles) -> { cells: {slot: {i, j, ring}}, radius }` — coils the planet's land into a compact island on a flat hex grid (axial `i, j`; direction k is `DIRS[k]`, at -k*60 degrees, which `world.js` kitEdge() converts for the kit's road pieces)
+- `roads(cells, pairs, buildingSlots) -> {slot: [direction indices]}` — cheapest paths joining each memory pair, reusing already-paved cells and staying off other buildings
+- `toXZ(cell, spacing)`, `adjacent(a, b)`, `DIRS`
+
 ## MI.economy  (`src/game/economy.js`)
 - `CATALOG = { themes, pets, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
@@ -57,7 +62,8 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
 - `onPick(cb(slot | null))`
 - `clear()`
-- Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (animated fold/unfold unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
+- Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (the island view; animated lift-and-gather unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
+- The island's shape and roads come from `MI.island`; `world.js` draws it (`buildFlatView`, `buildIslandRock`) and animates the change of view (`makeFoldRig`). `MI.world.computeFlatLayout` / `computeRoads` are gone with the strip layout.
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - **Planned:** wandering people (walkers) on person-linked roads.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):

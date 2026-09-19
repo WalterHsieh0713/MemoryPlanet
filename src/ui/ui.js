@@ -375,8 +375,8 @@
 
   function syncViewButton() {
     var flat = MI.world.isFlatView();
-    el['view-icon'].textContent = flat ? '🪐' : '🗺';
-    el['view-label'].textContent = flat ? 'back to the planet' : 'see your land flat';
+    el['view-icon'].textContent = flat ? '🪐' : '🏝️';
+    el['view-label'].textContent = flat ? 'planet view' : 'island view';
   }
   function disarmReset() {
     clearTimeout(resetArmed);
@@ -389,8 +389,8 @@
     if (MI.store.get().memories.length === 0) return; // nothing to lay out yet
     if (MI.world.isTransitioning()) return; // let the fold finish before reversing it
     var goingFlat = !MI.world.isFlatView();
-    el['view-icon'].textContent = goingFlat ? '🪐' : '🗺';
-    el['view-label'].textContent = goingFlat ? 'back to the planet' : 'see your land flat';
+    el['view-icon'].textContent = goingFlat ? '🪐' : '🏝️';
+    el['view-label'].textContent = goingFlat ? 'planet view' : 'island view';
     hideDetail();
     MI.world.setFlatView(goingFlat);
   }
