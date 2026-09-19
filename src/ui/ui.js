@@ -32,7 +32,8 @@
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
       'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
-      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items']
+      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
+      'book', 'book-list']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -59,6 +60,114 @@
     setTimeout(function () { el['stats-chip'].classList.remove('bump'); }, 400);
     refreshWallet();
     refreshPlanet();
+    renderBook();
+  }
+
+  // --- The book ---------------------------------------------------------------------------
+  // Every entry, newest first, two-way linked with the planet: hovering a row marks its tile,
+  // clicking one opens it, and clicking the tile flashes the row.
+
+  var rowBySlot = {};
+
+  function dayLabel(iso) {
+    var today = new Date().toISOString().slice(0, 10);
+    if (iso === today) return 'today';
+    try {
+      return new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function renderBook() {
+    var world = MI.store.get();
+    el.book.classList.toggle('show', world.memories.length > 0);
+    el['book-list'].innerHTML = '';
+    rowBySlot = {};
+
+    // Memories are stored in the order they were written, so the book sorts for itself.
+    var entries = world.memories.slice().sort(function (a, b) {
+      var byDate = String(b.occurredOn || '').localeCompare(String(a.occurredOn || ''));
+      return byDate !== 0 ? byDate : String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+
+    var day = null;
+    entries.forEach(function (memory) {
+      var on = (memory.occurredOn || memory.createdAt || '').slice(0, 10);
+      if (on !== day) {
+        day = on;
+        var heading = document.createElement('div');
+        heading.className = 'day';
+        heading.textContent = dayLabel(on);
+        el['book-list'].appendChild(heading);
+      }
+      el['book-list'].appendChild(buildRow(memory, world));
+    });
+  }
+
+  function buildRow(memory, world) {
+    var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
+    var row = document.createElement('button');
+    row.className = 'entry';
+
+    var emoji = document.createElement('span');
+    emoji.className = 'entry-emoji';
+    emoji.textContent = flavor.emoji;
+
+    var body = document.createElement('span');
+    body.className = 'entry-body';
+    var name = document.createElement('span');
+    name.className = 'entry-name';
+    name.textContent = memory.title;
+    body.appendChild(name);
+
+    var people = (memory.people || []).map(function (id) {
+      return world.people.filter(function (p) { return p.id === id; })[0];
+    }).filter(Boolean);
+    if (people.length) {
+      var who = document.createElement('span');
+      who.className = 'entry-who';
+      people.forEach(function (person) {
+        var dot = document.createElement('span');
+        dot.className = 'who-dot';
+        var color = (person.appearance && person.appearance.color) || 0x7fa3ae;
+        dot.style.background = '#' + color.toString(16).padStart(6, '0');
+        who.appendChild(dot);
+      });
+      who.appendChild(document.createTextNode(people.map(function (p) { return p.name; }).join(', ')));
+      body.appendChild(who);
+    }
+
+    row.appendChild(emoji);
+    row.appendChild(body);
+
+    var slot = memory.placement && memory.placement.slot;
+    if (slot !== undefined && slot !== null) {
+      rowBySlot[slot] = row;
+      if (slot === openSlot) row.classList.add('current');
+      row.addEventListener('mouseenter', function () {
+        if (openSlot === null) MI.world.highlightSlot(slot, { soft: true });
+      });
+      row.addEventListener('mouseleave', function () {
+        if (openSlot === null) MI.world.clearHighlight();
+      });
+      row.addEventListener('click', function () {
+        showDetail(memory);
+        MI.world.focus(slot);
+      });
+    }
+    return row;
+  }
+
+  // Keep the list in step with whatever is open, and bring that row into view.
+  function markOpenRow(scrollTo) {
+    Object.keys(rowBySlot).forEach(function (slot) {
+      rowBySlot[slot].classList.toggle('current', Number(slot) === openSlot);
+    });
+    var row = openSlot === null ? null : rowBySlot[openSlot];
+    if (!row || !scrollTo) return;
+    row.scrollIntoView({ block: 'nearest' });
+    bump(row, 'flash');
   }
 
   // --- Shards + planet size ------------------------------------------------------------
@@ -259,6 +368,7 @@
     var world = MI.store.get();
     openSlot = memory.placement ? memory.placement.slot : null;
     if (openSlot !== null) MI.world.highlightSlot(openSlot);
+    markOpenRow(true);
     el['detail-cat'].textContent = memory.category + ' · ' + (memory.mood && memory.mood.label || '');
     el['detail-title'].textContent = memory.title;
     el['detail-date'].textContent = formatDate(memory.occurredOn || memory.createdAt);
@@ -308,6 +418,7 @@
     el.detail.classList.remove('show');
     openSlot = null;
     MI.world.clearHighlight();
+    markOpenRow(false);
   }
 
   function setBusy(busy) {
