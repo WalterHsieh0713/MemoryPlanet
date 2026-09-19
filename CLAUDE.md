@@ -9,6 +9,7 @@
 - **Vanilla Three.js r128 from the local `three-r128.min.js`, no build step, no ES modules.** Plain `<script>` tags in `index.html`, everything attached to the global `MI` namespace. Do not introduce npm packages, bundlers, React or R3F.
 - `vendor/GLTFLoader.js` provides `THREE.GLTFLoader` (r128's CDN bundle doesn't include it).
 - Kenney assets (CC0) in `assets/<pack>/`, keep each pack's textures next to its GLBs. The hexagon kit uses `Textures/variation-a.png`; its GLBs' colormap URI is redirected with `LoadingManager.setURLModifier`.
+- **Loading a texture or model from a pack for the first time? Delete that pack's line from `.vercelignore` in the same commit.** Only `kenney-hexagon-kit` is deployed; the other packs are ignored so deploys stay small (4.6MB, not 38MB). A pack left listed there loads fine locally and 404s in production, which you will not notice until after deploying. Each pack also has its own atlas, so it needs its own `LoadingManager` and won't pick up the theme recolouring.
 - Placement and asset choice are **persisted** in the Memory (never `Math.random()` at spawn time) so reloads reproduce the world. Use `MI.world` sphere helpers, not ad-hoc trig.
 - Keep the file-owner boundaries in `docs/CONTRACT.md`. Small commits, merge to `main` often.
 - Style: toy-diorama, low-poly, flat shading, warm palette; Quicksand font; charm over realism.
