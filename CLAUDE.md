@@ -6,9 +6,9 @@
 `node server.js` then open http://localhost:8000 (must be served over HTTP; `file://` blocks GLB loading). Optional `.env` with `ANTHROPIC_API_KEY=...` (never commit it).
 
 ## Conventions
-- **Vanilla Three.js r128 from CDN, no build step, no ES modules.** Plain `<script>` tags in `index.html`, everything attached to the global `MI` namespace. Do not introduce npm packages, bundlers, React or R3F.
+- **Vanilla Three.js r128 from the local `three-r128.min.js`, no build step, no ES modules.** Plain `<script>` tags in `index.html`, everything attached to the global `MI` namespace. Do not introduce npm packages, bundlers, React or R3F.
 - `vendor/GLTFLoader.js` provides `THREE.GLTFLoader` (r128's CDN bundle doesn't include it).
-- Kenney assets (CC0) in `assets/<pack>/`, keep each pack's `Textures/colormap.png` next to its GLBs. Colormap is per pack; if a GLB's texture URI fails, redirect via `LoadingManager.setURLModifier`.
+- Kenney assets (CC0) in `assets/<pack>/`, keep each pack's textures next to its GLBs. The hexagon kit uses `Textures/variation-a.png`; its GLBs' colormap URI is redirected with `LoadingManager.setURLModifier`.
 - Placement and asset choice are **persisted** in the Memory (never `Math.random()` at spawn time) so reloads reproduce the world. Use `MI.world` sphere helpers, not ad-hoc trig.
 - Keep the file-owner boundaries in `docs/CONTRACT.md`. Small commits, merge to `main` often.
 - Style: toy-diorama, low-poly, flat shading, warm palette; Quicksand font; charm over realism.

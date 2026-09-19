@@ -4,19 +4,226 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Memory Planet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #dff1f7; font-family: system-ui, sans-serif; }
+  :root {
+    --card: #fffdf8;
+    --ink: #2c5f6f;
+    --ink-soft: #7fa3ae;
+    --accent: #ff9f68;
+    --accent-deep: #f4804a;
+    --shadow: 0 10px 30px rgba(44, 95, 111, .16);
+    --shadow-soft: 0 4px 14px rgba(44, 95, 111, .12);
+    --spring: cubic-bezier(.34, 1.56, .64, 1);
+  }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #dff1f7;
+    font-family: Quicksand, system-ui, sans-serif; color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
   #scene-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
-  #status { position: fixed; left: 12px; top: 12px; padding: 6px 10px; border-radius: 8px; background: rgba(255,255,255,.8); font-size: 13px; }
+
+  /* --- top-left stats chip --- */
+  #stats-chip {
+    position: fixed; left: 20px; top: 20px; z-index: 5;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 18px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    font-size: 14px; font-weight: 600; letter-spacing: .01em;
+    transition: transform .4s var(--spring);
+  }
+  #stats-chip.bump { transform: scale(1.08); }
+
+  #view-btn {
+    position: fixed; left: 20px; top: 66px; z-index: 5;
+    display: flex; align-items: center; gap: 7px;
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 8px 15px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    color: var(--ink); font-size: 12px; font-weight: 700;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease, transform .25s var(--spring), background .2s ease;
+  }
+  #view-btn.show { opacity: 1; pointer-events: auto; }
+  #view-btn:hover { background: #f4fafc; transform: translateY(-1px); }
+  #view-btn:active { transform: scale(.96); }
+
+  #reset-btn {
+    position: fixed; left: 20px; top: 108px; z-index: 5;
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 7px 14px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    color: var(--ink-soft); font-size: 12px; font-weight: 700;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease, transform .25s var(--spring), color .2s ease, background .2s ease;
+  }
+  #reset-btn.show { opacity: 1; pointer-events: auto; }
+  #reset-btn:hover { color: var(--ink); transform: translateY(-1px); }
+  #reset-btn.confirming { background: #ffe3d6; color: #c2410c; }
+
+  /* --- bottom journal card --- */
+  #journal {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    z-index: 6; width: min(560px, calc(100vw - 40px));
+    display: flex; flex-direction: column; align-items: center; gap: 12px;
+  }
+  #empty-hint {
+    display: none; flex-direction: column; align-items: center; gap: 10px;
+    padding: 14px 20px; border-radius: 20px;
+    background: var(--card); box-shadow: var(--shadow-soft);
+    font-size: 14px; font-weight: 500; color: var(--ink-soft); text-align: center;
+  }
+  #empty-hint.show { display: flex; }
+  #empty-hint b { color: var(--ink); font-weight: 700; }
+  #demo-btn {
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 9px 18px; border-radius: 999px;
+    background: #eaf6fa; color: var(--ink); font-size: 13px; font-weight: 700;
+    transition: transform .25s var(--spring), background .2s ease;
+  }
+  #demo-btn:hover { background: #dcf0f7; transform: translateY(-1px); }
+  #demo-btn:active { transform: scale(.96); }
+
+  #journal-card {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    padding: 10px 10px 10px 22px; border-radius: 999px;
+    background: var(--card); box-shadow: var(--shadow);
+    transition: transform .35s var(--spring), box-shadow .3s ease;
+  }
+  #journal-card:focus-within {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 36px rgba(44, 95, 111, .22);
+  }
+  #entry-input {
+    flex: 1; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 16px; font-weight: 500; color: var(--ink);
+    padding: 8px 0;
+  }
+  #entry-input::placeholder { color: var(--ink-soft); font-weight: 500; }
+  #submit-btn {
+    flex-shrink: 0; width: 44px; height: 44px; border: none; cursor: pointer;
+    border-radius: 50%; background: var(--accent); color: #fff;
+    font-size: 18px; line-height: 1; display: grid; place-items: center;
+    transition: transform .3s var(--spring), background .2s ease;
+  }
+  #submit-btn:hover { background: var(--accent-deep); transform: scale(1.06); }
+  #submit-btn:active { transform: scale(.92); }
+  #submit-btn:disabled { background: #d8e6ea; cursor: default; transform: none; }
+
+  /* --- toast --- */
+  #toast {
+    position: fixed; left: 50%; bottom: 110px; transform: translate(-50%, 14px);
+    z-index: 7; padding: 14px 22px; border-radius: 20px;
+    background: var(--card); box-shadow: var(--shadow);
+    display: flex; align-items: center; gap: 12px;
+    opacity: 0; pointer-events: none;
+    transition: opacity .3s ease, transform .45s var(--spring);
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast .emoji { font-size: 26px; }
+  #toast .headline { font-size: 15px; font-weight: 700; }
+  #toast .sub { font-size: 13px; font-weight: 500; color: var(--ink-soft); margin-top: 2px; }
+
+  /* --- tile detail card --- */
+  #detail {
+    position: fixed; right: 20px; top: 20px; z-index: 6;
+    width: min(320px, calc(100vw - 40px));
+    padding: 20px 22px; border-radius: 24px;
+    background: var(--card); box-shadow: var(--shadow);
+    opacity: 0; transform: translateY(-10px) scale(.97); pointer-events: none;
+    transition: opacity .25s ease, transform .4s var(--spring);
+  }
+  #detail.show { opacity: 1; transform: none; pointer-events: auto; }
+  #detail .cat { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--accent-deep); }
+  #detail h3 { margin: 6px 0 2px; font-size: 19px; font-weight: 700; line-height: 1.25; }
+  #detail .date { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  #detail p { margin: 12px 0 0; font-size: 14px; font-weight: 500; line-height: 1.55; }
+  #detail .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+  #detail .swap-label {
+    margin-top: 16px; font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .07em; color: var(--ink-soft);
+  }
+  #detail .swaps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+  #detail .swap {
+    border: none; cursor: pointer; font-family: inherit;
+    padding: 6px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: #eef4f6; color: var(--ink-soft);
+    transition: background .2s ease, color .2s ease, transform .2s var(--spring);
+  }
+  #detail .swap:hover { background: #e2ecef; color: var(--ink); transform: translateY(-1px); }
+  #detail .swap.current { background: var(--accent); color: #fff; cursor: default; }
+  #detail .pill {
+    padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
+    background: #eaf6fa; color: var(--ink);
+  }
+  #detail .close {
+    position: absolute; right: 14px; top: 14px; width: 26px; height: 26px;
+    border: none; cursor: pointer; border-radius: 50%; background: #eef4f6;
+    color: var(--ink-soft); font-size: 15px; line-height: 1; display: grid; place-items: center;
+    font-family: inherit;
+  }
+  #detail .close:hover { background: #e2ecef; color: var(--ink); }
+
+  #loading {
+    position: fixed; inset: 0; display: grid; place-items: center; z-index: 10;
+    background: #dff1f7; font-size: 15px; font-weight: 600; color: var(--ink-soft);
+    transition: opacity .5s ease;
+  }
+  #loading.hide { opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
 <canvas id="scene-canvas"></canvas>
-<div id="status">Smoke test: loading a Kenney GLB…</div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<div id="stats-chip"><span>🌍</span><span id="stats-text">a quiet ocean</span></div>
+<button id="view-btn"><span id="view-icon">🗺</span><span id="view-label">see your land flat</span></button>
+<button id="reset-btn">start over</button>
+
+<div id="detail">
+  <button class="close" id="detail-close" aria-label="Close">✕</button>
+  <div class="cat" id="detail-cat"></div>
+  <h3 id="detail-title"></h3>
+  <div class="date" id="detail-date"></div>
+  <p id="detail-text"></p>
+  <div class="pills" id="detail-pills"></div>
+  <div class="swap-label">building</div>
+  <div class="swaps" id="detail-swaps"></div>
+</div>
+
+<div id="toast">
+  <div class="emoji" id="toast-emoji">✨</div>
+  <div>
+    <div class="headline" id="toast-headline"></div>
+    <div class="sub" id="toast-sub"></div>
+  </div>
+</div>
+
+<div id="journal">
+  <div id="empty-hint">
+    <div>Your planet is all ocean.<br /><b>Write a memory to make land ✨</b></div>
+    <button id="demo-btn">or load a demo planet</button>
+  </div>
+  <div id="journal-card">
+    <input id="entry-input" type="text" autocomplete="off" placeholder="What happened today?" />
+    <button id="submit-btn" aria-label="Add memory">→</button>
+  </div>
+</div>
+
+<div id="loading">spinning up your planet…</div>
+
+<script src="three-r128.min.js"></script>
 <script src="vendor/GLTFLoader.js"></script>
 <script>window.MI = window.MI || {};</script>
+<script src="src/world/sphere.js"></script>
+<script src="src/world/connectors.js"></script>
+<script src="src/world/world.js"></script>
+<script src="src/store/store.js"></script>
+<script src="src/ai/classify.js"></script>
+<script src="src/app.js"></script>
+<script src="src/ui/ui.js"></script>
 <script src="src/main.js"></script>
 </body>
 </html>

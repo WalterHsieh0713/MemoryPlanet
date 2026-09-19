@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Island sandbox · Memory Planet</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root { color: #244854; background: #f2f3ed; font: 14px/1.5 system-ui, sans-serif; }
+    body { margin: 0; }
+    canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+    canvas:active { cursor: grabbing; }
+    header { position: fixed; top: 36px; left: 40px; pointer-events: none; }
+    .eyebrow { margin: 0 0 8px; font-size: 11px; font-weight: 650; letter-spacing: .18em; text-transform: uppercase; color: #66858b; }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 42px); font-weight: 550; letter-spacing: -.045em; }
+    .description { margin: 8px 0 0; color: #6b8284; max-width: 290px; }
+    .back { position: fixed; top: 40px; right: 40px; color: #52747c; text-decoration: none; }
+    .back:hover { color: #163e4a; }
+    .controls { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); width: min(640px, calc(100% - 32px)); padding: 16px 20px; border: 1px solid #fff; border-radius: 20px; background: rgba(255,255,255,.92); box-shadow: 0 8px 40px #32525a0a; backdrop-filter: blur(16px); }
+    .palette { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .choice { display: flex; align-items: center; gap: 8px; text-align: left; padding: 6px 10px; min-height: 80px; border-radius: 12px; }
+    .choice img { width: 90px; height: 70px; object-fit: contain; }
+    .choice strong { display: block; font-size: 14px; font-weight: 600; }
+    .choice small { color: #78908c; font-size: 11px; }
+    .choice .key { margin-left: auto; color: #92a6a4; }
+    .build-status { display: flex; gap: 12px; justify-content: space-between; align-items: center; margin: 0 0 12px; font-size: 12px; }
+    #count { white-space: nowrap; border-radius: 20px; background: #edf4f0; padding: 4px 10px; font-variant-numeric: tabular-nums; }
+    #status { color: #65817e; }
+    details { border-top: 1px solid #e7eeec; margin-top: 12px; padding-top: 10px; }
+    summary { cursor: pointer; font-size: 11px; color: #78908c; }
+    details .sliders { padding-top: 12px; }
+    .sliders { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; }
+    label { display: block; font-size: 12px; font-weight: 600; }
+    output { float: right; color: #819397; font-variant-numeric: tabular-nums; font-weight: 400; }
+    input { display: block; width: 100%; margin: 12px 0 0; accent-color: #259eaf; cursor: pointer; }
+    .toolbar { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+    button { border: 1px solid #dce8e6; border-radius: 8px; padding: 7px 12px; background: transparent; color: #365b65; font: inherit; font-size: 12px; cursor: pointer; }
+    button:hover { background: #edf5f2; }
+    button[aria-pressed="true"] { background: #e1f2ef; border-color: #b5d7d0; }
+    button:disabled { opacity: .45; cursor: wait; }
+    .hint { margin-left: auto; color: #819397; font-size: 11px; }
+    #error { position: fixed; top: 150px; left: 40px; right: 40px; color: #a14332; }
+    @media (max-width: 600px) {
+      header { top: 24px; left: 24px; }
+      .back { top: 73px; right: 24px; font-size: 12px; }
+      .description { font-size: 12px; max-width: 240px; }
+      .sliders { gap: 16px; }
+      .controls { bottom: 16px; padding: 16px; }
+      .choice { gap: 4px; padding: 4px; min-height: 68px; }
+      .choice img { width: 58px; height: 55px; }
+      .choice strong { font-size: 12px; }
+      .choice small { font-size: 10px; }
+      .choice .key { display: none; }
+      .build-status { font-size: 11px; }
+      .toolbar { gap: 6px; }
+      .toolbar button { padding: 6px 9px; font-size: 11px; }
+      .hint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="water-canvas" tabindex="0" aria-label="Seven water tiles. Choose a building below, then click a water tile. Arrow keys select a tile, Enter builds. Drag to orbit; scroll to zoom."></canvas>
+  <header>
+    <p class="eyebrow">Memory Planet / Island sandbox</p>
+    <h1>Make a little island.</h1>
+    <p class="description">Seven little possibilities. Pick a home for the water, and watch it come together.</p>
+  </header>
+  <a class="back" href="../index.html" target="_blank" rel="noopener">Open planet ↗</a>
+  <p id="error" role="alert" hidden></p>
+  <section class="controls" aria-label="Build an island">
+    <div class="build-status"><span id="status" role="status" aria-live="polite">Loading the building kit…</span><span id="count">0 / 7 built</span></div>
+    <div class="palette">
+      <button class="choice" id="choose-house" data-kind="house" type="button" aria-pressed="true" disabled><img id="thumb-house" alt="" /><span><strong>Cottage</strong><small>A cozy place to start</small></span><span class="key">1</span></button>
+      <button class="choice" id="choose-mill" data-kind="mill" type="button" aria-pressed="false" disabled><img id="thumb-mill" alt="" /><span><strong>Windmill</strong><small>A little life in motion</small></span><span class="key">2</span></button>
+    </div>
+    <div class="toolbar">
+      <button id="undo" type="button" disabled>Undo</button>
+      <button id="reset" type="button" disabled>Reset</button>
+      <button id="view" type="button" aria-pressed="false">Top view</button>
+      <span class="hint">Click to build · drag to orbit</span>
+    </div>
+    <details><summary>Water & motion</summary><div class="sliders">
+      <label for="speed">Flow speed <output id="speed-value">1.0×</output><input id="speed" type="range" min="0" max="2" step="0.1" value="1" /></label>
+      <label for="scale">Ripple size <output id="scale-value">1.0×</output><input id="scale" type="range" min="0.6" max="1.8" step="0.1" value="1" /></label>
+      <label for="shimmer">Sunlight <output id="shimmer-value">65%</output><input id="shimmer" type="range" min="0" max="1" step="0.05" value="0.65" /></label>
+    </div><div class="toolbar"><button id="pause" type="button" aria-pressed="false">Pause water</button></div></details>
+  </section>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="../vendor/GLTFLoader.js"></script>
+  <script src="water-tile.js"></script>
+</body>
+</html>
