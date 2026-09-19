@@ -17,6 +17,8 @@
 ## Status (2026-09-19)
 Core loop is built and working: journal text -> classify -> people/slot/asset -> persist -> spawn on a 1002-tile hex-sphere (frequency 10), with terrain/landscape tiles, roads, procedural minifigure people, a flat-map view toggle, building swap in the detail panel, demo seed and reset. Persistence reproduces the world on reload.
 
+Planet <-> flat is animated: the island peels off the sphere and presses flat as the planet shrinks away (and the reverse), settling at a three-quarter view (`FLAT_VIEW_PHI`). Each flat piece is eased between its pose on the sphere cap and its flat pose (`makeFoldRig` in `world.js`); the sea is merged geometry, so it bends per vertex by the tile each vertex belongs to (`userData.morph`) and travels with the land. This relies on the flat layout keeping the sphere's winding (`hexDirection` lays direction k at -k*60 deg; `kitEdge` converts to the kit's edge index for road pieces) - the flat view used to be a mirror image of the planet.
+
 Known gaps:
 - Classifier mostly runs on the keyword heuristic (no `.env`, substring-matching bugs, weak people detection); the Claude path is untested live.
 - Roads currently link ALL memories chronologically; people are static (no walking).
@@ -26,7 +28,7 @@ Known gaps:
 
 ## Planned (not built yet, in build order)
 1. **People, paths, NPCs + classifier.** Roads only between memories that share a person. If a new entry mentions a name similar to an earlier person, ask "is this the same person?". Same -> link the two buildings with a road and the existing figure walks between them like an NPC. Different -> new figure on the new tile that stays near its building until another memory mentions them. Fix the classifier (word-boundary matching, log Claude failures, show "classified by ...") and add an explicit "who was there?" input so people names are reliable.
-2. **Flat island start, planet size ladder.** Start on a small flat island (the existing flat view); at ~5 memories unlock a real planet; more memories unlock larger planets. Sizes are hex grids from `scripts/generate-hexgrid.js [frequency]` (10*f^2+2 tiles: f=6 -> 362, 8 -> 642, 10 -> 1002, 14 -> 1962, 20 -> 4002). The 4002 planet is multiplayer-only (later). Needs: store `version` 3 with the grid size saved, remap of saved slots by direction when the grid grows, `world.js` refactored so the planet can be rebuilt at runtime.
+2. **Flat island start, planet size ladder.** Start on a small flat island (the existing flat view); at ~5 memories the island folds up into a real planet (reuse `MI.world.setFlatView(false)`, which already animates the fold); more memories unlock larger planets. Sizes are hex grids from `scripts/generate-hexgrid.js [frequency]` (10*f^2+2 tiles: f=6 -> 362, 8 -> 642, 10 -> 1002, 14 -> 1962, 20 -> 4002). The 4002 planet is multiplayer-only (later). Needs: store `version` 3 with the grid size saved, remap of saved slots by direction when the grid grows, `world.js` refactored so the planet can be rebuilt at runtime.
 3. **Whole-planet themes.** Texture (`variation-a`/`variation-b`), water/land/sky colours and lighting, stored on the world. Per-category building style picks are deferred.
 
 ## Decisions / open questions for later

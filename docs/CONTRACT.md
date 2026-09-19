@@ -39,7 +39,7 @@ World  = { version: 2, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
 - `onPick(cb(slot | null))`
 - `clear()`
-- Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on)` / `isFlatView()`, `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
+- Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (animated fold/unfold unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - **Planned:** `setPlanetSize(frequency)`, `setTheme(id)`, wandering people (walkers) on person-linked roads.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
