@@ -290,6 +290,9 @@
   var state = null;      // everything built in init(), shared with the public API below
   var animations = [];   // each entry: fn(nowMs) -> true when finished
   var pickListeners = [];
+  // cb(slot | null) -> truthy when that tile is worth a pointer cursor. The UI decides what
+  // counts, and does its own highlighting inside the callback.
+  var hoverListener = null;
 
   function animate(durationMs, step) {
     var start = performance.now();
@@ -435,6 +438,10 @@
 
   function onPick(cb) {
     pickListeners.push(cb);
+  }
+
+  function onHover(cb) {
+    hoverListener = cb;
   }
 
   function buildingsFor(category) {
@@ -798,6 +805,7 @@
     }
     if (!state.flatMode) return Promise.resolve();
     return buildFlatView().then(function () {
+      applyHighlight(); // the group was rebuilt, so the halo went with it
       if (newSlot === undefined || newSlot === null) { animateFlatEntry(); return; }
       state.flatGroup.children.forEach(function (obj) {
         if (!obj.userData.tag || obj.userData.tag.slot !== newSlot) return;
@@ -1019,6 +1027,156 @@
     mesh.userData.isBackdrop = true; // not part of the rise-in animation
     mesh.userData.isShadow = true;
     return mesh;
+  }
+
+  // --- Tile highlight -------------------------------------------------------------------
+  // Marks one tile as the one you are pointing at or reading about. Two views, two
+  // mechanisms: on the planet a tile is part of the merged mesh, so it is lit by writing its
+  // own vertex colours; on the island a tile is its own object, but its material is shared
+  // with every other tile built from the same GLB, so it gets a halo child instead.
+
+  var HIGHLIGHT_COLOR = new THREE.Color(0xfff3c4); // warm, so it reads as lit rather than washed out
+  var HIGHLIGHT_PULSE_MS = 1100;
+  var HIGHLIGHT_LIFT = 0.16;        // how far the strength swings while pulsing
+  var HIGHLIGHT_TILE_LIFT = 0.22;   // island only: how far the marked tile stands proud
+  var highlight = { slot: null, strength: 0.45, halo: null, lifted: null, running: false };
+
+  // Whiten the tile's own colour rather than using a fixed tint, so the highlight reads the
+  // same on grass, sand and stone, and under any theme.
+  function paintHighlight(mix) {
+    if (highlight.slot === null || !state || !state.tileVertexRange[highlight.slot]) return;
+    // clone: landTopColor can hand back the shared LAND_COLOR constant.
+    var top = landTopColor(highlight.slot).clone().lerp(HIGHLIGHT_COLOR, mix);
+    var side = LAND_SIDE_COLOR.clone().lerp(HIGHLIGHT_COLOR, mix * 0.5);
+    writeTileColors(highlight.slot, top, side);
+  }
+
+  function repaintHighlightedTile() {
+    if (highlight.slot === null || !state || !state.tileVertexRange[highlight.slot]) return;
+    if (state.waterTileIds.has(highlight.slot)) {
+      writeTileColors(highlight.slot, WATER_COLOR, WATER_SIDE_COLOR);
+    } else {
+      writeTileColors(highlight.slot, landTopColor(highlight.slot), LAND_SIDE_COLOR);
+    }
+  }
+
+  // A ring around the tile's rim, added to the tile's own group so it inherits every move
+  // the fold makes. A glow laid on the ground would be hidden under trees and buildings;
+  // the rim is always in the open.
+  var HALO_INNER = 0.40;   // the kit hexagon's circumradius is 1/sqrt(3) ~ 0.577
+  var HALO_OUTER = 0.62;
+  var HALO_Y = 0.206;      // kit tile tops sit at 0.2 in model space
+
+  // A band around the tile's rim. A line would be a hairline at any distance — GPUs ignore
+  // LineBasicMaterial's width — so this is real geometry: six quads between two hexagons.
+  function makeHalo() {
+    var positions = [];
+    for (var k = 0; k < 6; k++) {
+      var a0 = KIT_VERTEX_ANGLE + k * Math.PI / 3;
+      var a1 = KIT_VERTEX_ANGLE + (k + 1) * Math.PI / 3;
+      var corners = [
+        [Math.cos(a0) * HALO_INNER, Math.sin(a0) * HALO_INNER],
+        [Math.cos(a1) * HALO_INNER, Math.sin(a1) * HALO_INNER],
+        [Math.cos(a1) * HALO_OUTER, Math.sin(a1) * HALO_OUTER],
+        [Math.cos(a0) * HALO_OUTER, Math.sin(a0) * HALO_OUTER]
+      ];
+      [0, 2, 1, 0, 3, 2].forEach(function (i) {
+        positions.push(corners[i][0], HALO_Y, corners[i][1]);
+      });
+    }
+    var geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    var mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: 0xffe9a3, transparent: true, depthWrite: false, side: THREE.DoubleSide
+    }));
+    mesh.renderOrder = 2;
+    mesh.userData.isHighlight = true;
+    return mesh;
+  }
+
+  function setHaloOpacity(value) {
+    if (highlight.halo) highlight.halo.material.opacity = Math.min(1, value);
+  }
+
+  function islandTileFor(slot) {
+    var found = null;
+    state.flatGroup.children.forEach(function (obj) {
+      var tag = obj.userData.tag;
+      if (!found && tag && tag.slot === slot && tag.land) found = obj;
+    });
+    return found;
+  }
+
+  function detachHalo() {
+    if (highlight.lifted) {
+      if (highlight.lifted.parent) {
+        highlight.lifted.position.y = highlight.lifted.userData.restY || 0;
+      }
+      highlight.lifted = null;
+    }
+    if (!highlight.halo) return;
+    if (highlight.halo.parent) highlight.halo.parent.remove(highlight.halo);
+    highlight.halo.geometry.dispose();
+    highlight.halo.material.dispose();
+    highlight.halo = null;
+  }
+
+  // Put the mark where it belongs for the view we are in. Called on every highlight and
+  // again after anything that rebuilds a view out from under it.
+  function applyHighlight() {
+    if (!state) return;
+    detachHalo();
+    if (highlight.slot === null) return;
+    if (!state.flatMode) { paintHighlight(highlight.strength); return; }
+
+    var tile = islandTileFor(highlight.slot);
+    if (!tile) return;
+    highlight.halo = makeHalo();
+    setHaloOpacity(highlight.strength + 0.35);
+    tile.add(highlight.halo);
+    // Stand the tile proud of its neighbours. A rim alone is easy to miss among the trees;
+    // the step of shadow along its edge is not.
+    highlight.lifted = tile;
+    tile.position.y = (tile.userData.restY || 0) + HIGHLIGHT_TILE_LIFT;
+  }
+
+  function startHighlightPulse() {
+    if (highlight.running) return;
+    highlight.running = true;
+    animate(HIGHLIGHT_PULSE_MS, function () {
+      if (highlight.slot === null) { highlight.running = false; return true; }
+      // animate() only passes its own 0..1 progress, and this pulse outlives one run of it.
+      var phase = (performance.now() % HIGHLIGHT_PULSE_MS) / HIGHLIGHT_PULSE_MS;
+      var swing = highlight.strength + HIGHLIGHT_LIFT * (0.5 - 0.5 * Math.cos(phase * Math.PI * 2));
+      if (state.flatMode) setHaloOpacity(0.5 + swing * 0.7);
+      else paintHighlight(swing);
+      return false; // runs until the highlight is cleared
+    });
+  }
+
+  // slot: the tile to mark, or null to clear. `soft` is the lighter hover mark; the full
+  // strength is for the entry you are actually reading.
+  function highlightSlot(slot, options) {
+    if (!state) return;
+    var next = slot === undefined ? null : slot;
+    var strength = options && options.soft ? 0.42 : 0.72;
+    if (highlight.slot === next && highlight.strength === strength) return;
+    if (highlight.slot !== null && highlight.slot !== next) repaintHighlightedTile();
+    highlight.slot = next;
+    highlight.strength = strength;
+    applyHighlight();
+    if (next !== null) startHighlightPulse();
+  }
+
+  function clearHighlight() {
+    if (!state || highlight.slot === null) return;
+    repaintHighlightedTile();
+    detachHalo();
+    highlight.slot = null;
+  }
+
+  function highlightedSlot() {
+    return highlight.slot;
   }
 
   // Planet <-> flat. Animated by default: the island's tiles lift off the sphere and settle
@@ -1345,6 +1503,7 @@
         setPlanetDressing(true);
         rig.reset();
         state.flatMode = true;
+        applyHighlight(); // the mark changes mechanism between the two views
         applyViewLighting(1);
         orbitAround(state.islandFocus.clone());
         state.updateCamera();
@@ -1380,6 +1539,7 @@
       state.planet.scale.setScalar(state.worldScale);
       setPlanetDressing(true);
       state.flatMode = false;
+      applyHighlight();
       applyViewLighting(0);
       orbitAround(new THREE.Vector3());
       state.updateCamera();
@@ -1389,6 +1549,7 @@
   function setFlatViewInstant(on) {
     if (!state) return Promise.resolve();
     state.flatMode = !!on;
+    applyHighlight();
     var done = on ? buildFlatView() : Promise.resolve();
     return done.then(function () {
       state.planet.visible = !on;
@@ -1423,6 +1584,7 @@
 
   function clear() {
     if (!state) return;
+    clearHighlight();
     clearProps();
     state.tiles.forEach(function (tile) {
       if (!state.waterTileIds.has(tile.id) && tile.sides === 6) setTileWater(tile.id);
@@ -1895,6 +2057,7 @@
     restyleKit();
     if (state.tiles) repaintTiles();
     if (state.flatMode) refreshFlatView(); // the island rock is coloured at build time
+    else applyHighlight();                 // repaintTiles just painted over the mark
   }
 
   // All kit models share one atlas layout (every colormap is redirected to variation-a),
@@ -2135,7 +2298,33 @@
       dragging = true; dragMoved = false; lastX = e.clientX; lastY = e.clientY;
       canvasEl.style.cursor = 'grabbing';
     });
-    window.addEventListener('mouseup', function () { dragging = false; canvasEl.style.cursor = 'grab'; });
+    window.addEventListener('mouseup', function () { dragging = false; canvasEl.style.cursor = hoverCursor; });
+
+    // Hover: a pointer over anything you can actually open, plus a light mark on the tile.
+    // One raycast per frame at most — picking on the planet walks the whole merged mesh.
+    var hoverCursor = 'grab';
+    var hoverPending = null;
+    canvasEl.addEventListener('mousemove', function (e) {
+      if (dragging || state.transition) return;
+      hoverPending = e;
+    });
+    canvasEl.addEventListener('mouseleave', function () {
+      hoverPending = null;
+      hoverCursor = 'grab';
+      canvasEl.style.cursor = 'grab';
+      if (hoverListener) hoverListener(null);
+    });
+    state.pollHover = function () {
+      if (!hoverPending || dragging || state.transition) return;
+      var event = hoverPending;
+      hoverPending = null;
+      // Always tell the listener, including about leaving a tile, so it can put its own
+      // mark back. Compare against null — tile 0 is a real slot.
+      var slot = pickSlot(event, canvasEl);
+      var over = hoverListener ? hoverListener(slot == null ? null : slot) : false;
+      hoverCursor = over ? 'pointer' : 'grab';
+      canvasEl.style.cursor = hoverCursor;
+    };
     window.addEventListener('mousemove', function (e) {
       if (!dragging || state.transition) return;
       var dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -2314,6 +2503,7 @@
       }
       animateWater(now / 1000);
       animatePet(now / 1000);
+      if (state.pollHover) state.pollHover();
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
       for (var i = animations.length - 1; i >= 0; i--) {
         if (animations[i](now)) animations.splice(i, 1);
@@ -2375,6 +2565,10 @@
   MI.world.spawnPerson = spawnPerson;
   MI.world.focus = focus;
   MI.world.onPick = onPick;
+  MI.world.onHover = onHover;
+  MI.world.highlightSlot = highlightSlot;
+  MI.world.clearHighlight = clearHighlight;
+  MI.world.highlightedSlot = highlightedSlot;
   MI.world.setFlatView = setFlatView;
   MI.world.isFlatView = isFlatView;
   MI.world.isTransitioning = isTransitioning;
@@ -2393,6 +2587,8 @@
   // Test hooks (scripts/ and the browser console): the island layout, the planet scale
   // and a way to swing the camera without a mouse.
   MI.world.__island = function () { return state && state.island; };
+  MI.world.__scene = function () { return state && state.scene; };
+  MI.world.__cam = function () { return state && state.camera; };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
   MI.world.__camera = function (phi) { state.camPhi = clampPhi(phi); state.updateCamera(); };
   MI.world.setPlanet = setPlanet;

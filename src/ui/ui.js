@@ -252,8 +252,13 @@
     }
   }
 
+  // The tile whose entry is open, so hovering elsewhere and coming back restores its mark.
+  var openSlot = null;
+
   function showDetail(memory) {
     var world = MI.store.get();
+    openSlot = memory.placement ? memory.placement.slot : null;
+    if (openSlot !== null) MI.world.highlightSlot(openSlot);
     el['detail-cat'].textContent = memory.category + ' · ' + (memory.mood && memory.mood.label || '');
     el['detail-title'].textContent = memory.title;
     el['detail-date'].textContent = formatDate(memory.occurredOn || memory.createdAt);
@@ -301,6 +306,8 @@
 
   function hideDetail() {
     el.detail.classList.remove('show');
+    openSlot = null;
+    MI.world.clearHighlight();
   }
 
   function setBusy(busy) {
@@ -432,6 +439,16 @@
       } else {
         hideDetail();
       }
+    });
+
+    // Pointer cursor only over tiles that open something, and a light mark under it. When
+    // the pointer leaves, the open entry's own mark comes back.
+    MI.world.onHover(function (slot) {
+      var memory = slot === null || slot === undefined ? null : MI.store.findMemoryBySlot(slot);
+      if (memory) MI.world.highlightSlot(slot, { soft: true });
+      else if (openSlot === null) MI.world.clearHighlight();
+      else MI.world.highlightSlot(openSlot);
+      return !!memory;
     });
 
     refreshStats();
