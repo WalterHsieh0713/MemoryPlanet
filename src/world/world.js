@@ -41,6 +41,13 @@
   // the sandbox in tools/water-tile.js used 1.0 for tiles ~3.5x larger.
   var WATER_PATTERN_SCALE = 0.32;
 
+  // The cube-pets models are modeled much larger in their own local units (~1.5 tall) than
+  // the hex-kit's people/buildings, so land-walker pets need their own, much smaller,
+  // fraction of the usual tile-relative scale — measured against animal-dog.glb's own
+  // bounding box, tuned to land a bit smaller than a person.
+  var LAND_ANIMAL_SPHERE_SCALE = 0.07;
+  var LAND_ANIMAL_FLAT_SCALE = 0.09;
+
   var HEX_PACK = 'assets/kenney-hexagon-kit/';
   // The kit's tiles are 1.0 unit flat-to-flat; props are scaled to whatever the grid's real
   // tile spacing turns out to be, so changing the hexgrid frequency doesn't break the fit.
@@ -779,6 +786,10 @@
       obj.userData.tag = { type: 'person', id: person.id, slot: slot };
       state.flatGroup.add(obj);
     });
+
+    // Land-walker pets (src/world/land-animals.js) aren't stored data, so nothing above
+    // re-adds them — this group got wiped at the top of this function like everything else.
+    if (state.landAnimalWalkers) state.flatGroup.add(state.landAnimalWalkers.flat.group);
 
     state.flatGroup.add(buildIslandUnderside(ids, centres, spread));
 
@@ -1989,7 +2000,24 @@
       state.petGroup.remove(state.pet);
       state.pet = null;
     }
+    clearLandAnimal();
     state.petId = id || null;
+
+    if (id && MI.world.landAnimals.isLandAnimal(id)) {
+      MI.world.landAnimals.makeWalkerPair(id).then(function (pair) {
+        // The player may have equipped something else again before this finished loading.
+        if (!pair || state.petId !== id) return;
+        state.landAnimalWalkers = pair;
+        state.landAnimalGroup.add(pair.sphere.group);
+        // If we're already looking at the island, place it there now; otherwise buildFlatView
+        // will add it the next time that view is (re)built.
+        if (state.flatMode && state.island && state.island.centres) state.flatGroup.add(pair.flat.group);
+        popIn(pair.sphere.group);
+        popIn(pair.flat.group);
+      });
+      return;
+    }
+
     var model = id ? MI.world.cosmetics.makePet(id) : null;
     if (!model) return;
     // The holder is steered each frame; the model inside it keeps its own little motions
@@ -2002,6 +2030,81 @@
     state.petPop = 0;
     animate(520, function (t) { state.petPop = easeOutBack(t); });
     animatePet(performance.now() / 1000);
+  }
+
+  function clearLandAnimal() {
+    while (state.landAnimalGroup.children.length) state.landAnimalGroup.remove(state.landAnimalGroup.children[0]);
+    // Also drop the flat instance if it's currently sitting in flatGroup (safe no-op
+    // otherwise — Object3D.remove() ignores an object that isn't actually a child).
+    if (state.landAnimalWalkers) state.flatGroup.remove(state.landAnimalWalkers.flat.group);
+    state.landAnimalWalkers = null;
+  }
+
+  // Every real hexagon neighbour of a tile on the PLANET grid — sphere-view only. The flat
+  // view's island is a coiled layout (MI.island), where a planet neighbour isn't necessarily
+  // an adjacent cell any more (see flatLandAnimalNeighbors below) — using this for both views,
+  // as an earlier version did, is what let the pet occasionally "hop" across an unrelated cell.
+  function landAnimalNeighbors(tileId) {
+    var tile = MI.world.sphere.tile(tileId);
+    if (!tile) return [];
+    return tile.neighbors.filter(function (id) {
+      var n = MI.world.sphere.tile(id);
+      return n && n.sides === 6;
+    });
+  }
+
+  // The flat view's real visual neighbours: other tiles whose coiled {i,j} cell is actually
+  // adjacent to this one (MI.island.adjacent), not whichever tiles happen to be neighbours on
+  // the planet grid the coiling was computed from.
+  function flatLandAnimalNeighbors(cells) {
+    return function (tileId) {
+      var cell = cells[tileId];
+      if (!cell) return [];
+      var out = [];
+      Object.keys(cells).forEach(function (otherId) {
+        if (Number(otherId) === tileId) return;
+        if (MI.island.adjacent(cell, cells[otherId])) out.push(Number(otherId));
+      });
+      return out;
+    };
+  }
+
+  // Land-walker pets tick here instead of animatePet's sky loop, since their movement is a
+  // tile-to-tile walk rather than a closed-form orbit. Builds the small "what does land mean
+  // here / where is tile X" context land-animals.js needs, once per frame, for each view.
+  function updateLandAnimal(dt) {
+    var walkers = state.landAnimalWalkers;
+    if (!walkers || !state.tiles) return;
+
+    var isLand = function (id) { return !state.waterTileIds.has(id); };
+    var findAnchor = function () {
+      var world = MI.store.get();
+      if (typeof world.home === 'number' && isLand(world.home)) return world.home;
+      for (var i = 0; i < state.tiles.length; i++) {
+        if (isLand(state.tiles[i].id)) return state.tiles[i].id;
+      }
+      return null;
+    };
+    MI.world.landAnimals.updateSphere(walkers.sphere, dt, {
+      isLand: isLand, neighborsOf: landAnimalNeighbors, findAnchor: findAnchor,
+      dirOf: function (id) { var t = MI.world.sphere.tile(id); return t ? new THREE.Vector3().fromArray(t.dir) : null; },
+      height: RADIUS + LAND_LIFT, scale: state.spacing * LAND_ANIMAL_SPHERE_SCALE
+    });
+
+    if (state.island && state.island.centres) {
+      var centres = state.island.centres;
+      var flatIsLand = function (id) { return !!centres[id]; };
+      var flatFindAnchor = function () {
+        var world = MI.store.get();
+        if (centres[world.home]) return world.home;
+        var keys = Object.keys(centres);
+        return keys.length ? Number(keys[0]) : null;
+      };
+      MI.world.landAnimals.updateFlat(walkers.flat, dt, {
+        isLand: flatIsLand, neighborsOf: flatLandAnimalNeighbors(state.island.cells), findAnchor: flatFindAnchor,
+        centres: centres, baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * LAND_ANIMAL_FLAT_SCALE
+      });
+    }
   }
 
   var SIDEWAYS = new THREE.Vector3(1, 0, 0);
@@ -2117,6 +2220,14 @@
     // In the scene, not on the planet: the pet keeps flying when the planet folds away.
     var petGroup = new THREE.Group();
     scene.add(petGroup);
+    // Land-walker pets (src/world/land-animals.js) need one instance per view, since they
+    // wander independently in each. Unlike petGroup above, the sphere instance lives inside
+    // `planet` — it stands on the tiles, so it has to hide and scale with them. The flat
+    // instance lives inside `flatGroup` itself (added back in by buildFlatView, since that
+    // group is fully cleared and rebuilt on every flat-view refresh) so it automatically
+    // inherits the island's fold rotation.
+    var landAnimalGroup = new THREE.Group();
+    planet.add(landAnimalGroup);
 
     var manager = new THREE.LoadingManager();
     manager.setURLModifier(function (url) {
@@ -2141,7 +2252,8 @@
       // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
       // what's already on screen; one recoloured atlas per theme.
       kitMaterials: [], foliageGeometries: [], atlasCache: {},
-      themeId: null, skin: opts.skin || 'classic', petId: null, pet: null, petGroup: petGroup
+      themeId: null, skin: opts.skin || 'classic', petId: null, pet: null, petGroup: petGroup,
+      landAnimalGroup: landAnimalGroup, landAnimalWalkers: null
     };
     state.stars = makeStars();
     scene.add(state.stars);
@@ -2346,6 +2458,7 @@
       }
       animateWater(now / 1000);
       animatePet(now / 1000);
+      if (!state.transition) updateLandAnimal(dt);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
       for (var i = animations.length - 1; i >= 0; i--) {
         if (animations[i](now)) animations.splice(i, 1);

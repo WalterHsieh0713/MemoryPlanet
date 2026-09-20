@@ -4,7 +4,8 @@
 (function () {
   window.MI = window.MI || {};
 
-  // Ids match src/world/themes.js and src/world/cosmetics.js.
+  // Ids match src/world/themes.js and src/world/cosmetics.js — except land-walker pets
+  // (currently just 'dog'), whose ids match src/world/land-animals.js instead.
   var CATALOG = {
     themes: [
       { id: 'meadow', name: 'Meadow', price: 0, icon: '🌿', blurb: 'Green hills and a bright blue sea.' },
@@ -13,6 +14,7 @@
       { id: 'starlight', name: 'Starlight', price: 140, icon: '🌌', blurb: 'A violet world under a sky full of stars.' }
     ],
     pets: [
+      { id: 'dog', name: 'Dog', price: 50, icon: '🐶', blurb: 'Trots around your island on its own four paws.' },
       { id: 'moonling', name: 'Moonling', price: 40, icon: '🌙', blurb: 'A sleepy little moon that circles your island.' },
       { id: 'cloud-sheep', name: 'Cloud Sheep', price: 55, icon: '🐑', blurb: 'Fluffy, floaty, always paddling its legs.' },
       { id: 'sky-koi', name: 'Sky Koi', price: 75, icon: '🐟', blurb: 'Swims laps through the air above your roofs.' },
