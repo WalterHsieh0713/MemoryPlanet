@@ -61,6 +61,7 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - Your character's model and movement maths. Pure: world.js passes it an `isLandAt` test and the camera's tangent axes each frame. `node scripts/test-player.js`.
 - `list()`, `get(id)`, `isCharacter(id)`, `defaultId()`, `makeAvatar(id, fallbackBuilder) -> Promise<Object3D>`
 - `newPlayer()`, `updateSphere(player, dt, ctx)`, `updateFlat(player, dt, ctx)`
+- `player.animator` (set by world.js from `MI.world.walkers.makeAnimator`) blends the GLB's own walk/idle clips; null for the procedural figure, which keeps the bob instead.
 - A player's sphere facing is a unit TANGENT VECTOR, not an angle, and `updateSphere` reports the rotation each step applied as `lastAxis`/`lastAngle`. Carry anything else that has a direction — the ground camera does — by that same rotation. Deriving a direction from a recomputed reference tangent instead is what made the camera swing when strafing.
 - `stepSphere(pos, move, distance, radius)`, `moveSphere(...)`, `moveFlat(pos, forward, right, input, distance, isLandAt, blockers?, radius?)`, `blockedStep(from, to, blockers, radius)`, `TILES_PER_SECOND`
 - `blockers` are solid circles `{x, z, r}` (island buildings, `state.island.blockers`): steps into one are refused and the move glides along its edge; a character already inside may only leave.
@@ -68,6 +69,7 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 
 ## MI.economy  (`src/game/economy.js`)
 - `CATALOG = { themes, pets, satellites, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
+- `MI.world.walkers.makeAnimator(model, phase?) -> { update(dt, speedInModelUnits), dispose() } | null` — blends the model's built-in `walk`/`idle` clips; null when the GLB has none (pets, the procedural figure). `isShown(obj)` reports whether anything is drawing it.
 - **pets** walk on the land (GLB models, `src/world/walkers.js`); **satellites** orbit in the sky (procedural, `src/world/cosmetics.js`). Separate slots — a world can have one of each. Journal people also roam as residents using the walker models.
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
 - `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`

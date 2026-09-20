@@ -29,9 +29,9 @@
   // Tiles crossed per second. The caller turns this into world units by multiplying by
   // whatever a tile measures in ITS view (ctx.speed), because a tile's world size changes
   // with the planet's frequency and is different again on the island.
-  var TILES_PER_SECOND = 1.0;
+  var TILES_PER_SECOND = 0.7;
   var TURN_RATE = 12;     // radians/sec the model swings to face where it is going
-  var BOB_RATE = 9;       // steps per second of the walk bob, since no model is animated
+  var BOB_RATE = 9;       // steps per second of the stand-in bob, for a model with no clips
   var BOB_HEIGHT = 0.035;
 
   // id, the name under the card in the picker, and the fallback minifigure's colour.
@@ -94,7 +94,10 @@
       // Island view: metres in the XZ plane, facing as a plain rotation about +Y. No
       // curvature there, so an angle is fine and there is nothing to transport.
       x: 0, z: 0, heading: 0,
-      bob: 0,           // walk-cycle phase, advanced only while actually moving
+      // The GLB's own walk/idle clips, blended by MI.world.walkers (null for the procedural
+      // fallback figure, which keeps the bob instead). world.js builds it with the avatar.
+      animator: null,
+      bob: 0,           // stand-in walk phase, advanced only while actually moving
       moving: false,
       placed: false     // false until world.js has put it on its starting tile
     };
@@ -274,6 +277,8 @@
     player.group.position.copy(player.dir).multiplyScalar(ctx.height + bobOffset(player));
     player.group.scale.setScalar(ctx.scale);
     orientOnSphere(player);
+    // The step is an angle, so the ground distance is angle * radius.
+    animatePlayer(player, dt, player.lastAngle * ctx.radius, ctx.scale);
   }
 
   function updateFlat(player, dt, ctx) {
@@ -294,6 +299,7 @@
     player.group.position.set(player.x, ctx.baseY + bobOffset(player), player.z);
     player.group.scale.setScalar(ctx.scale);
     player.group.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), player.heading);
+    animatePlayer(player, dt, moved ? Math.sqrt(dx * dx + dz * dz) : 0, ctx.scale);
   }
 
   // Stand upright on the surface, facing along `facing`. No reference tangent and no angle
@@ -308,13 +314,21 @@
       new THREE.Matrix4().makeBasis(right, up, forward));
   }
 
+  // Feed the walk/idle blend the distance covered this frame, converted to the MODEL's own
+  // units so the pace holds at any planet size (walkers.js does the same for residents).
+  function animatePlayer(player, dt, distance, scale) {
+    if (!player.animator || dt <= 0) return;
+    player.animator.update(dt, distance / dt / (scale || 1));
+  }
+
   function advanceBob(player, dt) {
+    if (player.animator) { player.bob = 0; return; } // the clip has its own bounce
     if (player.moving) player.bob += dt * BOB_RATE;
     else player.bob = 0;
   }
 
   function bobOffset(player) {
-    return player.moving ? Math.abs(Math.sin(player.bob)) * BOB_HEIGHT : 0;
+    return player.moving && !player.animator ? Math.abs(Math.sin(player.bob)) * BOB_HEIGHT : 0;
   }
 
   MI.world.player = {

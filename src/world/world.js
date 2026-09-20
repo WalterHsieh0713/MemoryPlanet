@@ -437,6 +437,7 @@
       if (previous) {
         state.residentGroup.remove(previous.sphere.group);
         state.flatGroup.remove(previous.flat.group);
+        disposeWalkerPair(previous);
       }
       pair.person = person;
       pair.sphere.tileId = pair.sphere.targetId = person.placement.slot;
@@ -2073,6 +2074,7 @@
     }
     state.spinners.length = 0;
     while (state.residentGroup.children.length) state.residentGroup.remove(state.residentGroup.children[0]);
+    Object.keys(state.residentWalkers).forEach(function (id) { disposeWalkerPair(state.residentWalkers[id]); });
     state.residentWalkers = {};
   }
 
@@ -2280,8 +2282,19 @@
     while (group.children.length) group.remove(group.children[0]);
     // Also drop the flat instance if it's currently sitting in flatGroup (safe no-op
     // otherwise — Object3D.remove() ignores an object that isn't actually a child).
-    if (state[walkersKey]) state.flatGroup.remove(state[walkersKey].flat.group);
+    if (state[walkersKey]) {
+      state.flatGroup.remove(state[walkersKey].flat.group);
+      disposeWalkerPair(state[walkersKey]);
+    }
     state[walkersKey] = null;
+  }
+
+  // Let a replaced walker's mixers go, or they keep a cached binding to a model nothing draws.
+  function disposeWalkerPair(pair) {
+    if (!pair) return;
+    ['sphere', 'flat'].forEach(function (view) {
+      if (pair[view] && pair[view].animator) pair[view].animator.dispose();
+    });
   }
 
   // `stillWanted` guards the async gap: the player may have equipped something else again
@@ -2731,6 +2744,9 @@
         var holder = new THREE.Group();
         holder.add(model);
         state.players[view].group = holder;
+        // Bound to the model, not the holder: the holder is what this file moves around, and
+        // the clips animate the bones inside. Null for the procedural fallback figure.
+        state.players[view].animator = MI.world.walkers.makeAnimator(model);
         (view === 'sphere' ? state.playerGroup : state.flatGroup).add(holder);
         // Always on screen: the character lives on the planet like the pets do, not only
         // while the ground camera is looking at it.
@@ -2745,6 +2761,8 @@
       var p = state.players[view];
       if (!p.group) return;
       if (p.group.parent) p.group.parent.remove(p.group);
+      if (p.animator) p.animator.dispose();
+      p.animator = null;
       p.group = null;
       p.placed = false;
     });

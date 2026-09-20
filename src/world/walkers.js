@@ -16,7 +16,7 @@
   window.MI = window.MI || {};
   MI.world = MI.world || {};
 
-  var HOP_HEIGHT = 0.05; // these models have no walk animation, so a small bob stands in for one
+  var HOP_HEIGHT = 0.05; // stands in for a walk cycle on models that have none (the pets)
   var WORLD_UP = new THREE.Vector3(0, 1, 0);
   var WORLD_SIDE = new THREE.Vector3(1, 0, 0);
 
@@ -102,6 +102,10 @@
 
   var loaders = {};
   var templateCache = {};
+  // Clips belong to the model but CANNOT live on its userData: Object3D.clone() deep-copies
+  // userData through JSON, which would turn every AnimationClip into a plain object. Keyed off
+  // the object instead, and carried to each clone by cloneModel.
+  var clipsOf = new WeakMap();
 
   function getLoader(kind) {
     if (!loaders[kind]) {
@@ -136,6 +140,9 @@
           group.traverse(function (node) {
             if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
           });
+          // The Mini Characters ship a full clip set (idle, walk, sprint, emotes...); the Cube
+          // Pets ship none and fall back to the hop.
+          clipsOf.set(group, gltf.animations || []);
           resolve(group);
         }, undefined, function () { resolve(null); });
       });
@@ -163,14 +170,80 @@
       node.bindMatrix.copy(original.bindMatrix);
       node.bind(node.skeleton, node.bindMatrix);
     });
+    var clips = clipsOf.get(source);
+    if (clips) clipsOf.set(clone, clips);
     return clone;
+  }
+
+  // --- Animation ---------------------------------------------------------------------------
+  // The clips are in the GLB already; all this does is blend between standing and walking and
+  // keep the walk in step with how fast the figure is actually travelling, so its feet don't
+  // skate. An AnimationClip binds by NODE NAME and clone() keeps names, so one loaded clip
+  // drives every copy -- each through its own mixer, on its own skeleton.
+
+  var BLEND_SECONDS = 0.18;   // standing <-> walking crossfade
+  // Model units one walk cycle covers, near enough: the clips animate in place, so this is the
+  // rate that looks right rather than a measurement. Raise it to turn the legs over slower.
+  var WALK_STRIDE = 1.9;
+  var MIN_RATE = 0.55, MAX_RATE = 2.2;
+
+  // `phase` (0..1) offsets where in the cycle this instance starts, so a crowd of residents
+  // doesn't march in lockstep. Returns null when the model has nothing to play.
+  function makeAnimator(model, phase) {
+    var clips = clipsOf.get(model);
+    if (!clips || !clips.length) return null;
+    var walkClip = THREE.AnimationClip.findByName(clips, 'walk');
+    var idleClip = THREE.AnimationClip.findByName(clips, 'idle');
+    if (!walkClip && !idleClip) return null;
+
+    var mixer = new THREE.AnimationMixer(model);
+    // Both actions run the whole time and are cross-weighted, so nothing has to be started,
+    // stopped or scheduled as the walker sets off and stops again.
+    var walk = walkClip && mixer.clipAction(walkClip);
+    var idle = idleClip && mixer.clipAction(idleClip);
+    if (walk) { walk.play(); walk.setEffectiveWeight(0); walk.time = (phase || 0) * walkClip.duration; }
+    if (idle) { idle.play(); idle.setEffectiveWeight(1); idle.time = (phase || 0) * idleClip.duration; }
+    var blend = 0; // 0 standing, 1 walking
+
+    return {
+      // `speed` is the distance covered this frame in the MODEL's own units (world distance
+      // divided by the scale it is drawn at), so one setting works at every planet size.
+      update: function (dt, speed) {
+        var target = speed > 1e-4 ? 1 : 0;
+        var step = dt / BLEND_SECONDS;
+        blend += Math.max(-step, Math.min(step, target - blend));
+        if (walk) {
+          walk.setEffectiveWeight(blend);
+          if (target) {
+            walk.setEffectiveTimeScale(
+              Math.max(MIN_RATE, Math.min(MAX_RATE, speed / WALK_STRIDE)));
+          }
+        }
+        if (idle) idle.setEffectiveWeight(1 - blend);
+        mixer.update(dt);
+      },
+      dispose: function () {
+        mixer.stopAllAction();
+        mixer.uncacheRoot(model);
+      }
+    };
+  }
+
+  // Skip a mixer whose model isn't on screen: both view instances keep walking, but only one
+  // of them is ever inside a visible group.
+  function isShown(obj) {
+    for (var node = obj; node; node = node.parent) {
+      if (!node.visible) return false;
+      if (!node.parent) return node.type === 'Scene'; // detached: nothing is drawing it
+    }
+    return false;
   }
 
   // Pacing rides on the walker rather than on module constants, so the two kinds can idle at
   // completely different rhythms through the same FSM.
   function newWalker(spec) {
     return {
-      group: null, tileId: null, targetId: null, fromTileId: null,
+      group: null, animator: null, tileId: null, targetId: null, fromTileId: null,
       t: 1, duration: 1.6, pause: 0,
       stepRange: spec.step, pauseRange: spec.pause
     };
@@ -185,8 +258,11 @@
       if (!template && !fallback) return null;
       if (!template) template = fallback();
       var spec = KINDS[kind];
+      var phase = Math.random();
       var sphere = newWalker(spec); sphere.group = cloneModel(template);
       var flat = newWalker(spec); flat.group = cloneModel(template);
+      sphere.animator = makeAnimator(sphere.group, phase);
+      flat.animator = makeAnimator(flat.group, phase);
       return { kind: kind, sphere: sphere, flat: flat };
     });
   }
@@ -268,7 +344,8 @@
     if (!fromDir || !toDir) return;
     var ease = easeInOut(walker.t);
     var dir = fromDir.clone().lerp(toDir, ease).normalize();
-    var hop = Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
+    var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
+    var was = walker.group.position.clone();
     walker.group.position.copy(dir).multiplyScalar(ctx.height + hop);
     // Stand beside the middle of the tile rather than on it, the same trick spawnPerson uses:
     // a walker that keeps to the roads spends much of its time on tiles that already carry a
@@ -280,6 +357,7 @@
       if (side.lengthSq() > 1e-8) walker.group.position.addScaledVector(side.normalize(), ctx.offset);
     }
     walker.group.scale.setScalar(ctx.scale);
+    animateWalker(walker, dt, was, ctx.scale);
 
     if (fromDir.distanceToSquared(toDir) > 1e-8) {
       var up = dir.clone();
@@ -292,6 +370,16 @@
         walker.group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, forward));
       }
     }
+  }
+
+  // How far it actually travelled this frame, in the model's own units -- the walk cycle is
+  // paced off that, so the same walker looks right on a 42-tile planet and on a 1002-tile one.
+  // A walker standing still (paused, or a step it could not take) gets 0 and settles to idle.
+  function animateWalker(walker, dt, wasAt, scale) {
+    if (!walker.animator || dt <= 0) return;
+    if (!isShown(walker.group)) return;
+    var moved = walker.t < 1 ? walker.group.position.distanceTo(wasAt) : 0;
+    walker.animator.update(dt, moved / dt / (scale || 1));
   }
 
   // --- Flat view ----------------------------------------------------------------------------
@@ -308,9 +396,11 @@
     var ease = easeInOut(walker.t);
     var x = from.x + (to.x - from.x) * ease;
     var z = from.z + (to.z - from.z) * ease;
-    var hop = Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
+    var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
+    var was = walker.group.position.clone();
     walker.group.position.set(x + (ctx.offset || 0), ctx.baseY + hop, z); // beside the tile centre — see updateSphere
     walker.group.scale.setScalar(ctx.scale);
+    animateWalker(walker, dt, was, ctx.scale);
     if (Math.abs(to.x - from.x) > 1e-6 || Math.abs(to.z - from.z) > 1e-6) {
       walker.group.rotation.y = Math.atan2(to.x - from.x, to.z - from.z);
     }
@@ -321,6 +411,8 @@
     isResident: isResident,
     residentModelFor: residentModelFor,
     makeModel: function (id) { return loadTemplate(id).then(function (model) { return model && cloneModel(model); }); },
+    makeAnimator: makeAnimator,
+    isShown: isShown,
     makeWalkerPair: makeWalkerPair,
     updateSphere: updateSphere,
     updateFlat: updateFlat
