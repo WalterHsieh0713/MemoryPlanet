@@ -53,5 +53,24 @@ walkers.makeWalkerPair(model, function () { return new THREE.Group(); }).then(fu
     baseY: 2, scale: 1
   });
   assert.strictEqual(pair.flat.targetId, 2, 'resident route chooses a stop over a random branch');
+  // A friend with nowhere to go strolls instead of standing still: wanderStep picks a
+  // standable neighbour, never a forbidden one, and prefers not to double straight back.
+  var lone = { tileId: 5, fromTileId: null };
+  var ring = { 5: [4, 6, 7], 4: [5], 6: [5], 7: [5] };
+  var only = function (ok) { return function (id) { return ok.indexOf(id) !== -1; }; };
+  var seen = {};
+  for (var i = 0; i < 200; i++) seen[walkers.wanderStep(lone, function (id) { return ring[id]; }, only([4, 5, 6]))] = true;
+  assert(seen[4] && seen[6], 'a stroll uses every standable neighbour');
+  assert(!seen[7] && !seen[5], 'and never a tile it may not stand on, nor stays put while it has somewhere to go');
+  var back = { tileId: 5, fromTileId: 4 };
+  var forward = {};
+  for (var j = 0; j < 200; j++) forward[walkers.wanderStep(back, function (id) { return ring[id]; }, only([4, 5, 6, 7]))] = true;
+  assert(!forward[4] && forward[6] && forward[7], 'it does not double straight back while it has another way');
+  var boxed = { tileId: 5, fromTileId: null };
+  assert.strictEqual(walkers.wanderStep(boxed, function () { return [7]; }, only([5])), 5,
+    'boxed in, it stays where it is');
+  var cornered = { tileId: 5, fromTileId: 4 };
+  assert.strictEqual(walkers.wanderStep(cornered, function () { return [4]; }, only([4, 5])), 4,
+    'and doubles back only when that is the sole way out');
   console.log('--- walker checks passed ---');
 }).catch(function (err) { console.error(err); process.exitCode = 1; });

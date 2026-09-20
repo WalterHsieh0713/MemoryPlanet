@@ -460,6 +460,7 @@
     makeModel: function (id) { return loadTemplate(id).then(function (model) { return model && cloneModel(model); }); },
     makeAnimator: makeAnimator,
     isShown: isShown,
+    wanderStep: pickNextTile,
     makeWalkerPair: makeWalkerPair,
     makeWalkerSolo: makeWalkerSolo,
     updateSphere: updateSphere,

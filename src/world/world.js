@@ -818,6 +818,20 @@
     return route;
   }
 
+  // Where a friend may stray to besides the road between their memories: their own tile and
+  // the land touching it, so someone with nowhere to walk to still circles their building
+  // rather than the whole island. `landNeighbors(slot)` is the view's own idea of adjacent
+  // land — the hex grid on the planet, the coiled island's cells on the island.
+  function residentVicinity(person, stops, landNeighbors) {
+    var home = stops.length ? stops[0]
+      : (person.placement ? person.placement.slot : null);
+    var near = new Set();
+    if (home === null || home === undefined) return near;
+    near.add(home);
+    landNeighbors(home).forEach(function (slot) { near.add(slot); });
+    return near;
+  }
+
   // A resident's route is a shortest path on the roads already visible in the town.
   function residentSphereRoutes(world) {
     var edges = state.roadEdgesCache || computeRoadEdges();
@@ -834,6 +848,9 @@
         }) : [];
       });
       if (person.placement) route.add(person.placement.slot);
+      residentVicinity(person, stops, function (slot) {
+        return walkerNeighbors(slot).filter(function (id) { return !state.waterTileIds.has(id); });
+      }).forEach(function (slot) { route.add(slot); });
       routes[person.id] = route;
     });
     return routes;
@@ -1087,9 +1104,11 @@
     });
     var residentRoutes = {};
     world.people.forEach(function (person) {
-      residentRoutes[person.id] = residentRoute(residentStops(person, world), function (slot) {
-        return roadAdjacency[slot] || [];
-      });
+      var stops = residentStops(person, world);
+      var route = residentRoute(stops, function (slot) { return roadAdjacency[slot] || []; });
+      residentVicinity(person, stops, function (slot) { return walkerAdjacency[slot] || []; })
+        .forEach(function (slot) { route.add(slot); });
+      residentRoutes[person.id] = route;
     });
     state.island = { cells: cells, centres: centres, roadEdges: roadEdges,
       roadSlots: Object.keys(roadEdges).map(Number),
@@ -2801,12 +2820,21 @@
       // A new resident can walk their own land even before a second memory makes a road.
       driveWalkers(pair, dt, {
         anchor: pair.person.placement.slot,
+        // Roads first, then the plain land beside the tile: a walk between memories follows
+        // the road (canStand keeps it to the route), and a friend with nowhere to go can
+        // still step off it to stroll around their own building.
         sphereNeighbors: function (id) {
           var tile = state.tiles[id], edges = state.roadEdgesCache[id];
-          return tile && edges ? Array.from(edges).map(function (k) { return tile.neighbors[k]; }) : [];
+          var roads = tile && edges ? Array.from(edges).map(function (k) { return tile.neighbors[k]; }) : [];
+          return roads.concat(walkerNeighbors(id).filter(function (n) { return roads.indexOf(n) === -1; }));
         },
         flatNeighbors: function (id) {
-          return state.island && state.island.roadAdjacency[id] || [];
+          var island = state.island;
+          if (!island) return [];
+          var roads = island.roadAdjacency[id] || [];
+          return roads.concat((island.walkerAdjacency[id] || []).filter(function (n) {
+            return roads.indexOf(n) === -1;
+          }));
         },
         chooseNext: function (walker, neighborsOf, canStand) {
           return residentNextTile(walker, stops, neighborsOf, canStand);
@@ -3015,7 +3043,11 @@
   }
 
   function residentNextTile(walker, stops, neighborsOf, canStand) {
-    if (stops.length < 2) return walker.tileId;
+    // Nowhere to go: a friend who is in only one memory has a single stop, and two memories
+    // with no road between them are as good as one. Standing on that tile forever is what this
+    // used to do; instead they stroll around their own building (canStand is limited to the
+    // tile and its land neighbours, see residentVicinity), which is where a friend belongs.
+    if (stops.length < 2) return MI.world.walkers.wanderStep(walker, neighborsOf, canStand);
     if (walker.stopIndex === undefined) walker.stopIndex = 1;
     if (walker.tileId === stops[walker.stopIndex]) {
       walker.stopIndex = (walker.stopIndex + 1) % stops.length;
@@ -3030,7 +3062,7 @@
         queue.push(next);
       });
     }
-    if (!seen.has(goal)) return walker.tileId;
+    if (!seen.has(goal)) return MI.world.walkers.wanderStep(walker, neighborsOf, canStand);
     var step = goal;
     while (previous[step] !== walker.tileId) step = previous[step];
     return step;
@@ -5596,6 +5628,18 @@
     };
   };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
+  // Which tile each resident is standing on, per view — for checking that a friend actually
+  // walks rather than freezing on their own tile.
+  MI.world.__residents = function () {
+    if (!state) return {};
+    var out = {};
+    Object.keys(state.residentWalkers).forEach(function (id) {
+      var pair = state.residentWalkers[id];
+      var walker = state.flatMode ? pair.flat : pair.sphere;
+      out[(pair.person && pair.person.name) || id] = walker.tileId;
+    });
+    return out;
+  };
   MI.world.__steer = function (dx, dy) { state.steerCamera(dx, dy, MOUSE_LOOK_SPEED); };
   MI.world.__camera = function (phi) { state.camPhi = clampPhi(phi); state.updateCamera(); };
   MI.world.setPlanet = setPlanet;
