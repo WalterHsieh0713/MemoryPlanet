@@ -260,6 +260,8 @@
     return Promise.all(spawns).then(function () {
       MI.world.rebuildRoads(); // draw the network once everything is on the planet
       ensureFleet();           // and put the ships back out on the water
+      // spawnMemory may have re-picked a building that left the catalogue; persist that once.
+      MI.store.save();
     });
   }
 
@@ -300,6 +302,9 @@
     var ship = MI.ships.find(world, shipId);
     if (!MI.ships.claim(world, shipId)) return false;
     MI.store.save();
+    // Look now, while the current hull still has a tile; syncShips then swaps the model
+    // in place so the camera does not turn toward an empty patch of sea.
+    MI.world.focusShip(shipId);
     MI.world.syncShips();
     MI.world.focusShip(shipId);
     emit({ type: 'ship-claimed', ship: ship });

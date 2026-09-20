@@ -165,6 +165,23 @@ function world(extra) {
     ships.progressFor(w, { goal: 'not-a-goal' }).target > 0);
 })();
 
+// --- A fleet does not hand out the same bargain twice ------------------------------------
+(function uniqueBargains() {
+  var w = world({ seed: 42 });
+  ships.ensureFleet(w, 5);
+  var goals = w.ships.map(function (ship) { return ship.goal; });
+  var names = w.ships.map(function (ship) { return ship.name; });
+  check('four ships have four distinct goals',
+    new Set(goals).size === goals.length, goals.join(', '));
+  check('four ships have four distinct names',
+    new Set(names).size === names.length, names.join(', '));
+
+  var again = world({ seed: 42 });
+  ships.ensureFleet(again, 5);
+  check('unique fleets still rebuild from the seed',
+    JSON.stringify(again.ships) === JSON.stringify(w.ships));
+})();
+
 if (failures) {
   console.error('\n' + failures + ' check(s) failed');
   process.exit(1);

@@ -53,14 +53,23 @@ async function classify(req, res) {
   return json(out.status, out.body);
 }
 
+function underRoot(file) {
+  const root = ROOT.endsWith(path.sep) ? ROOT : ROOT + path.sep;
+  return file === ROOT || file.startsWith(root);
+}
+
 // GET /api/assets?dir=<path under the repo> -> { dir, files: [...] }, the .glb names in it.
 // Dev-only, and deliberately so: it exists for /asset-sheet/, the contact sheet that renders a
 // pack so you can see what a model actually is before cataloguing it. server.js is not
 // deployed, so this adds nothing to production. Guarded like the static handler below —
-// resolved under ROOT, and anything that escapes is refused.
+// resolved under ROOT/assets, and anything that escapes is refused.
 function listAssets(url, res) {
   const dir = path.normalize(path.join(ROOT, decodeURIComponent(url.searchParams.get('dir') || '')));
-  if (!dir.startsWith(ROOT)) { res.writeHead(403); return res.end('Forbidden'); }
+  const assets = path.join(ROOT, 'assets');
+  const assetsRoot = assets.endsWith(path.sep) ? assets : assets + path.sep;
+  if (!underRoot(dir) || (dir !== assets && !dir.startsWith(assetsRoot))) {
+    res.writeHead(403); return res.end('Forbidden');
+  }
   fs.readdir(dir, (err, names) => {
     res.writeHead(err ? 404 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
     if (err) return res.end(JSON.stringify({ error: 'no such folder' }));
@@ -80,7 +89,7 @@ http.createServer(async (req, res) => {
     let rel = decodeURIComponent(url.pathname);
     if (rel.endsWith('/')) rel += 'index.html';
     const file = path.normalize(path.join(ROOT, rel));
-    if (!file.startsWith(ROOT) || /(^|[\\/])\.env/.test(file)) { res.writeHead(403); return res.end('Forbidden'); }
+    if (!underRoot(file) || /(^|[\\/])\.env/.test(file)) { res.writeHead(403); return res.end('Forbidden'); }
     fs.stat(file, (statErr, stat) => {
       // Directory requested without a trailing slash (e.g. /size-test) — redirect to add
       // the slash rather than serving index.html's content at that URL: the page's own

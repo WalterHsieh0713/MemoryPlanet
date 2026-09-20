@@ -60,15 +60,22 @@
 
   // The ship at position `index` of a world's fleet. Everything about it comes from the
   // world's own seed, so it is the same ship on every reload without being stored first
-  // (CLAUDE.md: nothing is re-rolled at spawn time).
-  function makeShip(seed, index) {
+  // (CLAUDE.md: nothing is re-rolled at spawn time). `taken` skips goals and names already
+  // on the water, so two ships in one fleet never ask for the same thing.
+  function makeShip(seed, index, taken) {
     var n = (seed || 0) + index * 7919;
     var hull = pick(HULLS, n);
+    var usedGoals = (taken && taken.goals) || [];
+    var usedNames = (taken && taken.names) || [];
+    var goals = GOALS.filter(function (goal) { return usedGoals.indexOf(goal.id) === -1; });
+    if (!goals.length) goals = GOALS;
+    var names = NAMES.filter(function (name) { return usedNames.indexOf(name) === -1; });
+    if (!names.length) names = NAMES;
     return {
       id: 'ship-' + index,
       hull: hull,
-      name: pick(NAMES, n + 31),
-      goal: pick(GOALS, n + 101).id,
+      name: pick(names, n + 31),
+      goal: pick(goals, n + 101).id,
       claimed: false
     };
   }
@@ -80,7 +87,10 @@
     var want = fleetSize(sizeIndex);
     var added = [];
     while (world.ships.length < want) {
-      added.push(makeShip(world.seed, world.ships.length));
+      added.push(makeShip(world.seed, world.ships.length, {
+        goals: world.ships.map(function (ship) { return ship.goal; }),
+        names: world.ships.map(function (ship) { return ship.name; })
+      }));
       world.ships.push(added[added.length - 1]);
     }
     return added;

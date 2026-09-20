@@ -477,7 +477,6 @@
     if (ALL_BUILDINGS.indexOf(asset.key) === -1) {
       asset = pickAssetFor(memory.category, slot);
       memory.asset = asset;
-      if (MI.store && MI.store.save) MI.store.save();
     }
     var spec = buildingSpec(asset.key);
     return placeProp(packPath(asset.pack) + asset.key, memory.placement, {
@@ -2298,6 +2297,7 @@
     while (state.residentGroup.children.length) state.residentGroup.remove(state.residentGroup.children[0]);
     Object.keys(state.residentWalkers).forEach(function (id) { disposeWalkerPair(state.residentWalkers[id]); });
     state.residentWalkers = {};
+    clearShips();
   }
 
   // Swap to the grid for `frequency`: a fresh all-water mesh, scaled so tiles keep their
@@ -2673,9 +2673,60 @@
     return true;
   }
 
+  function shipTileOf(live) {
+    if (!live) return null;
+    if (live.walker && live.walker.tileId !== null && live.walker.tileId !== undefined) {
+      return live.walker.tileId;
+    }
+    if (live.tile !== null && live.tile !== undefined) return live.tile;
+    return null;
+  }
+
+  function disposeShip(live) {
+    if (!live) return;
+    if (live.walker && live.walker.animator) live.walker.animator.dispose();
+    if (live.walker && live.walker.group && state.shipGroup) {
+      state.shipGroup.remove(live.walker.group);
+    }
+  }
+
+  function clearShips() {
+    if (!state || !state.shipWalkers) return;
+    Object.keys(state.shipWalkers).forEach(function (id) {
+      disposeShip(state.shipWalkers[id]);
+    });
+    state.shipWalkers = {};
+    if (state.shipGroup) {
+      while (state.shipGroup.children.length) state.shipGroup.remove(state.shipGroup.children[0]);
+    }
+  }
+
+  function spawnShip(ship, tile) {
+    var model = MI.ships.modelFor(ship);
+    var id = ship.id;
+    // Reserved before the GLB returns so a second sync cannot start another load for the same hull.
+    state.shipWalkers[id] = { model: model, walker: null, ship: ship, tile: tile };
+    MI.world.walkers.makeWalkerSolo(model).then(function (walker) {
+      var slot = state.shipWalkers[id];
+      if (!walker || !slot || slot.model !== model) return;
+      slot.walker = walker;
+      if (tile !== null && tile !== undefined) {
+        walker.tileId = walker.targetId = tile;
+        walker.fromTileId = null;
+        walker.t = 1;
+      }
+      walker.group.userData.tag = { type: 'ship', id: id };
+      state.shipGroup.add(walker.group);
+    });
+  }
+
   // Brings what is on screen in line with world.ships: adds ships that have appeared, drops
   // ships that are gone, and swaps the hull of one that has just been claimed. Cheap to call
   // — it only touches what actually differs.
+  //
+  // Journal ids are always ship-0..ship-3, so a kept walker from the previous journal would
+  // show the wrong claimed flag. clearProps drops the fleet; this then rebuilds it. A hull
+  // swap (claim) keeps the tile so the ship does not jump across the ocean.
   function syncShips() {
     if (!state || !state.tiles) return;
     var world = MI.store.get();
@@ -2685,25 +2736,22 @@
     Object.keys(state.shipWalkers).forEach(function (id) {
       var live = state.shipWalkers[id];
       var ship = wanted[id];
-      if (!ship || live.model !== MI.ships.modelFor(ship)) {
-        state.shipGroup.remove(live.walker.group);
+      if (!ship) {
+        disposeShip(live);
         delete state.shipWalkers[id];
+        return;
       }
+      live.ship = ship;
+      if (live.model === MI.ships.modelFor(ship)) return;
+      var tile = shipTileOf(live);
+      disposeShip(live);
+      delete state.shipWalkers[id];
+      spawnShip(ship, tile);
     });
 
     Object.keys(wanted).forEach(function (id) {
       if (state.shipWalkers[id]) return;
-      var ship = wanted[id];
-      var model = MI.ships.modelFor(ship);
-      // Claimed before the hull loads? The entry is reserved so two loads can't race for it.
-      state.shipWalkers[id] = { model: model, walker: null, ship: ship, tile: null };
-      MI.world.walkers.makeWalkerSolo(model).then(function (walker) {
-        var slot = state.shipWalkers[id];
-        if (!walker || !slot || slot.model !== model) return;
-        slot.walker = walker;
-        slot.walker.group.userData.tag = { type: 'ship', id: id };
-        state.shipGroup.add(walker.group);
-      });
+      spawnShip(wanted[id], null);
     });
   }
 
@@ -3526,6 +3574,13 @@
         var gid = pickGalaxy(event, canvasEl);
         if (setGalaxyHover(gid) && galaxyHoverListener) galaxyHoverListener(gid);
         hoverCursor = gid ? 'pointer' : 'grab';
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
+      var shipId = pickShip(event, canvasEl);
+      if (shipId) {
+        if (hoverListener) hoverListener(null);
+        hoverCursor = 'pointer';
         canvasEl.style.cursor = hoverCursor;
         return;
       }
@@ -4536,8 +4591,9 @@
   // ready" can actually show you the ship.
   function focusShip(shipId) {
     var live = state.shipWalkers && state.shipWalkers[shipId];
-    if (!live || live.tile === null || live.tile === undefined) return false;
-    focus(live.tile);
+    var tile = shipTileOf(live);
+    if (tile === null || tile === undefined) return false;
+    focus(tile);
     return true;
   }
 

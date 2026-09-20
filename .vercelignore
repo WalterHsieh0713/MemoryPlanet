@@ -14,8 +14,8 @@ asset-sheet/
 # Currently loaded: kenney-hexagon-kit (buildings/terrain), assets/standalone/animals/cube-pets
 # (walking pets), assets/standalone/characters/mini-characters (residents and your avatar) and
 # assets/standalone/ships/pirate-kit (the pirate fleet), all via src/world/walkers.js, plus
-# assets/standalone/buildings (the pirate towers the generator plants, PACKS in world.js).
-# Those sorted folders are deliberately absent below, unlike the raw packs they came from.
+# assets/standalone/buildings/pirate-kit (the pirate towers PACKS in world.js plants). Those
+# sorted folders are deliberately absent below. The retired fantasy-town rotor parts stay ignored.
 assets/kenney_castle-kit/
 assets/kenney_cube-pets_1.0/
 assets/kenney_factory-kit_3.0/
@@ -23,6 +23,7 @@ assets/kenney_fantasy-town-kit_2.0/
 assets/kenney_holiday-kit/
 assets/kenney_mini-characters/
 assets/kenney_pirate-kit/
+assets/standalone/buildings/fantasy-town-kit/
 assets/standalone/decor/
 assets/standalone/holiday-decor/
 assets/standalone/machinery/

@@ -22,6 +22,7 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
            planet: { frequency },                       // on MI.growth.LADDER; every slot indexes this grid
            wallet: { shards /*shown as coins*/, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
            house: { slot, asset } | null,            // the main house; the character starts here
+           ships: [{ id, hull, name, goal, claimed }], // pirate fleet; position is not stored
            player: { character: id|null },           // who your character is
            unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
            equipped: { theme: id, pet: id|null, satellite: id|null, skin: id } }
@@ -81,6 +82,12 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
 - `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`
 
+## MI.ships  (`src/world/ships.js`, pure — `node scripts/test-ships.js`)
+- Who the pirate fleet is, what each ship asks for, and whether it has been claimed. No THREE, no DOM. Sailing lives in world.js (a walker whose walkable set is water); app.js watches for a goal being met.
+- `fleetSize(sizeIndex)`, `makeShip(seed, index, taken?)`, `ensureFleet(world, sizeIndex) -> added[]` (never shrinks; new ships skip goals/names already in the fleet)
+- `progressFor(world, ship) -> { done, target, complete, title, ask, unit }`, `claimable(world)`, `claim(world, shipId) -> bool`, `find(world, shipId)`, `modelFor(ship)`
+- Goals are journalling milestones (travel memories, a day with 2 people, a streak, 6 entries, 4 people). Claiming is the player's click, not automatic.
+
 ## MI.world  (owners: A = scene/planet/controls, B = spawn/assets/characters)
 - `init(canvasEl, { frequency, theme, pet, satellite, character, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
 - `setPlanet(frequency, { animate }) -> Promise` — swap to that grid (planet group scaled by frequency/10, so tiles keep their world size); clears props, caller replays the remapped world. `loadGrid(f)`, `currentTiles()`, `planetInfo()`
@@ -91,7 +98,8 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 - Your character: `setCharacter(id) -> Promise`, `characters()`, `currentCharacter()`. It is a permanent inhabitant — built at boot from `world.player.character`, visible in every view, and walked by WASD in orbit views as well as on the ground.
 - Ground view: `setGroundView(on) -> Promise<bool>`, `isGroundView()`. A third camera beside planet and island view, not a mode the character depends on. Orbit's controls are suspended while it is on and restored on exit.
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
-- `onPick(cb(slot | null))`
+- `onPick(cb(slot | null))`, `onShipPick(cb(shipId))`
+- `assetFor(key) -> { pack, key }`, `syncShips()`, `focusShip(shipId) -> bool`
 - `clear()`
 - Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (the island view; animated lift-and-gather unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
 - The island's shape and roads come from `MI.island`; `world.js` draws it (`buildFlatView`, `buildIslandUnderside`, `makeSky`) and animates the change of view (`makeFoldRig`). `MI.world.computeFlatLayout` / `computeRoads` are gone with the strip layout.
@@ -110,11 +118,12 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 
 ## MI.app  (owner: D)
 - `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.
-- `restore() -> Promise` replays the stored world (landscape, memories, people) without animation, then rebuilds roads.
+- `restore() -> Promise` replays the stored world (landscape, memories, people, ships) without animation, then rebuilds roads.
 - `addEntry` also pays coins and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
 - `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
 - `enterJournal(id, { keepCamera }) -> Promise<bool>`, `createJournal({ name, character, keepCamera }) -> Promise<bool>`, `rebuildScene({ keepCamera }) -> Promise` — swap the live planet to the stored world (grid, cosmetics, character, restore). `keepCamera` is for the galaxy dive, so the zoom-in is not reset.
-- `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`.
+- `claimShip(shipId) -> bool`, `checkShips()` — ships are won by writing; a toast points at one that is ready, claiming is the player's click.
+- `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`; `{ type: 'ship-ready', ship, progress }`; `{ type: 'ship-claimed', ship }`.
 - `opts.tags = { people: [{ name, personId? }], category, mood, importance }` from the tag row; each field falls back to `MI.ai.guess`. A `personId` is reused directly, so there is no name matching and no "same person?" prompt.
 
 ## Rules
