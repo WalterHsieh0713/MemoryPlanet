@@ -1216,7 +1216,8 @@
   body.hub #picker,
   body.hub #book,
   body.hub #detail,
-  body.hub #ship-card {
+  body.hub #ship-card,
+  body.hub #hub-tip {
     opacity: 0 !important; pointer-events: none !important; visibility: hidden !important;
   }
 
@@ -1860,6 +1861,28 @@
     transition: background .2s ease, transform .25s var(--spring);
   }
   #ship-claim:hover { background: var(--accent-deep); transform: translateY(-1px); }
+
+  /* Floats above the pointer when it is over the village hall. */
+  #hub-tip {
+    position: fixed; z-index: 8;
+    padding: 8px 14px 9px;
+    border-radius: 3px 10px 4px 8px;
+    transform: translate(-50%, calc(-100% - 16px)) rotate(-0.7deg);
+    pointer-events: none;
+    text-align: center;
+    opacity: 0; visibility: hidden;
+    transition: opacity .18s ease, visibility .18s;
+  }
+  #hub-tip.show {
+    opacity: 1; visibility: visible;
+  }
+  #hub-tip strong {
+    display: block; font-size: 15px; font-weight: 700; color: #6b3fa0;
+  }
+  #hub-tip span {
+    display: block; margin-top: 1px; font-size: 12px; font-weight: 600; color: var(--ink-mid);
+  }
+  body.gated #hub-tip { opacity: 0 !important; visibility: hidden !important; }
   #detail .pill {
     padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
     background: #eaf6fa; color: var(--ink);
@@ -2103,6 +2126,11 @@
 
 <!-- A ship you clicked out on the ocean: who they are, what they want, and the button that
      takes them once you have given it. -->
+<div id="hub-tip" class="paper" hidden aria-hidden="true">
+  <strong>Friend hub</strong>
+  <span id="hub-tip-sub">Click to meet friends</span>
+</div>
+
 <div id="ship-card" class="paper">
   <button class="close" id="ship-close" aria-label="Close">✕</button>
   <div class="cat" id="ship-flag"></div>

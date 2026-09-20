@@ -455,50 +455,29 @@
   // Placeholder gathering hall for the friend hub. Village-kit piece, distinct from the
   // main house, so it reads as a place people meet rather than a second home.
   var HUB_SCALE = 1.32;
-  var hubSignTexture = null;
-
-  function addHubSign(building, tileSize) {
-    if (!hubSignTexture) {
-      var canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 160;
-      var ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#fff8e8';
-      ctx.strokeStyle = '#7e553c';
-      ctx.lineWidth = 10;
-      ctx.beginPath();
-      ctx.roundRect(12, 12, 488, 136, 34);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = '#274f58';
-      ctx.textAlign = 'center';
-      ctx.font = 'bold 54px Quicksand, sans-serif';
-      ctx.fillText('Character Hub', 256, 78);
-      ctx.font = 'bold 30px Quicksand, sans-serif';
-      ctx.fillText('click or walk up to enter', 256, 124);
-      hubSignTexture = new THREE.CanvasTexture(canvas);
-    }
-    var sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: hubSignTexture, transparent: true }));
-    building.updateWorldMatrix(true, true);
-    var box = new THREE.Box3().setFromObject(building);
-    var above = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y + tileSize * 0.35,
-      (box.min.z + box.max.z) / 2);
-    var scale = building.getWorldScale(new THREE.Vector3()).x;
-    sign.position.copy(building.worldToLocal(above));
-    sign.scale.set(tileSize * 1.45 / scale, tileSize * 0.45 / scale, 1);
-    building.add(sign);
-  }
+  var HUB_TILE_TOP = new THREE.Color(0x8d4de2);  // violet pad, so the hall isn't just another house
+  var HUB_TILE_SIDE = new THREE.Color(0x5a3480);
+  var HUB_GLOW = new THREE.Color(0xc489ff);
+  var HUB_HALO_COLOR = 0xd4a6ff;
+  var HUB_PULSE_MS = 1600;
 
   function spawnHub(hub, options) {
     if (!state || !hub || typeof hub.slot !== 'number') return Promise.resolve();
     var opts = options || {};
-    setTileLand(hub.slot);
+    setTileLand(hub.slot, landTopColor(hub.slot));
+    // Already land (a reload, a remap): setTileLand no-ops, so paint the pad ourselves.
+    if (!state.waterTileIds.has(hub.slot)) {
+      writeTileColors(hub.slot, landTopColor(hub.slot), landSideColor(hub.slot));
+    }
     if (opts.animate !== false) popTile(hub.slot);
     return placeProp(HEX_PACK + hub.asset, { slot: hub.slot, scale: HUB_SCALE }, {
       animate: opts.animate !== false,
       rotY: Math.PI / 3,
       tag: { type: 'hub', slot: hub.slot }
     }).then(function (obj) {
-      if (obj) addHubSign(obj, state.spacing * state.planet.scale.x);
+      if (state.flatMode || state.transition) {
+        return refreshFlatView(hub.slot).then(function () { return obj; });
+      }
       return obj;
     });
   }
@@ -512,9 +491,14 @@
   }
 
   function landTopColor(slot) {
+    if (isHubBuildingSlot(slot)) return HUB_TILE_TOP;
     var asset = state.landAsset[slot];
     var hex = asset ? currentTheme.tint[asset] : undefined;
     return hex === undefined ? LAND_COLOR : new THREE.Color(hex);
+  }
+
+  function landSideColor(slot) {
+    return isHubBuildingSlot(slot) ? HUB_TILE_SIDE : LAND_SIDE_COLOR;
   }
 
   function spawnMemory(memory, options) {
@@ -988,6 +972,7 @@
   // The island view: the planet's land coiled into a compact chunk (MI.island.layout),
   // floating on a rocky underside, with its roads re-routed across the island.
   function buildFlatView() {
+    detachHubHalo();
     while (state.flatGroup.children.length) {
       state.flatGroup.remove(state.flatGroup.children[0]);
     }
@@ -1179,7 +1164,6 @@
         obj.userData.restY = FLAT_BASE_Y;
         obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
         state.flatGroup.add(obj);
-        if (world.hub && Number(id) === world.hub.slot) addHubSign(obj, FLAT_SPACING);
         if (parts.some(function (part) { return part.spin; })) state.spinners.push(obj);
 
         var after = [];
@@ -1220,6 +1204,7 @@
     return Promise.all(jobs).then(function () {
       state.flatRadius = extent + FLAT_SPACING;
       state.flatGroup.add(buildIslandShadow(state.flatRadius * 2.6, ROCK_TOP_Y - hang - 2.5));
+      dressHubIsland();
     });
   }
 
@@ -1474,8 +1459,9 @@
   function paintHighlight(mix) {
     if (highlight.slot === null || !state || !state.tileVertexRange[highlight.slot]) return;
     // clone: landTopColor can hand back the shared LAND_COLOR constant.
-    var top = landTopColor(highlight.slot).clone().lerp(HIGHLIGHT_COLOR, mix);
-    var side = LAND_SIDE_COLOR.clone().lerp(HIGHLIGHT_COLOR, mix * 0.5);
+    var hi = isHubBuildingSlot(highlight.slot) ? HUB_GLOW : HIGHLIGHT_COLOR;
+    var top = landTopColor(highlight.slot).clone().lerp(hi, mix);
+    var side = landSideColor(highlight.slot).clone().lerp(hi, mix * 0.5);
     writeTileColors(highlight.slot, top, side);
   }
 
@@ -1484,7 +1470,7 @@
     if (state.waterTileIds.has(highlight.slot)) {
       writeTileColors(highlight.slot, WATER_COLOR, WATER_SIDE_COLOR);
     } else {
-      writeTileColors(highlight.slot, landTopColor(highlight.slot), LAND_SIDE_COLOR);
+      writeTileColors(highlight.slot, landTopColor(highlight.slot), landSideColor(highlight.slot));
     }
   }
 
@@ -1497,28 +1483,34 @@
 
   // A band around the tile's rim. A line would be a hairline at any distance — GPUs ignore
   // LineBasicMaterial's width — so this is real geometry: six quads between two hexagons.
-  function makeHalo() {
+  function makeHalo(options) {
+    var opts = options || {};
+    var inner = opts.inner != null ? opts.inner : HALO_INNER;
+    var outer = opts.outer != null ? opts.outer : HALO_OUTER;
+    var y = opts.y != null ? opts.y : HALO_Y;
+    var color = opts.color != null ? opts.color : 0xffe9a3;
     var positions = [];
     for (var k = 0; k < 6; k++) {
       var a0 = KIT_VERTEX_ANGLE + k * Math.PI / 3;
       var a1 = KIT_VERTEX_ANGLE + (k + 1) * Math.PI / 3;
       var corners = [
-        [Math.cos(a0) * HALO_INNER, Math.sin(a0) * HALO_INNER],
-        [Math.cos(a1) * HALO_INNER, Math.sin(a1) * HALO_INNER],
-        [Math.cos(a1) * HALO_OUTER, Math.sin(a1) * HALO_OUTER],
-        [Math.cos(a0) * HALO_OUTER, Math.sin(a0) * HALO_OUTER]
+        [Math.cos(a0) * inner, Math.sin(a0) * inner],
+        [Math.cos(a1) * inner, Math.sin(a1) * inner],
+        [Math.cos(a1) * outer, Math.sin(a1) * outer],
+        [Math.cos(a0) * outer, Math.sin(a0) * outer]
       ];
       [0, 2, 1, 0, 3, 2].forEach(function (i) {
-        positions.push(corners[i][0], HALO_Y, corners[i][1]);
+        positions.push(corners[i][0], y, corners[i][1]);
       });
     }
     var geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     var mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-      color: 0xffe9a3, transparent: true, depthWrite: false, side: THREE.DoubleSide
+      color: color, transparent: true, depthWrite: false, side: THREE.DoubleSide
     }));
     mesh.renderOrder = 2;
-    mesh.userData.isHighlight = true;
+    mesh.userData.isHighlight = !opts.hub;
+    mesh.userData.isHubHalo = !!opts.hub;
     return mesh;
   }
 
@@ -1566,6 +1558,87 @@
     // the step of shadow along its edge is not.
     highlight.lifted = tile;
     tile.position.y = (tile.userData.restY || 0) + HIGHLIGHT_TILE_LIFT;
+  }
+
+  function hubPulse(now) {
+    return 0.5 - 0.5 * Math.cos(((now % HUB_PULSE_MS) / HUB_PULSE_MS) * Math.PI * 2);
+  }
+
+  // The village hall shares its kit model with ordinary social buildings, so the TILE has to
+  // be the thing that says "this one is the hub": a violet pad on the planet cell, and a
+  // cloned (not shared) stain plus rim on the island hex plate.
+  function detachHubHalo() {
+    if (state) state.hubPad = [];
+    if (!state || !state.hubHalo) return;
+    if (state.hubHalo.parent) state.hubHalo.parent.remove(state.hubHalo);
+    state.hubHalo.geometry.dispose();
+    state.hubHalo.material.dispose();
+    state.hubHalo = null;
+  }
+
+  function stainHubFoundation(root) {
+    var tint = HUB_TILE_TOP.clone().convertSRGBToLinear();
+    var glow = new THREE.Color(0x8a3dff);
+    root.traverse(function (mesh) {
+      if (!mesh.isMesh || !mesh.userData || !mesh.userData.base) return;
+      if (!mesh.userData.hubStain) {
+        var verts = mesh.geometry.userData && mesh.geometry.userData.grassVerts;
+        mesh.geometry = mesh.geometry.clone();
+        if (verts) {
+          mesh.geometry.userData.grassVerts = verts;
+          mesh.geometry.userData.grassRole = 'ground';
+        }
+        mesh.material = mesh.material.clone();
+        mesh.material.emissive = glow;
+        mesh.material.emissiveIntensity = 0.35;
+        mesh.userData.hubStain = true;
+      }
+      var geo = mesh.geometry;
+      if (geo.attributes.color && geo.userData.grassVerts) {
+        geo.userData.grassVerts.forEach(function (v) {
+          geo.attributes.color.setXYZ(v, tint.r, tint.g, tint.b);
+        });
+        geo.attributes.color.needsUpdate = true;
+      }
+      state.hubPad.push(mesh);
+    });
+  }
+
+  function dressHubIsland() {
+    detachHubHalo();
+    if (!state || !state.flatGroup) return;
+    var slot = hubSlot();
+    if (slot === null) return;
+    var tile = islandTileFor(slot);
+    if (!tile) return;
+    stainHubFoundation(tile);
+    state.hubHalo = makeHalo({
+      hub: true, color: HUB_HALO_COLOR,
+      inner: 0.34, outer: 0.70, y: 0.203
+    });
+    state.hubHalo.material.opacity = 0.7;
+    tile.add(state.hubHalo);
+  }
+
+  function updateHubMarker(now) {
+    if (!state || (state.hub && state.hub.on)) return;
+    var slot = hubSlot();
+    if (slot === null) return;
+    var pulse = hubPulse(now);
+    if (state.planet && state.planet.visible && !state.flatMode
+        && highlight.slot !== slot && !state.waterTileIds.has(slot)) {
+      var top = HUB_TILE_TOP.clone().lerp(HUB_GLOW, 0.08 + 0.28 * pulse);
+      var side = HUB_TILE_SIDE.clone().lerp(HUB_GLOW, 0.18 * pulse);
+      writeTileColors(slot, top, side);
+    }
+    if (state.hubHalo && state.hubHalo.material) {
+      state.hubHalo.material.opacity = 0.42 + 0.5 * pulse;
+    }
+    if (state.hubPad) {
+      state.hubPad.forEach(function (mesh) {
+        if (mesh.material) mesh.material.emissiveIntensity = 0.22 + 0.42 * pulse;
+      });
+    }
   }
 
   function startHighlightPulse() {
@@ -2047,7 +2120,7 @@
     for (var i = 0; i < range[1]; i++) {
       var vi = (range[0] + i) * 3;
       // Terrain colour on top, dirt down the sides — a Minecraft block.
-      var tint = i < range[2] ? (topColor || LAND_COLOR) : LAND_SIDE_COLOR;
+      var tint = i < range[2] ? (topColor || landTopColor(tileId)) : landSideColor(tileId);
       colorAttr.array[vi] = tint.r;
       colorAttr.array[vi + 1] = tint.g;
       colorAttr.array[vi + 2] = tint.b;
@@ -2463,6 +2536,7 @@
 
   // Everything standing on the planet or laid out flat — but not the tiles themselves.
   function clearProps() {
+    detachHubHalo();
     while (state.props.children.length) state.props.remove(state.props.children[0]);
     while (state.flatGroup.children.length) state.flatGroup.remove(state.flatGroup.children[0]);
     if (state.roadGroup) {
@@ -2607,7 +2681,7 @@
   function repaintTiles() {
     state.tiles.forEach(function (tile) {
       if (state.waterTileIds.has(tile.id)) writeTileColors(tile.id, WATER_COLOR, WATER_SIDE_COLOR);
-      else writeTileColors(tile.id, landTopColor(tile.id), LAND_SIDE_COLOR);
+      else writeTileColors(tile.id, landTopColor(tile.id), landSideColor(tile.id));
     });
   }
 
@@ -3747,6 +3821,7 @@
       island: null, islandFocus: new THREE.Vector3(), sky: null, skyCache: {},
       viewMix: 0, satellitePop: 1, // 0 = planet view, 1 = island view; satellitePop scales a satellite in
       landAsset: {},            // slot -> terrain asset, for repainting on a theme change
+      hubHalo: null, hubPad: [],
       // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
       // what's already on screen; one recoloured atlas per theme.
       kitMaterials: [], foliageGeometries: [], atlasCache: {},
@@ -3876,7 +3951,9 @@
         var groundEvent = hoverPending;
         hoverPending = null;
         var groundSlot = pickSlot(groundEvent, canvasEl);
-        hoverCursor = isHubBuildingSlot(groundSlot) ? 'pointer' : 'default';
+        var overHub = isHubBuildingSlot(groundSlot);
+        if (hoverListener) hoverListener(overHub ? groundSlot : null);
+        hoverCursor = overHub ? 'pointer' : 'default';
         canvasEl.style.cursor = hoverCursor;
         return;
       }
@@ -5006,6 +5083,7 @@
       animateWater(now / 1000);
       animateSatellite(now / 1000);
       if (!state.transition && !(state.hub && state.hub.on)) updateWalkers(dt);
+      updateHubMarker(now);
       updateShips(dt); // hides itself mid-fold rather than freezing, so a ship never lands ashore
       if (!state.transition && !(state.hub && state.hub.on)) updatePlayer(dt);
       if (!state.transition && state.hub && state.hub.on) updateHub(dt);
@@ -5065,10 +5143,15 @@
     return !!state && !!state.hub && state.hub.on;
   }
 
-  function isHubBuildingSlot(slot) {
-    if (slot === null || slot === undefined || !MI.store) return false;
+  function hubSlot() {
+    if (!MI.store) return null;
     var world = MI.store.get();
-    return !!(world.hub && world.hub.slot === slot);
+    return world.hub && typeof world.hub.slot === 'number' ? world.hub.slot : null;
+  }
+
+  function isHubBuildingSlot(slot) {
+    if (slot === null || slot === undefined) return false;
+    return hubSlot() === slot;
   }
 
   function notifyHub() {
@@ -5382,7 +5465,7 @@
     if (state.galaxy && state.galaxy.on) return Promise.resolve(false);
     if (state.transition || state.camMode === 'tween') return Promise.resolve(false);
     state.hub.busy = true;
-    var cover = MI.ui && MI.ui.beginTravel ? MI.ui.beginTravel('Entering the Character Hub…')
+    var cover = MI.ui && MI.ui.beginTravel ? MI.ui.beginTravel('Entering the friend hub…')
       : Promise.resolve();
     return cover.then(function () {
       return isGroundView() ? setGroundView(false) : Promise.resolve();
