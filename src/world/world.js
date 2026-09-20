@@ -2564,6 +2564,60 @@
     }
   }
 
+  var FOOD_DIR = 'assets/standalone/food/';
+  var FOOD_LIFE_MS = 1600;
+
+  function attachTreat(parent, gltf) {
+    if (!parent || !gltf) return;
+    var obj = gltf.scene.clone(true);
+    obj.position.set(0.55, 1.15, 0.35);
+    obj.scale.setScalar(0.001);
+    obj.traverse(function (node) {
+      if (!node.isMesh || !node.material) return;
+      node.castShadow = true;
+      var mats = Array.isArray(node.material) ? node.material : [node.material];
+      var next = mats.map(function (m) {
+        var c = m.clone();
+        c.transparent = true;
+        c.opacity = 1;
+        return c;
+      });
+      node.material = next.length === 1 ? next[0] : next;
+    });
+    parent.add(obj);
+    animate(FOOD_LIFE_MS, function (t) {
+      if (!obj.parent) return true;
+      var pop = t < 0.18 ? t / 0.18 : 1;
+      var fade = t > 0.72 ? 1 - (t - 0.72) / 0.28 : 1;
+      obj.scale.setScalar(0.42 * pop);
+      obj.position.y = 1.15 + Math.sin(t * Math.PI) * 0.4;
+      obj.rotation.y = t * 3.8;
+      obj.traverse(function (node) {
+        if (!node.isMesh || !node.material) return;
+        var mats = Array.isArray(node.material) ? node.material : [node.material];
+        mats.forEach(function (m) { m.opacity = fade; });
+      });
+      if (t >= 1) {
+        parent.remove(obj);
+        return true;
+      }
+    });
+  }
+
+  // A treat floats next to the pet that is out, then vanishes. The pantry has already
+  // spent it; this is only the nibble on the planet.
+  function feedPet(foodId) {
+    if (!state || !state.petWalkers) return false;
+    var item = MI.economy && MI.economy.find('food', foodId);
+    if (!item || !item.file) return false;
+    loadGLB(FOOD_DIR + item.file).then(function (gltf) {
+      if (!gltf || !state.petWalkers) return;
+      attachTreat(state.petWalkers.sphere.group, gltf);
+      attachTreat(state.petWalkers.flat.group, gltf);
+    });
+    return true;
+  }
+
   function clearWalker(groupKey, walkersKey) {
     var group = state[groupKey];
     while (group.children.length) group.remove(group.children[0]);
@@ -5418,6 +5472,7 @@
   MI.world.setTheme = setTheme;
   MI.world.setSatellite = setSatellite;
   MI.world.setPet = setPet;
+  MI.world.feedPet = feedPet;
   MI.world.setGroundView = setGroundView;
   MI.world.isGroundView = isGroundView;
   MI.world.onGroundView = onGroundView;

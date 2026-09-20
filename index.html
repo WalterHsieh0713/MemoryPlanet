@@ -1013,6 +1013,8 @@
     #mic-btn.listening, #mic-btn.done { animation: none; }
     #mic-btn.listening .mic-rings::before,
     #mic-btn.listening .mic-rings::after { animation: none; display: none; }
+    #feed .sheet, #feed.open .sheet { transform: none; transition-duration: .01ms; }
+    #feed-viewport .puff { animation: none; opacity: 0; }
   }
 
   /* --- toast --- */
@@ -1195,6 +1197,7 @@
   body.gated #world-title,
   body.gated #journal,
   body.gated #shop,
+  body.gated #feed,
   body.gated #picker,
   body.gated #book,
   body.gated #detail,
@@ -1209,6 +1212,7 @@
   body.hub #world-title,
   body.hub #journal,
   body.hub #shop,
+  body.hub #feed,
   body.hub #picker,
   body.hub #book,
   body.hub #detail,
@@ -1377,6 +1381,141 @@
   }
   #picker .play:hover { filter: brightness(1.05); }
   #picker .hint { margin-top: 10px; font-size: 12.5px; color: var(--ink-mid); }
+
+  /* Pantry feed: pick a pet, then drag a treat onto them on a hex tile. */
+  #feed {
+    position: fixed; inset: 0; z-index: 23; display: grid; place-items: center; padding: 16px;
+    background: rgba(44, 95, 111, .32); backdrop-filter: blur(4px);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .25s ease, visibility .25s;
+  }
+  #feed.open { opacity: 1; visibility: visible; pointer-events: auto; }
+  #feed .sheet {
+    position: relative;
+    width: min(440px, 100%);
+    padding: 22px 22px 18px;
+    border-radius: 28px;
+    background: var(--paper);
+    box-shadow: 0 24px 60px rgba(44, 95, 111, .28);
+    transform: translateY(12px) scale(.98);
+    transition: transform .4s var(--spring);
+  }
+  #feed.open .sheet { transform: none; }
+  #feed .close {
+    position: absolute; top: 12px; right: 12px; z-index: 2;
+    width: 32px; height: 32px; border: 0; cursor: pointer; border-radius: 50%;
+    background: #fff8ec; color: var(--ink); font-size: 15px; font-family: inherit;
+    box-shadow: 1px 2px 0 #e4d2b0;
+    display: grid; place-items: center;
+  }
+  #feed .close:hover { background: #fff; }
+  #feed-treat {
+    display: flex; align-items: center; gap: 14px;
+    margin: 0 28px 14px 0;
+  }
+  #feed-treat img {
+    width: 72px; height: 72px; object-fit: contain;
+    border-radius: 16px; background: #fde8d8;
+    box-shadow: inset 0 0 0 2px #f3d4bc;
+  }
+  #feed-treat h2 {
+    margin: 0; font-size: 22px; font-weight: 700; line-height: 1.1;
+  }
+  #feed-treat .count { margin: 4px 0 0; font-size: 13px; color: var(--ink-mid); }
+  #feed-pick-sub { margin: 0 0 10px; font-size: 14px; font-weight: 600; color: var(--ink-mid); }
+  #feed-pets {
+    display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 12px;
+    margin: 0 -4px 8px;
+  }
+  #feed-pets .card {
+    flex: 0 0 auto;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    min-width: 86px; padding: 10px 10px 8px;
+    border: 2px solid transparent; border-radius: 18px;
+    background: #fff7ec; cursor: pointer; font: inherit; color: inherit;
+    position: relative;
+  }
+  #feed-pets .card:hover { transform: translateY(-2px); }
+  #feed-pets .card[aria-checked="true"] {
+    border-color: var(--accent, #f08c46);
+    box-shadow: 0 8px 18px rgba(240, 140, 70, .22);
+  }
+  #feed-pets .card.out { background: #e7f3ee; }
+  #feed-pets .icon { font-size: 28px; line-height: 1; }
+  #feed-pets .name { font-size: 13px; font-weight: 700; }
+  #feed-pets .badge {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+    background: #7eb8a8; color: #fff; border-radius: 999px; padding: 2px 6px;
+  }
+  #feed-empty { margin: 8px 0 12px; font-size: 14px; color: var(--ink-mid); }
+  #feed .row {
+    display: flex; gap: 8px; margin-top: 6px;
+  }
+  #feed .row button {
+    flex: 1; padding: 12px; border: 0; border-radius: 16px; cursor: pointer;
+    font: inherit; font-size: 15px; font-weight: 700;
+  }
+  #feed-shop { background: #fff8ec; color: var(--ink); box-shadow: 1px 2px 0 #e4d2b0; }
+  #feed-go {
+    background: var(--accent, #f08c46); color: #fff;
+    box-shadow: 0 8px 18px rgba(240, 140, 70, .3);
+  }
+  #feed-go:disabled { opacity: .45; cursor: default; box-shadow: none; }
+  #feed-go:not(:disabled):hover { filter: brightness(1.05); }
+  #feed[data-step="stage"] #feed-pick { display: none; }
+  #feed[data-step="pick"] #feed-stage { display: none; }
+  #feed-hint {
+    margin: 0 0 8px; text-align: center;
+    font-size: 14px; font-weight: 600; color: var(--ink-mid);
+  }
+  #feed-viewport {
+    position: relative;
+    height: min(320px, 46vh);
+    border-radius: 22px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #8ec8ee 0%, #e7f6fc 58%, #b7de7a 100%);
+    box-shadow: inset 0 0 0 2px rgba(255,255,255,.35);
+  }
+  #feed-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #feed-hand {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    margin-top: 12px;
+  }
+  #feed-chip {
+    width: 92px; height: 92px; padding: 8px; border: 0; cursor: grab;
+    border-radius: 22px; background: #fff7ec;
+    box-shadow: 0 8px 18px rgba(112, 70, 44, .16), inset 0 0 0 2px #f3d4bc;
+    touch-action: none;
+  }
+  #feed-chip:active, #feed-chip.held { cursor: grabbing; }
+  #feed-chip.held { opacity: 0; }
+  #feed-chip img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+  #feed-chip[hidden], #feed-hand.fed #feed-chip { visibility: hidden; }
+  #feed-hand .tip { font-size: 12px; color: var(--ink-mid); }
+  #feed-back {
+    display: block; margin: 10px auto 0; border: 0; background: none;
+    cursor: pointer; font: inherit; font-size: 13px; color: var(--ink-mid);
+  }
+  #feed-back:hover { color: var(--ink); }
+  #feed-ghost {
+    position: fixed; z-index: 30; width: 88px; height: 88px; margin: -44px 0 0 -44px;
+    pointer-events: none; display: none;
+    filter: drop-shadow(0 10px 16px rgba(112, 70, 44, .28));
+  }
+  #feed-ghost.show { display: block; }
+  #feed-ghost img { width: 100%; height: 100%; object-fit: contain; }
+  #feed.over-pet #feed-ghost { transform: scale(0.86); }
+  #feed-stage.yum #feed-hint { color: #c2410c; }
+  #feed-viewport .puff {
+    position: absolute; left: 50%; top: 38%;
+    font-size: 28px; pointer-events: none; z-index: 2;
+    animation: feed-heart 1.15s ease-out forwards;
+  }
+  @keyframes feed-heart {
+    0% { transform: translate(-50%, 0) scale(.45); opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--dx)), -120px) scale(1.2); opacity: 0; }
+  }
 
   #hub-ui {
     position: fixed; left: 50%; bottom: 22px; z-index: 18;
@@ -1558,6 +1697,7 @@
   }
   #shop .tabs button[data-kind="themes"] { background: #8ebdd4; }
   #shop .tabs button[data-kind="pets"] { background: #7eb8a8; }
+  #shop .tabs button[data-kind="food"] { background: #e8a090; }
   #shop .tabs button[data-kind="satellites"] { background: #e8b36a; }
   #shop .tabs button[aria-selected="true"] {
     padding-right: 12px; filter: brightness(1.05);
@@ -1608,7 +1748,11 @@
     background: #f3e6d0; overflow: hidden;
   }
   #shop[data-kind="pets"] .polaroid .photo { background: #e7f3ee; }
+  #shop[data-kind="food"] .polaroid .photo { background: #fde8d8; }
   #shop[data-kind="satellites"] .polaroid .photo { background: #f8edd6; }
+  .polaroid .photo img {
+    width: 78%; height: 78%; object-fit: contain; pointer-events: none;
+  }
   .polaroid .mini-planet {
     width: 62%; height: 62%; border-radius: 50%;
     box-shadow: inset -6px -6px 0 rgba(0,0,0,.12);
@@ -1970,6 +2114,42 @@
   </div>
 </div>
 
+<div id="feed" data-step="pick" aria-hidden="true">
+  <div class="sheet paper" role="dialog" aria-modal="true" aria-labelledby="feed-treat-name">
+    <button class="close" id="feed-close" aria-label="Close">✕</button>
+    <div id="feed-pick">
+      <div id="feed-treat">
+        <img id="feed-treat-img" alt="">
+        <div>
+          <h2 id="feed-treat-name">Treat</h2>
+          <p class="count" id="feed-treat-count"></p>
+        </div>
+      </div>
+      <p id="feed-pick-sub">Who gets a bite?</p>
+      <div id="feed-pets" role="radiogroup" aria-label="Choose a pet"></div>
+      <p id="feed-empty" hidden>Buy a pet in the shop first, then come back to feed them.</p>
+      <div class="row">
+        <button id="feed-shop" type="button" hidden>Shop for a pet</button>
+        <button id="feed-go" type="button">Feed</button>
+      </div>
+    </div>
+    <div id="feed-stage">
+      <p class="hint" id="feed-hint">Drag the treat onto them</p>
+      <div id="feed-viewport">
+        <canvas id="feed-canvas"></canvas>
+      </div>
+      <div id="feed-hand">
+        <button id="feed-chip" type="button" aria-label="Drag the treat onto the pet">
+          <img id="feed-chip-img" alt="">
+        </button>
+        <span class="tip">hold and drag</span>
+      </div>
+      <button id="feed-back" type="button">← pick a pet</button>
+    </div>
+  </div>
+</div>
+<div id="feed-ghost" aria-hidden="true"><img id="feed-ghost-img" alt=""></div>
+
 <div id="hub-ui" aria-hidden="true">
   <p class="hint">Walk up to a look and click it</p>
   <button id="hub-leave" type="button">leave hub</button>
@@ -2000,7 +2180,7 @@
             <b id="shop-balance">0</b>
             <span>coins</span>
           </div>
-          <p class="earn-hint">Write memories to earn coins. Use the Themes, Pets and Satellites controls below Settings to choose what you own.</p>
+          <p class="earn-hint">Write memories to earn coins. Use the Themes, Pets, Treats and Satellites controls below Settings to choose what you own.</p>
           <span class="doodle" aria-hidden="true"></span>
         </section>
         <div class="rings" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
@@ -2012,6 +2192,7 @@
     <div class="tabs" role="tablist" aria-label="Shop sections">
       <button type="button" role="tab" data-kind="themes" aria-selected="true">themes</button>
       <button type="button" role="tab" data-kind="pets" aria-selected="false">pets</button>
+      <button type="button" role="tab" data-kind="food" aria-selected="false">treats</button>
       <button type="button" role="tab" data-kind="satellites" aria-selected="false">satellites</button>
     </div>
   </div>
@@ -2064,6 +2245,7 @@
 <script src="src/world/themes.js"></script>
 <script src="src/world/cosmetics.js"></script>
 <script src="src/world/walkers.js"></script>
+<script src="src/world/feed.js"></script>
 <script src="src/world/ships.js"></script>
 <script src="src/world/hub.js"></script>
 <script src="src/world/player.js"></script>

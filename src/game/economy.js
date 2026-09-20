@@ -1,4 +1,4 @@
-// MI.economy — coins: earned by journaling, spent on themes, pets, satellites and skins.
+// MI.economy — coins: earned by journaling, spent on themes, pets, food, satellites and skins.
 // Reads and writes the wallet/unlocks/equipped fields of the stored world (MI.store); it
 // never touches the scene. Applying a purchase to the planet is MI.app.equip's job.
 (function () {
@@ -31,6 +31,18 @@
       { id: 'cloud-sheep', name: 'Cloud Sheep', price: 55, icon: '🐑', blurb: 'Fluffy, floaty, always paddling its legs.' },
       { id: 'sky-koi', name: 'Sky Koi', price: 75, icon: '🐟', blurb: 'Swims laps through the air above your roofs.' },
       { id: 'tiny-saucer', name: 'Tiny Saucer', price: 100, icon: '🛸', blurb: 'Blinking lights. Probably friendly.' }
+    ],
+    // Consumable treats from the Kenney Food Kit. Buying always stocks the pantry; feeding
+    // is a drag onto a pet you pick. They do not unlock, and buying another just adds another.
+    food: [
+      { id: 'apple', name: 'Apple', price: 8, icon: '🍎', file: 'apple.glb', blurb: 'Crunchy. Goes down in two bites.' },
+      { id: 'banana', name: 'Banana', price: 8, icon: '🍌', file: 'banana.glb', blurb: 'Peel it, share it, watch them hop.' },
+      { id: 'carrot', name: 'Carrot', price: 10, icon: '🥕', file: 'carrot.glb', blurb: 'A bunny favourite. Everyone else will try it too.' },
+      { id: 'broccoli', name: 'Broccoli', price: 10, icon: '🥦', file: 'broccoli.glb', blurb: 'Little trees. Surprisingly popular.' },
+      { id: 'cookie', name: 'Cookie', price: 12, icon: '🍪', file: 'cookie.glb', blurb: 'One is never enough, which is the point.' },
+      { id: 'cheese', name: 'Cheese', price: 12, icon: '🧀', file: 'cheese.glb', blurb: 'A wedge almost as big as they are.' },
+      { id: 'fish', name: 'Fish', price: 14, icon: '🐟', file: 'fish.glb', blurb: 'Fresh from somewhere. They will not ask where.' },
+      { id: 'ice-cream', name: 'Ice cream', price: 16, icon: '🍦', file: 'ice-cream.glb', blurb: 'A treat. Melted or not, it still counts.' }
     ],
     skins: [
       { id: 'classic', name: 'Classic', price: 0, icon: '🙂', blurb: 'Your people, just as they are.' },
@@ -125,8 +137,39 @@
     return !!list && list.indexOf(id) !== -1;
   }
 
+  function pantry() {
+    var w = world();
+    if (!w.pantry) w.pantry = {};
+    return w.pantry;
+  }
+
+  function stock(id) {
+    return pantry()[id] || 0;
+  }
+
+  // Treats are consumable: each buy adds one to the pantry. Feeding takes one out.
+  function buyFood(id) {
+    var item = find('food', id);
+    if (!item) return { ok: false, reason: 'unknown' };
+    var wallet = world().wallet;
+    if (wallet.shards < item.price) return { ok: false, reason: 'short', short: item.price - wallet.shards };
+    wallet.shards -= item.price;
+    pantry()[id] = stock(id) + 1;
+    MI.store.save();
+    return { ok: true, item: item, count: pantry()[id] };
+  }
+
+  function takeFood(id) {
+    if (stock(id) < 1) return false;
+    pantry()[id] -= 1;
+    if (!pantry()[id]) delete pantry()[id];
+    MI.store.save();
+    return true;
+  }
+
   // -> { ok: true, item } | { ok: false, reason: 'unknown' | 'short', short: coinsMissing }
   function buy(kind, id) {
+    if (kind === 'food') return buyFood(id);
     var item = find(kind, id);
     if (!item) return { ok: false, reason: 'unknown' };
     if (owns(kind, id)) return { ok: true, item: item, already: true };
@@ -151,6 +194,19 @@
     return world().equipped[EQUIP_KEY[kind]];
   }
 
+  // Pets you can feed, the one currently out first so the pantry picker can put them
+  // at the front of the row without the UI re-sorting the catalog itself.
+  function petsForFeed() {
+    var out = equipped('pets');
+    return CATALOG.pets.filter(function (item) {
+      return owns('pets', item.id);
+    }).sort(function (a, b) {
+      if (a.id === out) return -1;
+      if (b.id === out) return 1;
+      return 0;
+    });
+  }
+
   MI.economy = {
     CATALOG: CATALOG,
     REWARD: REWARD,
@@ -160,8 +216,14 @@
     find: find,
     owns: owns,
     buy: buy,
+    buyFood: buyFood,
+    stock: stock,
+    takeFood: takeFood,
+    pantry: pantry,
     equip: equip,
     equipped: equipped,
+    petsForFeed: petsForFeed,
     dayKey: dayKey
   };
+  if (typeof module !== 'undefined' && module.exports) module.exports = MI.economy;
 })();
