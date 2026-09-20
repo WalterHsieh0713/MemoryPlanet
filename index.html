@@ -6,143 +6,203 @@
 <title>Memory Planet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Architects+Daughter&display=swap" rel="stylesheet" />
 <style>
   :root {
-    --card: #fffdf8;
+    --card: #fffdf6;
     --ink: #2c5f6f;
     --ink-soft: #7fa3ae;
     --accent: #ff9f68;
     --accent-deep: #f4804a;
     --shadow: 0 10px 30px rgba(44, 95, 111, .16);
-    --shadow-soft: 0 4px 14px rgba(44, 95, 111, .12);
+    --shadow-soft: 0 4px 14px rgba(112, 70, 44, .12);
     --spring: cubic-bezier(.34, 1.56, .64, 1);
     --ink-mid: #537682;   /* small text on cards; --ink-soft is too light below ~16px */
     --shard: #6a4bd6;
     --shard-soft: #efeafd;
+    --paper: #fffdf4;
+    --paper-line: #eadcc4;
+    --paper-grid: #e7eef0;
+    --tape: #ffc4a0;
+  }
+  .paper {
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--paper-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--paper-grid) 1px, transparent 1px);
+    background-size: 10px 10px;
+    border: 1px solid #e6d4b6;
+    box-shadow: 2px 3px 0 #e4d2b0, 0 8px 18px rgba(112, 70, 44, .12);
   }
   html, body {
     margin: 0; height: 100%; overflow: hidden; background: #dff1f7;
-    font-family: Quicksand, system-ui, sans-serif; color: var(--ink);
+    font-family: 'Architects Daughter', 'Segoe Print', cursive; color: var(--ink);
     -webkit-font-smoothing: antialiased;
   }
   #scene-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 
   /* --- top-left stats chip --- */
   #stats-chip {
-    position: fixed; left: 20px; top: 20px; z-index: 5;
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px 18px; border-radius: 999px;
-    background: var(--card); box-shadow: var(--shadow-soft);
-    font-size: 14px; font-weight: 600; letter-spacing: .01em;
+    position: fixed; left: 16px; top: 16px; z-index: 5;
+    display: flex; align-items: center; gap: 6px;
+    padding: 11px 18px; border-radius: 4px 10px 4px 10px;
+    font-size: 17px; font-weight: 400; letter-spacing: .01em;
+    transform: rotate(-1.2deg);
     transition: transform .4s var(--spring);
   }
-  #stats-chip.bump { transform: scale(1.08); }
+  #stats-chip.bump { transform: rotate(-1.2deg) scale(1.06); }
 
-  /* --- planet size card --- */
+  /* --- planet size: bottom left --- */
   #planet-card {
-    position: fixed; left: 20px; top: 66px; z-index: 5;
-    width: 214px; padding: 12px 16px 13px; border-radius: 20px;
-    background: var(--card); box-shadow: var(--shadow-soft);
+    position: fixed; left: 16px; bottom: 16px; z-index: 5;
+    width: 248px; padding: 16px 18px 16px; border-radius: 3px 10px 4px 8px;
+    transform: rotate(1deg);
     transition: transform .45s var(--spring);
   }
-  #planet-card.grew { transform: scale(1.06); }
+  #planet-card::before {
+    content: ''; position: absolute; left: 18px; top: -7px; width: 42px; height: 14px;
+    background: repeating-linear-gradient(-28deg, var(--tape) 0 6px, #ffe8d6 6px 10px);
+    opacity: .9; transform: rotate(-8deg); pointer-events: none;
+  }
+  #planet-card.grew { transform: rotate(1deg) scale(1.05); }
   #planet-card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-  #planet-size { font-size: 13px; font-weight: 700; }
-  #planet-tiles { font-size: 12px; font-weight: 600; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
-  #planet-bar { height: 8px; margin-top: 9px; border-radius: 999px; background: #e8f1f4; overflow: hidden; }
+  #planet-size { font-size: 18px; font-weight: 400; }
+  #planet-tiles { font-size: 14px; font-weight: 400; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+  #planet-bar { height: 8px; margin-top: 8px; border-radius: 999px; background: #efe6d6; overflow: hidden; }
   #planet-bar i {
     display: block; height: 100%; width: 100%; border-radius: inherit;
     background: linear-gradient(90deg, #8fc75a, #6fd8c0);
     transform: scaleX(0); transform-origin: left center;
     transition: transform .7s var(--spring);
   }
-  #planet-hint { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--ink-mid); }
+  #planet-hint { margin-top: 6px; font-size: 13px; font-weight: 400; color: var(--ink-mid); }
 
+  /* a second piece of tape, just right of the view toggle: drop to the ground and back.
+     Offset by half that toggle's width (240px) plus a gap, so the two read as one row.
+     Not bottom-right: the wallet is already there. */
   #ground-btn {
-    position: fixed; left: 20px; top: 160px; z-index: 5;
+    position: fixed; left: calc(50% + 132px); bottom: 18px; z-index: 5;
     display: flex; align-items: center; gap: 7px;
-    border: none; cursor: pointer; font-family: inherit;
-    padding: 8px 15px; border-radius: 999px;
-    background: var(--card); box-shadow: var(--shadow-soft);
-    color: var(--ink); font-size: 12px; font-weight: 700;
+    transform: rotate(0.7deg);
+    border: 1px solid #e6d4b6; cursor: pointer; font-family: inherit;
+    padding: 8px 16px; border-radius: 4px;
+    background: #fff6ea;
+    box-shadow: 2px 3px 0 #e4d2b0, 0 6px 16px rgba(112, 70, 44, .12);
+    color: var(--ink); font-size: 14px; font-weight: 400; letter-spacing: .04em;
     transition: transform .25s var(--spring), background .2s ease;
   }
-  #ground-btn:hover { background: #f4fafc; transform: translateY(-1px); }
-  #ground-btn:active { transform: scale(.96); }
+  #ground-btn:hover { background: #fffdf8; transform: rotate(0.7deg) translateY(-1px); }
+  #ground-btn:active { transform: rotate(0.7deg) scale(.98); }
+  /* thin scrapbook tape: island / planet, bottom center */
   #view-btn {
-    position: fixed; left: 20px; top: 202px; z-index: 5;
-    display: flex; align-items: center; gap: 7px;
-    border: none; cursor: pointer; font-family: inherit;
-    padding: 8px 15px; border-radius: 999px;
-    background: var(--card); box-shadow: var(--shadow-soft);
-    color: var(--ink); font-size: 12px; font-weight: 700;
+    position: fixed; left: 50%; bottom: 18px; z-index: 5;
+    display: flex; align-items: stretch; gap: 0;
+    transform: translateX(-50%) rotate(-0.6deg);
+    border: 1px solid #e6d4b6; cursor: pointer; font-family: inherit;
+    padding: 0; border-radius: 4px;
+    background: #fff6ea;
+    box-shadow: 2px 3px 0 #e4d2b0, 0 6px 16px rgba(112, 70, 44, .12);
+    color: var(--ink); font-size: 14px; font-weight: 400;
     opacity: 0; pointer-events: none;
-    transition: opacity .3s ease, transform .25s var(--spring), background .2s ease;
+    transition: opacity .3s ease, transform .25s var(--spring);
   }
   #view-btn.show { opacity: 1; pointer-events: auto; }
-  #view-btn:hover { background: #f4fafc; transform: translateY(-1px); }
-  #view-btn:active { transform: scale(.96); }
-
-  #reset-btn {
-    position: fixed; left: 20px; top: 244px; z-index: 5;
-    border: none; cursor: pointer; font-family: inherit;
-    padding: 7px 14px; border-radius: 999px;
-    background: var(--card); box-shadow: var(--shadow-soft);
-    color: var(--ink-soft); font-size: 12px; font-weight: 700;
-    opacity: 0; pointer-events: none;
-    transition: opacity .3s ease, transform .25s var(--spring), color .2s ease, background .2s ease;
+  #view-btn:hover { transform: translateX(-50%) rotate(-0.6deg) translateY(-1px); }
+  #view-btn:active { transform: translateX(-50%) rotate(-0.6deg) scale(.98); }
+  #view-btn .opt {
+    padding: 8px 16px; min-width: 88px; text-align: center;
+    color: var(--ink-mid); letter-spacing: .04em;
   }
-  #reset-btn.show { opacity: 1; pointer-events: auto; }
-  #reset-btn:hover { color: var(--ink); transform: translateY(-1px); }
-  #reset-btn.confirming { background: #ffe3d6; color: #c2410c; }
+  #view-btn:not(.is-island) .opt.planet,
+  #view-btn.is-island .opt.island {
+    background: #fffdf8; color: var(--ink);
+    box-shadow: inset 0 0 0 1px #e8c9a0;
+  }
 
-  /* --- the journal: a book you open --- */
+  #settings-btn {
+    position: fixed; right: 16px; top: 16px; z-index: 6;
+    width: 42px; height: 42px; padding: 0; border-radius: 50%;
+    border: 1px solid #e6d4b6; cursor: pointer; font-family: inherit;
+    background: var(--paper); color: var(--ink);
+    display: grid; place-items: center;
+    box-shadow: 1px 2px 0 #e4d2b0, 0 6px 14px rgba(112, 70, 44, .1);
+    transition: transform .25s var(--spring), background .2s ease;
+  }
+  #settings-btn:hover { transform: rotate(22deg); background: #fff8ec; }
+  #settings-btn svg { width: 22px; height: 22px; display: block; }
+  #settings {
+    position: fixed; inset: 0; z-index: 20; display: grid; place-items: start end; padding: 58px 16px 16px;
+    background: rgba(44, 95, 111, .18); backdrop-filter: blur(2px);
+    opacity: 0; visibility: hidden; transition: opacity .22s ease, visibility .22s;
+  }
+  #settings.open { opacity: 1; visibility: visible; }
+  #settings .sheet {
+    width: min(240px, calc(100vw - 32px));
+    padding: 14px 14px 12px; border-radius: 4px 12px 6px 10px;
+    transform: rotate(1.4deg) translateY(-8px); transition: transform .35s var(--spring);
+  }
+  #settings.open .sheet { transform: rotate(1.4deg); }
+  #settings h2 {
+    margin: 0 0 10px; font-size: 22px; font-weight: 400;
+  }
+  #reset-btn, #character-btn, #skins-btn {
+    width: 100%; border: 1px dashed #d7b58a; cursor: pointer; font-family: inherit;
+    padding: 8px 12px; border-radius: 4px;
+    background: #fff8ec; color: var(--ink-mid); font-size: 12px; font-weight: 700;
+    transition: color .2s ease, background .2s ease;
+  }
+  #character-btn, #skins-btn { margin-bottom: 8px; }
+  #reset-btn:hover, #character-btn:hover, #skins-btn:hover { color: var(--ink); background: #fff; }
+  #reset-btn:disabled { opacity: .45; cursor: default; }
+  #reset-btn.confirming { background: #ffe3d6; color: #c2410c; border-color: #e8b198; }
+
+  /* --- the journal: a small scrapbook tab --- */
   #book-btn {
-    position: fixed; left: 20px; top: 244px; z-index: 5;
-    display: flex; align-items: center; gap: 12px;
-    border: 2px solid #e3ba8e; cursor: pointer; font-family: inherit;
-    padding: 12px 18px 12px 10px; border-radius: 22px;
+    position: fixed; left: 16px; top: 76px; z-index: 5;
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid #e3ba8e; cursor: pointer; font-family: inherit;
+    padding: 10px 16px 10px 10px; border-radius: 4px 10px 4px 8px;
     background: linear-gradient(135deg, #fffdf8, #fff0dc);
-    box-shadow: 0 6px 0 #d5b38c, 0 12px 28px #70462c26;
-    color: var(--ink); font-size: 15px; font-weight: 700;
+    box-shadow: 2px 3px 0 #e4d2b0, 0 8px 16px #70462c22;
+    color: var(--ink); font-size: 16px; font-weight: 400;
+    transform: rotate(-1.6deg);
     transition: transform .3s var(--spring), box-shadow .25s ease;
   }
-  #book-btn:hover { transform: translateY(-2px) rotate(-1.5deg); box-shadow: var(--shadow); }
-  #book-btn:active { transform: scale(.97); }
-  #book-btn .mini-stage { width: 76px; height: 96px; display: grid; place-items: center; perspective: 500px; flex-shrink: 0; }
+  #book-btn:hover { transform: translateY(-1px) rotate(-2deg); }
+  #book-btn:active { transform: scale(.97) rotate(-1.6deg); }
+  #book-btn .mini-stage { width: 40px; height: 48px; display: grid; place-items: center; perspective: 400px; flex-shrink: 0; }
   #book-btn .mini-book {
-    display: block; position: relative; width: 58px; height: 78px;
+    display: block; position: relative; width: 30px; height: 40px;
     transform-style: preserve-3d; animation: journal-turn 7s ease-in-out infinite;
     transition: opacity .18s ease;
   }
   #book-btn .mini-cover {
-    position: absolute; inset: 0; border-radius: 3px 7px 7px 3px;
+    position: absolute; inset: 0; border-radius: 2px 4px 4px 2px;
     background: linear-gradient(110deg, #b7794c, #e4ad76 18%, #d89b66);
-    box-shadow: inset 0 0 0 2px #f3cf9f, inset 0 0 0 6px #d69a65, inset 0 0 0 7px #ebc297;
-    backface-visibility: hidden; transform: translateZ(7px);
+    box-shadow: inset 0 0 0 1px #f3cf9f, inset 0 0 0 3px #d69a65;
+    backface-visibility: hidden; transform: translateZ(4px);
   }
-  #book-btn .mini-cover::before { content: '✦'; display: grid; place-items: center; height: 100%; color: #fff0cc; font-size: 29px; }
-  #book-btn .mini-cover::after { content: ''; position: absolute; right: 10px; bottom: -7px; width: 9px; height: 23px; background: #61978e; clip-path: polygon(0 0,100% 0,100% 100%,50% 80%,0 100%); }
-  #book-btn .mini-cover.back { transform: rotateY(180deg) translateZ(7px); }
+  #book-btn .mini-cover::before { content: '✦'; display: grid; place-items: center; height: 100%; color: #fff0cc; font-size: 13px; }
+  #book-btn .mini-cover::after { content: ''; position: absolute; right: 4px; bottom: -4px; width: 5px; height: 11px; background: #61978e; clip-path: polygon(0 0,100% 0,100% 100%,50% 80%,0 100%); }
+  #book-btn .mini-cover.back { transform: rotateY(180deg) translateZ(4px); }
   #book-btn .mini-cover.back::before, #book-btn .mini-cover.back::after { content: none; }
   #book-btn .mini-pages, #book-btn .mini-spine {
-    position: absolute; left: 51px; top: 4px; width: 14px; height: 70px;
-    background: repeating-linear-gradient(90deg, #fff9e9 0 2px, #d6c3a7 2px 3px);
+    position: absolute; left: 26px; top: 2px; width: 8px; height: 36px;
+    background: repeating-linear-gradient(90deg, #fff9e9 0 1px, #d6c3a7 1px 2px);
     transform: rotateY(90deg);
   }
-  #book-btn .mini-spine { left: -7px; top: 0; height: 78px; background: linear-gradient(90deg, #a56840, #cc925f, #a56840); }
-  #book-btn .book-label { display: flex; flex-direction: column; gap: 7px; text-align: left; }
-  #book-btn .book-caption { font-size: 12px; font-weight: 600; color: var(--ink-mid); }
+  #book-btn .mini-spine { left: -3px; top: 0; height: 40px; background: linear-gradient(90deg, #a56840, #cc925f, #a56840); }
+  #book-btn .book-label { display: flex; flex-direction: column; gap: 1px; text-align: left; line-height: 1.2; }
+  #book-btn .book-caption { font-size: 13px; font-weight: 400; color: var(--ink-mid); }
   #book-btn[aria-expanded="true"] .mini-book { animation-play-state: paused; opacity: 0; }
   @keyframes journal-turn {
     0%, 100% { transform: rotateX(8deg) rotateY(-28deg) rotateZ(-6deg); }
     50% { transform: rotateX(8deg) rotateY(24deg) rotateZ(-3deg); }
   }
-  #book-btn .count { font-size: 11px; font-weight: 700; color: var(--ink-soft); }
+  #book-btn .count { font-size: 10px; font-weight: 700; color: var(--ink-soft); }
   #book-btn.nudge { animation: book-nudge .6s var(--spring); }
   @keyframes book-nudge {
-    0% { transform: none; } 35% { transform: translateY(-5px) rotate(-3deg); } 100% { transform: none; }
+    0% { transform: rotate(-1.6deg); } 35% { transform: translateY(-4px) rotate(-4deg); } 100% { transform: rotate(-1.6deg); }
   }
 
   #book {
@@ -152,13 +212,13 @@
     opacity: 0; visibility: hidden; transition: opacity .28s ease, visibility .28s;
   }
   #book.open { opacity: 1; visibility: visible; }
-  /* The spread: two pages either side of a stitched spine, on a warm cover. */
+  /* The spread: two pages meeting in a white gutter, on a warm cover. */
   #book .spread {
     position: relative; display: flex;
     box-sizing: border-box;
-    width: min(900px, 100%); height: min(580px, calc(100vh - 40px));
-    padding: 14px; border-radius: 20px;
-    isolation: isolate;
+    width: min(940px, calc(100% - 48px)); height: min(600px, calc(100vh - 40px));
+    padding: 14px 12px; border-radius: 20px;
+    isolation: isolate; overflow: visible;
     background: linear-gradient(90deg, #cb8956, #e7b17b 3%, #e7b17b 47%, #ad7045 50%, #e7b17b 53%, #d79760);
     box-shadow: 0 4px 0 #a96b42, 0 7px 0 #8e5939,
       0 26px 60px rgba(44, 65, 65, .28), inset 0 0 0 2px #f4c99d;
@@ -189,21 +249,28 @@
   #book .page {
     position: relative; z-index: 1;
     flex: 1; min-width: 0; display: flex; flex-direction: column;
-    padding: 20px 22px; background: #fffdf6;
+    padding: 22px 24px 18px; background: #f7f1e4;
     box-shadow: 0 2px 0 #e0d0b7, 0 3px 0 #fffaf0, 0 4px 0 #d6c3a7,
       0 5px 0 #fff8e8, 0 6px 0 #c9b394, 0 9px 9px #70462c26;
     transition: transform .2s ease;
     backface-visibility: hidden;
+    background-image:
+      linear-gradient(to right, transparent 26px, rgba(180, 40, 28, .2) 26px 27px, transparent 27px),
+      repeating-linear-gradient(to bottom, transparent 0 27px, rgba(140, 110, 70, .14) 27px 28px);
+    background-size: 100% 100%, 100% 28px;
+    background-position: 0 0, 0 8px;
   }
   #book .page.left {
-    border-radius: 14px 4px 4px 14px; transform-origin: right center;
+    border-radius: 14px 0 0 14px; transform-origin: right center;
     transform: perspective(900px) rotateY(55deg);
-    background: linear-gradient(90deg, #fff9ed, #fffdf6 8%, #fffdf6 86%, #f4e9d6 96%, #d9c4a4);
+    background-color: #f7f1e4;
+    box-shadow: inset -10px 0 14px -12px rgba(120, 80, 40, .12);
   }
   #book .page.right {
-    border-radius: 4px 14px 14px 4px; transform-origin: left center;
+    border-radius: 0 14px 14px 0; transform-origin: left center;
     transform: perspective(900px) rotateY(-55deg);
-    background: linear-gradient(90deg, #d9c4a4, #f4e9d6 4%, #fffdf6 14%, #fffdf6 92%, #fff9ed);
+    background-color: #f7f1e4;
+    box-shadow: inset 10px 0 14px -12px rgba(120, 80, 40, .12);
   }
   #book.open .page { transform: none; transition: transform .38s ease-out .08s; }
   #book .bookmark {
@@ -213,87 +280,158 @@
     clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 83%, 0 100%);
   }
   #book .mobile-tabs { display: none; }
-  /* The spine: a seam of shadow with stitching down the middle. */
+  /* White paper meeting in the middle — no stitched dotted seam. */
   #book .spine {
-    width: 26px; flex-shrink: 0;
-    border-radius: 45% / 3%;
-    box-shadow: inset 7px 0 8px #70462c26, inset -7px 0 8px #70462c26;
-    background:
-      repeating-linear-gradient(to bottom, transparent 0 12px, rgba(255, 253, 246, .85) 12px 22px),
-      linear-gradient(to right, rgba(140, 94, 52, .35), rgba(140, 94, 52, .12) 45%,
-                      rgba(140, 94, 52, .12) 55%, rgba(140, 94, 52, .35));
-    background-size: 2px 100%, 100% 100%;
-    background-position: center, 0 0;
-    background-repeat: no-repeat, no-repeat;
+    width: 22px; flex-shrink: 0; z-index: 2;
+    background: linear-gradient(to right, #efe4d0 0%, #fffdf8 28%, #fffdf8 72%, #efe4d0 100%);
+    box-shadow: none;
   }
+  .book-tabs {
+    position: absolute; top: 52px; z-index: 4;
+    display: flex; flex-direction: column; gap: 3px;
+    max-height: calc(100% - 80px); overflow: auto;
+    scrollbar-width: none;
+  }
+  .book-tabs::-webkit-scrollbar { display: none; }
+  .book-tabs.left { left: -30px; }
+  .book-tabs.right { right: -30px; }
+  .book-tab {
+    writing-mode: vertical-rl; text-orientation: mixed;
+    border: 1px solid #d4b896; cursor: pointer; font-family: inherit;
+    padding: 14px 7px; min-height: 64px; max-height: 120px;
+    color: var(--ink); font-size: 13px; letter-spacing: .04em;
+    background: #f3e0c4;
+    box-shadow: 1px 2px 0 #c9b089;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .book-tabs.left .book-tab {
+    transform: rotate(180deg);
+    border-radius: 0 8px 8px 0; border-left: none;
+  }
+  .book-tabs.right .book-tab {
+    border-radius: 8px 0 0 8px; border-right: none;
+  }
+  .book-tab[aria-selected="true"] {
+    background: #f7f1e4; color: var(--ink);
+    box-shadow: none; z-index: 5;
+  }
+  .book-tab.toc { background: #e8d4b0; }
+  .book-tab.write { background: #f0c9a8; }
+  .book-tab.year { background: #dde6d2; }
   #book .page-head {
     display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-    padding-bottom: 10px; border-bottom: 2px solid #f0e3cd;
+    padding-bottom: 8px; border-bottom: 1px solid #c9b394;
+    background: linear-gradient(#f7f1e4, #f7f1e4);
   }
   #book .page-title {
-    font-size: 12px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .09em; color: #b08a5e;
+    font-size: 15px; font-weight: 400; text-transform: lowercase;
+    letter-spacing: .06em; color: #9a3b2a;
   }
-  #book .page-note { font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  #book .page-note { font-size: 12px; font-weight: 400; color: var(--ink-soft); transform: rotate(-2deg); }
   #book .close {
     position: absolute; right: -12px; top: -12px; width: 44px; height: 44px;
     border: none; cursor: pointer; border-radius: 50%; font-family: inherit;
     background: var(--card); color: var(--ink-mid); font-size: 16px;
     display: grid; place-items: center; box-shadow: var(--shadow-soft);
     transition: transform .25s var(--spring), color .2s ease;
-    z-index: 4;
+    z-index: 6;
   }
   #book .close:hover { color: var(--ink); transform: scale(1.08); }
   #book .empty-page {
     margin: auto; padding: 0 12px; text-align: center;
-    font-size: 14px; font-weight: 600; color: var(--ink-soft); line-height: 1.6;
+    font-size: 15px; font-weight: 400; color: var(--ink-soft); line-height: 1.6;
   }
 
-  /* left page: past entries */
-  #book-list { margin-top: 10px; overflow-y: auto; padding-right: 6px; }
-  #book-list { min-height: 0; }
-  #book-list::-webkit-scrollbar { width: 6px; }
-  #book-list::-webkit-scrollbar-thumb { background: #ecdcc2; border-radius: 999px; }
+  #book-list, #book-right-body {
+    margin-top: 8px; overflow-y: auto; padding-right: 4px; min-height: 0; flex: 1;
+  }
+  #book-list::-webkit-scrollbar, #book-right-body::-webkit-scrollbar { width: 6px; }
+  #book-list::-webkit-scrollbar-thumb, #book-right-body::-webkit-scrollbar-thumb {
+    background: #ecdcc2; border-radius: 999px;
+  }
+  #book-write-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+  #book-write-panel[hidden], #book-right-body[hidden] { display: none; }
+
+  .toc-kicker {
+    margin: 4px 0 10px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    color: #b08a5e;
+  }
+  .toc-year {
+    display: block; width: 100%; border: none; background: none; cursor: pointer;
+    font-family: inherit; text-align: left;
+    margin: 12px 0 4px; font-size: 22px; color: var(--ink); border-bottom: 1px solid #c9b394;
+  }
+  .toc-month {
+    margin: 8px 0 2px 8px; font-size: 14px; color: #9a3b2a; transform: rotate(-1deg);
+  }
+  .toc-day, .toc-person {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+    width: 100%; border: none; background: none; cursor: pointer; font-family: inherit;
+    text-align: left; padding: 4px 4px 4px 18px; color: var(--ink); font-size: 14px;
+  }
+  .toc-day:hover, .toc-person:hover { background: rgba(180, 140, 80, .1); }
+  .toc-day .dots { flex: 1; border-bottom: 1px dotted #c9b394; min-width: 12px; margin: 0 6px 4px; }
+  .toc-day .n { color: #9a3b2a; }
+  .toc-person { padding-left: 8px; }
+  .toc-person .who-dot { margin-right: 8px; }
+
   #book .day {
-    margin: 14px 0 5px; font-size: 11px; font-weight: 700;
-    color: #b08a5e; letter-spacing: .04em; text-transform: uppercase;
+    margin: 14px 0 5px; font-size: 13px; font-weight: 400;
+    color: #9a3b2a; letter-spacing: .03em;
   }
   #book-list .day:first-child { margin-top: 2px; }
-  #book .entry {
-    display: flex; align-items: baseline; gap: 9px; width: 100%;
-    border: none; cursor: pointer; font-family: inherit; text-align: left;
-    padding: 10px 11px; border-radius: 12px; background: transparent;
-    transition: background .18s ease, transform .25s var(--spring);
+  .diary-entry {
+    position: relative; margin: 10px 4px 22px; padding: 8px 10px 12px 8px;
+    text-align: left; border: none; background: transparent; cursor: pointer;
+    font-family: inherit; width: calc(100% - 8px);
   }
-  #book .entry:hover { background: #f7f0e2; transform: translateX(3px); }
-  #book .entry.current { background: var(--accent); }
-  #book .entry.current .entry-name { color: #fff; }
-  #book .entry.current .entry-who { color: #fff9f4; }
-  #book .entry.flash { animation: entry-flash .45s var(--spring); }
+  .diary-entry:hover { background: rgba(255, 252, 245, .55); }
+  .diary-entry .d-date {
+    display: inline-block; color: #9a3b2a; font-size: 12px;
+    transform: rotate(-3deg); margin-bottom: 4px;
+  }
+  .diary-entry .d-clip {
+    float: right; width: 70px; height: 52px; margin: 0 0 8px 10px;
+    border: 5px solid #fffdf8; box-shadow: 1px 2px 5px rgba(80, 50, 20, .22);
+    transform: rotate(5deg);
+  }
+  .diary-entry:nth-child(even) .d-clip { transform: rotate(-4deg); }
+  .diary-entry .d-title {
+    display: block; font-size: 17px; line-height: 1.3; color: var(--ink);
+    margin-bottom: 6px;
+  }
+  .diary-entry .d-text {
+    display: block; font-size: 14px; line-height: 1.55; color: var(--ink-mid);
+    white-space: pre-wrap;
+  }
+  .diary-entry .d-who {
+    display: block; margin-top: 8px; font-size: 12px; color: var(--ink-soft);
+    transform: rotate(-1deg);
+  }
+  .diary-entry .d-note {
+    position: absolute; right: 6px; bottom: -2px; font-size: 11px;
+    color: #2c5f6f; transform: rotate(4deg);
+  }
+  .diary-entry.flash { animation: entry-flash .45s var(--spring); }
   @keyframes entry-flash {
-    0% { transform: scale(1); } 40% { transform: scale(1.05); } 100% { transform: scale(1); }
+    0% { transform: scale(1); } 40% { transform: scale(1.03); } 100% { transform: scale(1); }
   }
-  #book .entry-emoji { font-size: 16px; line-height: 1.3; }
-  /* block, and min-width 0, or the title refuses to shrink and runs past the page */
-  #book .entry-body { display: block; min-width: 0; flex: 1; }
-  #book .entry-name {
-    display: block; font-size: 14px; font-weight: 600; color: var(--ink); line-height: 1.35;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  #book .entry-who {
-    display: block; margin-top: 3px; font-size: 12px; font-weight: 600; color: var(--ink-soft);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
+  #book .entry.current, .diary-entry.current { box-shadow: inset 3px 0 0 #9a3b2a; }
   #book .who-dot {
     display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     margin-right: 4px; vertical-align: baseline;
   }
+  .person-banner {
+    margin: 4px 0 14px; padding-bottom: 8px; border-bottom: 1px solid #c9b394;
+  }
+  .person-banner h3 { margin: 0; font-size: 26px; font-weight: 400; }
+  .person-banner p { margin: 4px 0 0; font-size: 13px; color: #9a3b2a; transform: rotate(-1deg); }
 
   /* right page: today's entry, written on ruled paper */
   #entry-input {
     flex: 1; min-height: 110px; margin-top: 14px; width: 100%; box-sizing: border-box;
     border: none; outline: none; resize: none; background: transparent;
-    font-family: Caveat, 'Segoe Print', 'Comic Sans MS', cursive; font-size: 25px; font-weight: 600;
+    font-family: inherit; font-size: 24px; font-weight: 400;
     color: var(--ink); line-height: 34px; padding: 2px;
     background-image: linear-gradient(to bottom, transparent 0 32px, #f0e3cd 32px 34px);
     background-size: 100% 34px;
@@ -302,15 +440,15 @@
 
   /* --- bottom journal card --- */
   #journal {
-    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
-    z-index: 6; width: min(560px, calc(100vw - 40px));
+    position: fixed; left: 50%; bottom: 72px; transform: translateX(-50%);
+    z-index: 6; width: min(420px, calc(100vw - 40px));
     display: flex; flex-direction: column; align-items: center; gap: 12px;
   }
   #empty-hint {
     display: none; flex-direction: column; align-items: center; gap: 10px;
-    padding: 14px 20px; border-radius: 20px;
-    background: var(--card); box-shadow: var(--shadow-soft);
-    font-size: 14px; font-weight: 500; color: var(--ink-soft); text-align: center;
+    padding: 12px 16px; border-radius: 4px 12px 6px 10px;
+    font-size: 13px; font-weight: 500; color: var(--ink-soft); text-align: center;
+    transform: rotate(-0.8deg);
   }
   #empty-hint.show { display: flex; }
   #empty-hint b { color: var(--ink); font-weight: 700; }
@@ -371,6 +509,57 @@
   #tag-big[aria-pressed="true"] { background: #ffeab8; color: #b45309; }
 
   #write-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  #mic-btn {
+    position: relative; flex-shrink: 0; overflow: visible;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 52px; height: 52px; padding: 0; border: none; cursor: pointer;
+    border-radius: 12px; color: var(--ink);
+    background: #f4ece0; box-shadow: var(--shadow-soft);
+    transition: background .2s ease, color .2s ease, box-shadow .2s ease;
+  }
+  #mic-btn:hover { background: #ecdfcc; transform: translateY(-1px); }
+  #mic-btn:active { transform: scale(.96); }
+  #mic-btn:disabled { opacity: .55; cursor: default; transform: none; }
+  #mic-btn svg { width: 26px; height: 26px; display: block; pointer-events: none; }
+  #mic-btn .mic-svg { fill: none; stroke: currentColor; }
+  #mic-btn .mic-svg .head { fill: currentColor; stroke: none; }
+  #mic-btn .mic-check { display: none; fill: none; stroke: currentColor; }
+  #mic-btn.done .mic-svg { display: none; }
+  #mic-btn.done .mic-check { display: block; }
+  #mic-btn .mic-rings, #mic-btn .mic-rings::before, #mic-btn .mic-rings::after {
+    position: absolute; inset: 0; border-radius: 12px; pointer-events: none;
+  }
+  #mic-btn.listening,
+  #mic-btn.listening:hover {
+    background: #ffe3d6; color: #c2410c;
+    animation: mic-press .42s var(--spring);
+  }
+  #mic-btn.listening .mic-rings::before,
+  #mic-btn.listening .mic-rings::after {
+    content: '';
+    border: 2px solid rgba(244, 128, 74, .55);
+    animation: mic-ring 1.5s ease-out infinite;
+  }
+  #mic-btn.listening .mic-rings::after { animation-delay: .55s; }
+  #mic-btn.done,
+  #mic-btn.done:hover {
+    background: #d8f0c8; color: #3f6d2a;
+    animation: mic-done .55s var(--spring);
+  }
+  @keyframes mic-press {
+    0% { transform: scale(1); }
+    40% { transform: scale(.9); }
+    100% { transform: scale(1); }
+  }
+  @keyframes mic-done {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.12); }
+    100% { transform: scale(1); }
+  }
+  @keyframes mic-ring {
+    0% { transform: scale(1); opacity: .7; }
+    100% { transform: scale(1.28); opacity: 0; }
+  }
   #submit-btn {
     flex: 1; border: none; cursor: pointer; font-family: inherit;
     padding: 15px 20px; border-radius: 16px;
@@ -397,10 +586,14 @@
       flex-direction: column; min-width: 0; width: 100%; max-width: 520px;
       height: min(740px, calc(100dvh - 24px)); padding: 10px;
     }
-    #book .mobile-tabs { display: flex; gap: 8px; padding: 4px 40px 10px 4px; }
+    #book .mobile-tabs {
+      display: flex; gap: 8px; padding: 4px 52px 10px 4px;
+      overflow-x: auto; max-width: 100%; flex-shrink: 0;
+    }
     #book .mobile-tabs button {
-      min-width: 0; min-height: 44px; flex: 1; border: 0; border-radius: 12px;
-      background: rgba(255, 253, 246, .7); color: var(--ink); font: 700 14px Quicksand, sans-serif;
+      min-width: max-content; min-height: 44px; flex: 0 0 auto; padding: 0 12px;
+      border: 0; border-radius: 12px;
+      background: rgba(255, 253, 246, .7); color: var(--ink); font: 400 14px 'Architects Daughter', cursive;
       cursor: pointer;
     }
     #book .mobile-tabs button[aria-selected="true"] { background: #fffdf6; box-shadow: var(--shadow-soft); }
@@ -408,19 +601,22 @@
     #book .spread::before { display: none; }
     #book .bookmark { bottom: -7px; right: 38px; }
     #book .page.left { display: none; }
-    #book[data-page="memories"] .page.left { display: flex; }
-    #book[data-page="memories"] .page.right { display: none; }
+    #book[data-page="read"] .page.left { display: flex; }
+    #book[data-page="read"] .page.right { display: none; }
+    #book[data-page="write"] .page.right { display: flex; }
     #book .page.right { overflow-y: auto; }
     #book #write-actions {
       position: sticky; bottom: -17px; z-index: 1;
-      margin-top: auto; padding: 10px 0 17px; background: #fffdf6;
+      margin-top: auto; padding: 10px 0 17px; background: #f7f1e4;
     }
-    #book .spine { display: none; }
+    #book .spine, .book-tabs { display: none; }
     #book .close { right: 5px; top: 5px; }
     #entry-input { min-height: 150px; }
     #tag-row { gap: 9px 12px; }
     #book .page-note { font-size: 11px; text-align: right; }
-    #book-btn { top: 238px; }
+    #view-btn { bottom: 70px; }
+    #planet-card { width: 220px; }
+    #journal { bottom: 118px; }
   }
 
   @media (max-height: 600px) and (min-width: 681px) {
@@ -429,20 +625,25 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    #book-btn .mini-book { animation: none; transform: rotateY(-20deg) rotateZ(-4deg); }
+    #view-btn:hover { transform: translateX(-50%) rotate(-0.6deg); }
     #book-btn.nudge { animation: none; }
+    #stats-chip.bump, #wallet.bump, #planet-card.grew { transform: none; }
     #book, #book .spread, #book .page, #book.open .spread, #book.open .page,
     #book .spread::before, #book.open .spread::before {
       transition-duration: .01ms; transition-delay: 0s;
     }
     #book .spread::before { display: none; }
+    #mic-btn.listening, #mic-btn.done { animation: none; }
+    #mic-btn.listening .mic-rings::before,
+    #mic-btn.listening .mic-rings::after { animation: none; display: none; }
   }
 
   /* --- toast --- */
   #toast {
-    position: fixed; left: 50%; bottom: 110px; transform: translate(-50%, 14px);
-    z-index: 25; padding: 14px 22px; border-radius: 20px; /* above the shop, for unlocks */
-    background: var(--card); box-shadow: var(--shadow);
+    position: fixed; left: 50%; bottom: 64px; transform: translate(-50%, 14px);
+    z-index: 25; padding: 12px 18px; border-radius: 4px 12px 6px 10px;
+    background: var(--paper); border: 1px solid #e6d4b6;
+    box-shadow: 2px 3px 0 #e4d2b0, 0 10px 24px rgba(112, 70, 44, .16);
     display: flex; align-items: center; gap: 12px;
     opacity: 0; pointer-events: none;
     transition: opacity .3s ease, transform .45s var(--spring);
@@ -457,21 +658,21 @@
   }
   #toast-shards:empty { display: none; }
 
-  /* --- wallet + shop button (top right) --- */
+  /* --- wallet + shop (bottom right) --- */
   #wallet {
-    position: fixed; right: 20px; top: 20px; z-index: 6;
+    position: fixed; right: 16px; bottom: 16px; z-index: 6;
     display: flex; align-items: center; gap: 8px;
-    padding: 5px 5px 5px 16px; border-radius: 999px;
-    background: var(--card); box-shadow: var(--shadow-soft);
+    padding: 8px 8px 8px 16px; border-radius: 4px 10px 4px 8px;
+    transform: rotate(1.2deg);
     transition: transform .4s var(--spring);
   }
-  #wallet.bump { transform: scale(1.08); }
+  #wallet.bump { transform: rotate(1.2deg) scale(1.06); }
   .shard { color: var(--shard); }
-  #wallet-count { font-size: 15px; font-weight: 700; min-width: 2ch; font-variant-numeric: tabular-nums; }
+  #wallet-count { font-size: 18px; font-weight: 400; min-width: 2ch; font-variant-numeric: tabular-nums; }
   #shop-btn {
-    border: none; cursor: pointer; font-family: inherit;
-    padding: 8px 15px; border-radius: 999px;
-    background: var(--shard); color: #fff; font-size: 13px; font-weight: 700;
+    border: 1px solid #dcc4f0; cursor: pointer; font-family: inherit;
+    padding: 11px 20px; border-radius: 4px;
+    background: var(--shard); color: #fff; font-size: 16px; font-weight: 400;
     transition: transform .25s var(--spring), background .2s ease;
   }
   #shop-btn:hover { background: #5a3cc4; transform: translateY(-1px); }
@@ -547,9 +748,15 @@
   #shop.open { opacity: 1; visibility: visible; }
   #shop .sheet {
     width: min(580px, 100%); max-height: min(720px, calc(100vh - 32px)); overflow-y: auto;
-    padding: 22px 22px 18px; border-radius: 28px;
-    background: var(--card); box-shadow: 0 24px 60px rgba(44, 95, 111, .28);
-    transform: translateY(14px) scale(.97); transition: transform .45s var(--spring);
+    padding: 22px 22px 18px; border-radius: 6px 16px 8px 12px;
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(var(--paper-grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--paper-grid) 1px, transparent 1px);
+    background-size: 12px 12px;
+    border: 1px solid #e6d4b6;
+    box-shadow: 3px 5px 0 #e4d2b0, 0 24px 60px rgba(44, 95, 111, .28);
+    transform: translateY(14px) rotate(-0.6deg) scale(.97); transition: transform .45s var(--spring);
   }
   #shop.open .sheet { transform: none; }
   #shop header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
@@ -603,14 +810,14 @@
 
   /* --- tile detail card --- */
   #detail {
-    position: fixed; right: 20px; top: 76px; z-index: 6;
-    width: min(320px, calc(100vw - 40px));
-    padding: 20px 22px; border-radius: 24px;
-    background: var(--card); box-shadow: var(--shadow);
-    opacity: 0; transform: translateY(-10px) scale(.97); pointer-events: none;
+    position: fixed; right: 16px; top: 62px; z-index: 6;
+    width: min(300px, calc(100vw - 40px));
+    padding: 18px 20px; border-radius: 4px 12px 6px 10px;
+    transform: rotate(0.8deg) translateY(-10px) scale(.97); pointer-events: none;
+    opacity: 0;
     transition: opacity .25s ease, transform .4s var(--spring);
   }
-  #detail.show { opacity: 1; transform: none; pointer-events: auto; }
+  #detail.show { opacity: 1; transform: rotate(0.8deg); pointer-events: auto; }
   #detail .cat { font-size: 12px; font-weight: 700; text-transform: uppercase;
     letter-spacing: .08em; color: var(--accent-deep); }
   #detail h3 { margin: 6px 0 2px; font-size: 19px; font-weight: 700; line-height: 1.25; }
@@ -667,21 +874,7 @@
 <body>
 <canvas id="scene-canvas"></canvas>
 
-<div id="stats-chip"><span>🌍</span><span id="stats-text">a quiet ocean</span></div>
-<div id="planet-card" aria-live="polite">
-  <div class="row"><span id="planet-size">🪐 Size 1 of 6</span><span id="planet-tiles">42 tiles</span></div>
-  <div id="planet-bar" role="progressbar" aria-label="Land until the planet grows" aria-valuemin="0" aria-valuemax="100"><i></i></div>
-  <div id="planet-hint">grows when half of it is land</div>
-</div>
-<div id="wallet">
-  <span class="shard" aria-hidden="true">✦</span>
-  <span id="wallet-count" aria-label="shards">0</span>
-  <button id="shop-btn" aria-haspopup="dialog">Shop</button>
-</div>
-<button id="view-btn"><span id="view-icon">🏝️</span><span id="view-label">island view</span></button>
-<button id="ground-btn"><span id="ground-icon">👣</span><span id="ground-label">ground view</span></button>
-<button id="reset-btn">start over</button>
-
+<div id="stats-chip" class="paper"><span id="stats-text">a quiet ocean</span></div>
 <button id="book-btn" aria-haspopup="dialog" aria-controls="book" aria-expanded="false">
   <span class="mini-stage" aria-hidden="true">
     <span class="mini-book">
@@ -690,27 +883,61 @@
     </span>
   </span>
   <span class="book-label">Write a memory
-    <span class="book-caption">Your journal <span class="count" id="book-count"></span></span>
+    <span class="book-caption">journal <span class="count" id="book-count"></span></span>
   </span>
 </button>
+<button id="settings-btn" type="button" aria-haspopup="dialog" aria-controls="settings" aria-expanded="false" aria-label="Settings">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.76 6.76 0 0 1 0 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.93 6.93 0 0 1 0-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281Z"/>
+    <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
+  </svg>
+</button>
+<div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="sheet paper">
+    <h2 id="settings-title">settings</h2>
+    <button id="character-btn" type="button">switch character</button>
+    <button id="skins-btn" type="button">switch skins</button>
+    <button id="reset-btn" type="button" disabled>start over</button>
+  </div>
+</div>
+<div id="planet-card" class="paper" aria-live="polite">
+  <div class="row"><span id="planet-size">Size 1 of 6</span><span id="planet-tiles">42 tiles</span></div>
+  <div id="planet-bar" role="progressbar" aria-label="Land until the planet grows" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+  <div id="planet-hint">grows when half of it is land</div>
+</div>
+<button id="view-btn" type="button" aria-label="Switch between planet and island view">
+  <span class="opt planet" id="view-planet-label">planet</span>
+  <span class="opt island" id="view-island-label">island</span>
+</button>
+<button id="ground-btn" type="button" aria-label="Follow your character on the ground">
+  <span id="ground-icon" aria-hidden="true">👣</span><span id="ground-label">ground view</span>
+</button>
+<div id="wallet" class="paper">
+  <span class="shard" aria-hidden="true">✦</span>
+  <span id="wallet-count" aria-label="shards">0</span>
+  <button id="shop-btn" aria-haspopup="dialog">Shop</button>
+</div>
 
-<div id="book" role="dialog" aria-modal="true" aria-labelledby="book-heading">
+<div id="book" role="dialog" aria-modal="true" aria-labelledby="book-heading" data-page="write">
   <div class="spread">
+    <div id="book-tabs-left" class="book-tabs left" role="tablist" aria-label="Journal sections"></div>
+    <div id="book-tabs-right" class="book-tabs right" role="tablist" aria-label="People"></div>
     <span class="bookmark" aria-hidden="true"></span>
     <button class="close" id="book-close" aria-label="Close the journal">✕</button>
-    <div class="mobile-tabs" role="tablist" aria-label="Journal pages">
-      <button id="book-write-tab" role="tab" aria-selected="true" aria-controls="book-write-page">Write a memory</button>
-      <button id="book-memories-tab" role="tab" aria-selected="false" aria-controls="book-memories-page">Past entries</button>
+    <div class="mobile-tabs" id="book-mobile-tabs" role="tablist" aria-label="Journal pages">
+      <button id="book-write-tab" role="tab" aria-selected="true">Write</button>
+      <button id="book-memories-tab" role="tab" aria-selected="false">Contents</button>
     </div>
     <div class="page left" id="book-memories-page">
       <div class="page-head">
-        <span class="page-title" id="book-heading">your journal</span>
+        <span class="page-title" id="book-heading">contents</span>
         <span class="page-note" id="book-note"></span>
       </div>
       <div id="book-list"></div>
     </div>
     <div class="spine" aria-hidden="true"></div>
     <div class="page right" id="book-write-page">
+      <div id="book-write-panel">
       <div class="page-head">
         <span class="page-title">today</span>
         <span class="page-note" id="write-date"></span>
@@ -736,13 +963,27 @@
         <button id="tag-big" aria-pressed="false" title="Mark this as a big day">★ big day</button>
       </div>
       <div id="write-actions">
+        <button id="mic-btn" type="button" aria-pressed="false" aria-label="Speak a memory" title="Speak a memory">
+          <span class="mic-rings" aria-hidden="true"></span>
+          <svg class="mic-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <rect class="head" x="8" y="1.5" width="8" height="12" rx="4"/>
+            <path d="M6.5 10.5v1.5c0 3.3 2.5 6 5.5 6s5.5-2.7 5.5-6v-1.5" stroke-width="2" stroke-linecap="round"/>
+            <path d="M12 18v3" stroke-width="2" stroke-linecap="round"/>
+            <path d="M8 21.5h8" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <svg class="mic-check" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
         <button id="submit-btn">Plant it on my planet ✨</button>
       </div>
+      </div>
+      <div id="book-right-body" hidden></div>
     </div>
   </div>
 </div>
 
-<div id="detail">
+<div id="detail" class="paper">
   <button class="close" id="detail-close" aria-label="Close">✕</button>
   <div class="cat" id="detail-cat"></div>
   <h3 id="detail-title" contenteditable="true" spellcheck="false"
@@ -797,7 +1038,7 @@
 </div>
 
 <div id="journal">
-  <div id="empty-hint">
+  <div id="empty-hint" class="paper">
     <div>Just your house, so far.<br /><b>Write a memory to grow the land around it ✨</b><br />Each one earns <span class="shard">✦</span> shards, and your planet grows as it fills.</div>
     <button id="demo-btn">or load a demo planet</button>
   </div>

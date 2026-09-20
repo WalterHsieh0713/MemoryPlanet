@@ -30,14 +30,17 @@
     ['stats-chip', 'stats-text', 'entry-input', 'submit-btn', 'empty-hint', 'demo-btn',
       'toast', 'toast-emoji', 'toast-headline', 'toast-sub', 'detail', 'detail-close',
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
-      'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
+      'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
       'ground-btn', 'ground-label', 'ground-icon', 'picker', 'picker-grid', 'picker-play',
+      'character-btn', 'skins-btn',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
-      'tag-mood', 'tag-cat', 'tag-big']
+      'tag-mood', 'tag-cat', 'tag-big', 'mic-btn', 'settings-btn', 'settings',
+      'book-tabs-left', 'book-tabs-right', 'book-write-panel', 'book-right-body',
+      'book-heading', 'book-mobile-tabs']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -56,10 +59,10 @@
         + (people ? ' · ' + plural(people, 'friend') : '');
 
     el['empty-hint'].classList.toggle('show', memories === 0);
-    // Neither button means anything on an empty planet. Ground view does: the house and
-    // your character are there from the start, so its button is always available.
-    el['reset-btn'].classList.toggle('show', memories > 0);
+    // The view toggle means nothing on an empty planet. Ground view does: the house and
+    // your character are there from the start, so its button is never hidden.
     el['view-btn'].classList.toggle('show', memories > 0);
+    if (el['reset-btn']) el['reset-btn'].disabled = memories === 0;
 
     el['stats-chip'].classList.add('bump');
     setTimeout(function () { el['stats-chip'].classList.remove('bump'); }, 400);
@@ -253,10 +256,30 @@
   var bookFocusTimer = null;
 
   function selectBookPage(page) {
-    el.book.dataset.page = page;
-    el['book-write-tab'].setAttribute('aria-selected', String(page === 'write'));
-    el['book-memories-tab'].setAttribute('aria-selected', String(page === 'memories'));
-    if (page === 'write' && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
+    setBookView(page === 'memories' ? { kind: 'toc' } : { kind: 'write' });
+  }
+
+  var bookView = { kind: 'write' };
+  var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var CLIP = {
+    achievement: '#c9a46a', everyday: '#8fbf7a', travel: '#6aa7c9',
+    home: '#d4a574', social: '#c989b0', other: '#9aa7b0'
+  };
+
+  function isNarrowBook() {
+    return window.matchMedia('(max-width: 680px)').matches;
+  }
+
+  function setBookView(view) {
+    bookView = view || { kind: 'write' };
+    var writing = bookView.kind === 'write';
+    el.book.dataset.page = writing ? 'write' : 'read';
+    el['book-write-tab'].setAttribute('aria-selected', String(writing));
+    el['book-memories-tab'].setAttribute('aria-selected', String(bookView.kind === 'toc'));
+    el['book-write-panel'].hidden = !writing;
+    el['book-right-body'].hidden = writing;
+    renderBook();
+    if (writing && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
   }
 
   function openBook(event) {
@@ -284,6 +307,7 @@
   }
 
   function closeBook() {
+    stopListening({ silent: true });
     clearTimeout(bookFocusTimer);
     el.book.classList.remove('open');
     el['book-btn'].setAttribute('aria-expanded', 'false');
@@ -295,10 +319,14 @@
   }
 
   // --- The book ---------------------------------------------------------------------------
-  // Every entry, newest first, two-way linked with the planet: hovering a row marks its tile,
-  // clicking one opens it, and clicking the tile flashes the row.
+  // Tabbed scrapbook: TOC + years on the left, a tab per person on the right. Pages are
+  // two-way linked with the planet: hovering a diary entry marks its tile.
 
   var rowBySlot = {};
+
+  function memoryOn(memory) {
+    return (memory.occurredOn || memory.createdAt || '').slice(0, 10);
+  }
 
   function dayLabel(iso) {
     var today = new Date().toISOString().slice(0, 10);
@@ -310,77 +338,352 @@
     }
   }
 
+  function personHex(person) {
+    var color = (person && person.appearance && person.appearance.color) || 0x7fa3ae;
+    return '#' + color.toString(16).padStart(6, '0');
+  }
+
+  function mixPaper(hex) {
+    var n = parseInt(String(hex).replace('#', ''), 16);
+    if (isNaN(n)) return '#e8dcc8';
+    var r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    return 'rgb(' + Math.round(r * 0.4 + 247 * 0.6) + ',' +
+      Math.round(g * 0.4 + 241 * 0.6) + ',' +
+      Math.round(b * 0.4 + 228 * 0.6) + ')';
+  }
+
+  function sortMemories(list) {
+    return list.slice().sort(function (a, b) {
+      var byDate = String(b.occurredOn || '').localeCompare(String(a.occurredOn || ''));
+      return byDate !== 0 ? byDate : String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+  }
+
+  function memoriesWithPerson(world, personId) {
+    return sortMemories(world.memories.filter(function (m) {
+      return (m.people || []).indexOf(personId) !== -1;
+    }));
+  }
+
+  function dateTree(world) {
+    var tree = {};
+    world.memories.forEach(function (memory) {
+      var on = memoryOn(memory);
+      if (on.length < 10) return;
+      var y = on.slice(0, 4), mo = on.slice(5, 7), d = on.slice(8, 10);
+      tree[y] = tree[y] || {};
+      tree[y][mo] = tree[y][mo] || {};
+      tree[y][mo][d] = tree[y][mo][d] || [];
+      tree[y][mo][d].push(memory);
+    });
+    return tree;
+  }
+
+  function yearsOf(world) {
+    var years = {};
+    world.memories.forEach(function (m) {
+      var y = memoryOn(m).slice(0, 4);
+      if (y) years[y] = true;
+    });
+    return Object.keys(years).sort().reverse();
+  }
+
+  function memoriesInRange(world, prefix) {
+    return sortMemories(world.memories.filter(function (m) {
+      return memoryOn(m).indexOf(prefix) === 0;
+    }));
+  }
+
+  function makeTab(label, className, selected, onClick) {
+    var tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'book-tab' + (className ? ' ' + className : '');
+    tab.textContent = label;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(!!selected));
+    tab.addEventListener('click', onClick);
+    return tab;
+  }
+
+  function renderSideTabs(world) {
+    el['book-tabs-left'].innerHTML = '';
+    el['book-tabs-right'].innerHTML = '';
+    var years = yearsOf(world);
+
+    el['book-tabs-left'].appendChild(makeTab('contents', 'toc', bookView.kind === 'toc', function () {
+      setBookView({ kind: 'toc' });
+    }));
+    el['book-tabs-left'].appendChild(makeTab('write', 'write', bookView.kind === 'write', function () {
+      setBookView({ kind: 'write' });
+    }));
+    years.forEach(function (year) {
+      el['book-tabs-left'].appendChild(makeTab(year, 'year', bookView.kind === 'date' && bookView.prefix === year, function () {
+        setBookView({ kind: 'date', prefix: year });
+      }));
+    });
+
+    world.people.forEach(function (person) {
+      var tab = makeTab(person.name, 'person', bookView.kind === 'person' && bookView.id === person.id, function () {
+        setBookView({ kind: 'person', id: person.id });
+      });
+      tab.style.background = mixPaper(personHex(person));
+      tab.style.color = '#2a241c';
+      el['book-tabs-right'].appendChild(tab);
+    });
+
+    // Extra people tabs on the phone strip (Write / Contents stay in the markup).
+    Array.prototype.slice.call(el['book-mobile-tabs'].querySelectorAll('[data-dynamic="1"]'))
+      .forEach(function (node) { node.parentNode.removeChild(node); });
+    years.forEach(function (year) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.dynamic = '1';
+      btn.textContent = year;
+      btn.setAttribute('aria-selected', String(bookView.kind === 'date' && bookView.prefix === year));
+      btn.addEventListener('click', function () { setBookView({ kind: 'date', prefix: year }); });
+      el['book-mobile-tabs'].appendChild(btn);
+    });
+    world.people.forEach(function (person) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.dynamic = '1';
+      btn.textContent = person.name;
+      btn.setAttribute('aria-selected', String(bookView.kind === 'person' && bookView.id === person.id));
+      btn.addEventListener('click', function () { setBookView({ kind: 'person', id: person.id }); });
+      el['book-mobile-tabs'].appendChild(btn);
+    });
+  }
+
   function renderBook() {
     var world = MI.store.get();
     var count = world.memories.length;
     el['book-count'].textContent = count ? count : '';
-    el['book-note'].textContent = count ? plural(count, 'memory').replace('memorys', 'memories') : '';
-    el['book-list'].innerHTML = '';
     rowBySlot = {};
+    renderSideTabs(world);
 
-    if (!count) {
+    el['book-list'].innerHTML = '';
+    el['book-right-body'].innerHTML = '';
+
+    if (bookView.kind === 'write') {
+      el['book-heading'].textContent = 'scene list';
+      el['book-note'].textContent = count ? plural(count, 'memory').replace('memorys', 'memories') : 'blank pages';
+      renderSceneList(world, el['book-list']);
+      return;
+    }
+    if (bookView.kind === 'toc') {
+      renderToc(world);
+      return;
+    }
+    if (bookView.kind === 'person') {
+      renderPersonPages(world, bookView.id);
+      return;
+    }
+    renderDatePages(world, bookView.prefix || '');
+  }
+
+  function kicker(text) {
+    var node = document.createElement('div');
+    node.className = 'toc-kicker';
+    node.textContent = text;
+    return node;
+  }
+
+  function renderSceneList(world, into) {
+    if (!world.memories.length) {
       var blank = document.createElement('div');
       blank.className = 'empty-page';
       blank.textContent = 'Nothing written yet. Whatever you put on the right becomes a building on your planet.';
-      el['book-list'].appendChild(blank);
+      into.appendChild(blank);
       return;
     }
-
-    // Memories are stored in the order they were written, so the book sorts for itself.
-    var entries = world.memories.slice().sort(function (a, b) {
-      var byDate = String(b.occurredOn || '').localeCompare(String(a.occurredOn || ''));
-      return byDate !== 0 ? byDate : String(b.createdAt).localeCompare(String(a.createdAt));
-    });
-
-    var day = null;
-    entries.forEach(function (memory) {
-      var on = (memory.occurredOn || memory.createdAt || '').slice(0, 10);
-      if (on !== day) {
-        day = on;
-        var heading = document.createElement('div');
-        heading.className = 'day';
-        heading.textContent = dayLabel(on);
-        el['book-list'].appendChild(heading);
-      }
-      el['book-list'].appendChild(buildRow(memory, world));
+    into.appendChild(kicker('recent'));
+    sortMemories(world.memories).slice(0, 8).forEach(function (memory) {
+      into.appendChild(buildDiaryEntry(memory, world, true));
     });
   }
 
-  function buildRow(memory, world) {
+  function renderToc(world) {
+    el['book-heading'].textContent = 'contents';
+    el['book-note'].textContent = 'years · months · days';
+    var left = el['book-list'];
+    var right = el['book-right-body'];
+    var tree = dateTree(world);
+
+    left.appendChild(kicker('table of contents'));
+    var years = Object.keys(tree).sort().reverse();
+    if (!years.length) {
+      var blank = document.createElement('div');
+      blank.className = 'empty-page';
+      blank.textContent = 'Dates will gather here as you write.';
+      left.appendChild(blank);
+    }
+    years.forEach(function (year) {
+      var yh = document.createElement('button');
+      yh.type = 'button';
+      yh.className = 'toc-year';
+      yh.textContent = year;
+      yh.addEventListener('click', function () { setBookView({ kind: 'date', prefix: year }); });
+      left.appendChild(yh);
+      Object.keys(tree[year]).sort().reverse().forEach(function (mo) {
+        var mh = document.createElement('div');
+        mh.className = 'toc-month';
+        mh.textContent = MONTHS[Number(mo) - 1] || mo;
+        left.appendChild(mh);
+        Object.keys(tree[year][mo]).sort().reverse().forEach(function (d) {
+          var iso = year + '-' + mo + '-' + d;
+          var n = tree[year][mo][d].length;
+          var row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'toc-day';
+          var label = document.createElement('span');
+          label.textContent = Number(d) + '  ' + (tree[year][mo][d][0].title || '');
+          var dots = document.createElement('span');
+          dots.className = 'dots';
+          var countEl = document.createElement('span');
+          countEl.className = 'n';
+          countEl.textContent = n;
+          row.appendChild(label);
+          row.appendChild(dots);
+          row.appendChild(countEl);
+          row.addEventListener('click', function () { setBookView({ kind: 'date', prefix: iso }); });
+          left.appendChild(row);
+        });
+      });
+    });
+
+    var peopleHost = isNarrowBook() ? left : right;
+    peopleHost.appendChild(kicker('people'));
+    if (!world.people.length) {
+      var none = document.createElement('div');
+      none.className = 'empty-page';
+      none.textContent = 'Names you add while writing get a tab of their own, along this edge.';
+      peopleHost.appendChild(none);
+      return;
+    }
+    world.people.forEach(function (person) {
+      var n = memoriesWithPerson(world, person.id).length;
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'toc-person';
+      var who = document.createElement('span');
+      var dot = document.createElement('span');
+      dot.className = 'who-dot';
+      dot.style.background = personHex(person);
+      who.appendChild(dot);
+      who.appendChild(document.createTextNode(person.name));
+      row.appendChild(who);
+      var countEl = document.createElement('span');
+      countEl.className = 'n';
+      countEl.textContent = n;
+      row.appendChild(countEl);
+      row.addEventListener('click', function () { setBookView({ kind: 'person', id: person.id }); });
+      peopleHost.appendChild(row);
+    });
+  }
+
+  function splitAcrossPages(items, left, right) {
+    if (isNarrowBook() || !right) {
+      items.forEach(function (node) { left.appendChild(node); });
+      return;
+    }
+    var mid = Math.ceil(items.length / 2) || 0;
+    items.forEach(function (node, i) {
+      (i < mid ? left : right).appendChild(node);
+    });
+  }
+
+  function renderDatePages(world, prefix) {
+    var list = memoriesInRange(world, prefix);
+    var label = prefix.length === 10 ? dayLabel(prefix)
+      : prefix.length === 7 ? (MONTHS[Number(prefix.slice(5, 7)) - 1] + ' ' + prefix.slice(0, 4))
+      : prefix;
+    el['book-heading'].textContent = label || 'pages';
+    el['book-note'].textContent = list.length ? plural(list.length, 'memory').replace('memorys', 'memories') : '';
+    if (!list.length) {
+      var blank = document.createElement('div');
+      blank.className = 'empty-page';
+      blank.textContent = 'No memories on this page yet.';
+      el['book-list'].appendChild(blank);
+      return;
+    }
+    var nodes = list.map(function (memory) { return buildDiaryEntry(memory, world, false); });
+    splitAcrossPages(nodes, el['book-list'], el['book-right-body']);
+  }
+
+  function renderPersonPages(world, personId) {
+    var person = world.people.filter(function (p) { return p.id === personId; })[0];
+    var list = memoriesWithPerson(world, personId);
+    el['book-heading'].textContent = person ? person.name : 'someone';
+    el['book-note'].textContent = list.length ? plural(list.length, 'memory').replace('memorys', 'memories') : 'no pages yet';
+    var banner = document.createElement('div');
+    banner.className = 'person-banner';
+    var h = document.createElement('h3');
+    h.textContent = person ? person.name : '';
+    var p = document.createElement('p');
+    p.textContent = list.length
+      ? 'all the days written with them'
+      : 'write them into a memory and this chapter fills in';
+    banner.appendChild(h);
+    banner.appendChild(p);
+    el['book-list'].appendChild(banner);
+    if (!list.length) return;
+    var nodes = list.map(function (memory) { return buildDiaryEntry(memory, world, false); });
+    splitAcrossPages(nodes, el['book-list'], el['book-right-body']);
+  }
+
+  function buildDiaryEntry(memory, world, compact) {
     var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
     var row = document.createElement('button');
-    row.className = 'entry';
+    row.type = 'button';
+    row.className = 'diary-entry';
 
-    var emoji = document.createElement('span');
-    emoji.className = 'entry-emoji';
-    emoji.textContent = flavor.emoji;
+    var date = document.createElement('span');
+    date.className = 'd-date';
+    date.textContent = dayLabel(memoryOn(memory));
+    row.appendChild(date);
 
-    var body = document.createElement('span');
-    body.className = 'entry-body';
-    var name = document.createElement('span');
-    name.className = 'entry-name';
-    name.textContent = memory.title;
-    body.appendChild(name);
+    if (!compact) {
+      var clip = document.createElement('span');
+      clip.className = 'd-clip';
+      clip.style.background = CLIP[memory.category] || CLIP.other;
+      clip.title = memory.category;
+      row.appendChild(clip);
+    }
+
+    var title = document.createElement('span');
+    title.className = 'd-title';
+    title.textContent = memory.title || flavor.line;
+    row.appendChild(title);
+
+    if (!compact && memory.text) {
+      var text = document.createElement('span');
+      text.className = 'd-text';
+      text.textContent = memory.text;
+      row.appendChild(text);
+    }
 
     var people = (memory.people || []).map(function (id) {
       return world.people.filter(function (p) { return p.id === id; })[0];
     }).filter(Boolean);
     if (people.length) {
       var who = document.createElement('span');
-      who.className = 'entry-who';
+      who.className = 'd-who';
       people.forEach(function (person) {
         var dot = document.createElement('span');
         dot.className = 'who-dot';
-        var color = (person.appearance && person.appearance.color) || 0x7fa3ae;
-        dot.style.background = '#' + color.toString(16).padStart(6, '0');
+        dot.style.background = personHex(person);
         who.appendChild(dot);
       });
       who.appendChild(document.createTextNode(people.map(function (p) { return p.name; }).join(', ')));
-      body.appendChild(who);
+      row.appendChild(who);
     }
 
-    row.appendChild(emoji);
-    row.appendChild(body);
+    if (!compact && memory.mood && memory.mood.label) {
+      var note = document.createElement('span');
+      note.className = 'd-note';
+      note.textContent = memory.mood.label;
+      row.appendChild(note);
+    }
 
     var slot = memory.placement && memory.placement.slot;
     if (slot !== undefined && slot !== null) {
@@ -393,7 +696,7 @@
         if (openSlot === null) MI.world.clearHighlight();
       });
       row.addEventListener('click', function () {
-        closeBook(); // the card and the planet are behind the book
+        closeBook();
         showDetail(memory);
         MI.world.focus(slot);
       });
@@ -427,7 +730,7 @@
     if (!tiles) return;
     var p = MI.growth.progress(world, tiles, world.planet.frequency);
     var size = MI.growth.tierIndex(p.frequency) + 1;
-    el['planet-size'].textContent = '🪐 Size ' + size + ' of ' + MI.growth.LADDER.length;
+    el['planet-size'].textContent = 'Size ' + size + ' of ' + MI.growth.LADDER.length;
     el['planet-tiles'].textContent = tiles.length + ' tiles';
     var pct = p.next === null ? 100 : Math.min(100, Math.round(100 * p.land / p.threshold));
     el['planet-bar'].firstElementChild.style.transform = 'scaleX(' + (pct / 100) + ')';
@@ -497,6 +800,7 @@
   var shopOpener = null;
 
   function openShop() {
+    closeSettings();
     shopOpener = document.activeElement;
     renderShop();
     el.shop.classList.add('open');
@@ -506,6 +810,17 @@
   function closeShop() {
     el.shop.classList.remove('open');
     if (shopOpener && shopOpener.focus) shopOpener.focus();
+  }
+
+  function openSettings() {
+    closeShop();
+    el.settings.classList.add('open');
+    el['settings-btn'].setAttribute('aria-expanded', 'true');
+  }
+  function closeSettings() {
+    el.settings.classList.remove('open');
+    el['settings-btn'].setAttribute('aria-expanded', 'false');
+    disarmReset();
   }
 
   function themeThumb(id) {
@@ -787,10 +1102,287 @@
   function setBusy(busy) {
     el['submit-btn'].disabled = busy;
     el['submit-btn'].textContent = busy ? 'planting…' : 'Plant it on my planet ✨';
+    if (el['mic-btn']) el['mic-btn'].disabled = busy;
+  }
+
+  // --- Speak a memory -------------------------------------------------------------------
+  // Web Speech API (Chrome/Safari). Interim results fill the page as you talk; when a
+  // browser only returns a finished phrase, the same text is revealed a few letters at a
+  // time so it still looks like handwriting appearing on the ruled paper.
+
+  var SpeechEngine = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognition = null;
+  var listening = false;
+  var speechPrefix = '';
+  var revealTarget = '';
+  var revealTimer = null;
+  var doneAnimTimer = null;
+  var startMicTimer = null;
+  var micLockUntil = 0;
+  var micCanStopAt = 0;
+
+  function joinSpoken(prefix, spoken) {
+    var bit = String(spoken || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (!bit) return prefix || '';
+    if (!prefix) return bit;
+    if (/[\s]$/.test(prefix) || /^[\n,.!?;:)'"]/.test(bit)) return prefix + bit;
+    return prefix + ' ' + bit;
+  }
+
+  // Longest phrases first so "question mark" does not leave a stray "mark".
+  var DICTATION_MARKS = [
+    { re: /\bexclamation\s+(?:mark|point)s?\b/gi, to: '!' },
+    { re: /\bquestion\s+marks?\b/gi, to: '?' },
+    { re: /\bfull\s+stops?\b/gi, to: '.' },
+    { re: /\bdot\s+dot\s+dot\b/gi, to: '...' },
+    { re: /\b(?:new|next)\s+paragraphs?\b/gi, to: '\n\n' },
+    { re: /\b(?:new|next)\s+lines?\b/gi, to: '\n' },
+    { re: /\b(?:open|left)\s+(?:quote|quotation\s+mark)s?\b/gi, to: '"' },
+    { re: /\b(?:close|right|end)\s+(?:quote|quotation\s+mark)s?\b/gi, to: '"' },
+    { re: /\b(?:open|left)\s+parenthes(?:is|es)\b/gi, to: '(' },
+    { re: /\b(?:close|right)\s+parenthes(?:is|es)\b/gi, to: ')' },
+    { re: /\bsemi[-\s]?colons?\b/gi, to: ';' },
+    { re: /\bellipsis\b/gi, to: '...' },
+    { re: /\bapostrophes?\b/gi, to: "'" },
+    { re: /\bpercent\s+signs?\b/gi, to: '%' },
+    { re: /\bat\s+signs?\b/gi, to: '@' },
+    { re: /\bhashtags?\b/gi, to: '#' },
+    { re: /\basterisks?\b/gi, to: '*' },
+    { re: /\bunderscores?\b/gi, to: '_' },
+    { re: /\bsmiley(?:\s+face)?s?\b/gi, to: ' :)' },
+    { re: /\bcolons?\b/gi, to: ':' },
+    { re: /\bcommas?\b/gi, to: ',' },
+    { re: /\bhyphens?\b/gi, to: '-' },
+    { re: /\bdashes?\b/gi, to: '—' },
+    { re: /\bperiods?\b(?!\s+(?:of|piece|drama|in|when|where|from|to|between|during)\b)/gi, to: '.' }
+  ];
+
+  function applyDictationMarks(text) {
+    var out = String(text || '');
+    DICTATION_MARKS.forEach(function (rule) {
+      out = out.replace(rule.re, rule.to);
+    });
+    return out;
+  }
+
+  function looksLikeQuestion(phrase) {
+    var t = phrase.replace(/['"]/g, '').trim();
+    if (/^(?:what a|how a|how the)\b/i.test(t)) return false;
+    return /^(?:who|what|when|where|why|how|is|are|am|do|does|did|can|could|would|will|should|shall|wasn't|isn't|aren't|won't|didn't|couldn't|wouldn't)\b/i.test(t);
+  }
+
+  function looksExcited(phrase) {
+    return /^(?:wow|yay|no way|oh my god|oh my gosh)(?:\b|[!.,]|$)/i.test(phrase.trim());
+  }
+
+  function capitalizePhrase(phrase) {
+    return phrase.replace(/^(\s*["'(]*)([a-z])/, function (_, lead, letter) {
+      return lead + letter.toUpperCase();
+    });
+  }
+
+  function autoPunctuatePhrase(phrase) {
+    var t = String(phrase || '').replace(/[ \t]+/g, ' ').trim();
+    if (!t) return t;
+    t = capitalizePhrase(t);
+    if (/[.!?…]$/.test(t) || /\.\.\.$/.test(t)) return t;
+    if (looksLikeQuestion(t)) return t + '?';
+    if (looksExcited(t)) return t + '!';
+    if (t.split(/\s+/).length < 2) return t;
+    return t + '.';
+  }
+
+  function tidyPunctuation(text) {
+    return String(text || '')
+      .replace(/\.{3}/g, '\u2026')
+      .replace(/[ \t]+([,.!?;:])/g, '$1')
+      .replace(/([!?])\1+/g, '$1')
+      .replace(/([.!?…])([^\s"'.)\]])/g, '$1 $2')
+      .replace(/([.!?…])\s+([a-z])/g, function (_, mark, letter) {
+        return mark + ' ' + letter.toUpperCase();
+      })
+      .replace(/(^|\n)(\s*)([a-z])/g, function (_, br, space, letter) {
+        return br + space + letter.toUpperCase();
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\u2026/g, '...');
+  }
+
+  function paintMic(mode) {
+    var btn = el['mic-btn'];
+    if (!btn) return;
+    btn.classList.remove('listening', 'done');
+    if (mode) {
+      void btn.offsetWidth; // restart the press / done animation
+      btn.classList.add(mode);
+    }
+    var on = mode === 'listening';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.setAttribute('aria-label', on ? 'Stop listening' : (mode === 'done' ? 'Heard' : 'Speak a memory'));
+    btn.title = on ? 'Done' : 'Speak a memory';
+  }
+
+  function scrollEntry() {
+    el['entry-input'].scrollTop = el['entry-input'].scrollHeight;
+  }
+
+  function tickReveal() {
+    var current = el['entry-input'].value;
+    if (current === revealTarget) {
+      clearInterval(revealTimer);
+      revealTimer = null;
+      return;
+    }
+    if (revealTarget.indexOf(current) !== 0) {
+      el['entry-input'].value = revealTarget;
+      clearInterval(revealTimer);
+      revealTimer = null;
+    } else {
+      var step = current.length + Math.max(1, Math.min(3, revealTarget.length - current.length));
+      el['entry-input'].value = revealTarget.slice(0, step);
+    }
+    scrollEntry();
+    clearTimeout(guessTimer);
+    guessTimer = setTimeout(guessTags, 220);
+  }
+
+  function revealToward(text) {
+    revealTarget = text;
+    if (el['entry-input'].value === revealTarget) return;
+    if (!revealTimer) revealTimer = setInterval(tickReveal, 28);
+  }
+
+  function snapReveal() {
+    clearInterval(revealTimer);
+    revealTimer = null;
+    if (revealTarget) {
+      el['entry-input'].value = revealTarget;
+      scrollEntry();
+    }
+  }
+
+  function applyTranscript(event) {
+    var spoken = '';
+    for (var i = 0; i < event.results.length; i++) {
+      var marked = applyDictationMarks(event.results[i][0].transcript);
+      if (event.results[i].isFinal) {
+        if (spoken && !/[\s]$/.test(spoken) && !/^[\n,.!?;:]/.test(marked)) spoken += ' ';
+        spoken += autoPunctuatePhrase(marked);
+      } else {
+        if (spoken && !/[\s]$/.test(spoken) && marked) spoken += ' ';
+        spoken += marked;
+      }
+    }
+    revealToward(joinSpoken(speechPrefix, tidyPunctuation(spoken)));
+  }
+
+  function stopListening(options) {
+    var opts = options || {};
+    clearTimeout(startMicTimer);
+    startMicTimer = null;
+    if (!listening && !recognition) {
+      snapReveal();
+      return;
+    }
+    listening = false;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try { recognition.stop(); } catch (e) { /* already stopped */ }
+      recognition = null;
+    }
+    if (revealTarget) revealTarget = tidyPunctuation(applyDictationMarks(revealTarget));
+    snapReveal();
+    if (opts.silent) {
+      paintMic(null);
+      return;
+    }
+    paintMic('done');
+    clearTimeout(doneAnimTimer);
+    doneAnimTimer = setTimeout(function () { paintMic(null); }, 900);
+  }
+
+  function bindRecognition(engine) {
+    engine.onresult = applyTranscript;
+    engine.onerror = function (event) {
+      // aborted/no-speech fire when Chrome tears down a phrase; keep the session.
+      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        listening = false;
+        recognition = null;
+        paintMic(null);
+        toast('🎤', 'Microphone is blocked', 'Allow the mic for this page, then try Speak again.', 0, 3600);
+        return;
+      }
+      // network and other blips: stay on the listening look and try again
+    };
+    engine.onend = function () {
+      if (!listening) return;
+      speechPrefix = revealTarget || el['entry-input'].value;
+      try { engine.start(); } catch (e) { /* start() while starting */ }
+    };
+  }
+
+  function startListening() {
+    if (!SpeechEngine) {
+      toast('🎤', 'This browser cannot listen', 'Try Chrome or Safari — they can write as you speak.', 0, 3600);
+      return;
+    }
+    clearTimeout(startMicTimer);
+    speechPrefix = el['entry-input'].value;
+    revealTarget = speechPrefix;
+    listening = true;
+    paintMic('listening');
+    // Start after the click finishes. Starting SpeechRecognition inside the click
+    // often aborts it, which used to look like the button immediately pressing Done.
+    startMicTimer = setTimeout(function () {
+      startMicTimer = null;
+      if (!listening) return;
+      if (recognition) {
+        try { recognition.stop(); } catch (e) { /* none */ }
+      }
+      recognition = new SpeechEngine();
+      recognition.lang = (navigator.language || 'en-US');
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      bindRecognition(recognition);
+      try {
+        recognition.start();
+      } catch (e) {
+        listening = false;
+        recognition = null;
+        paintMic(null);
+        toast('🎤', 'Could not start listening', 'Check the microphone and try again.', 0, 3200);
+      }
+    }, 80);
+  }
+
+  function toggleListening(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (el['mic-btn'].disabled) return;
+    var now = Date.now();
+    if (now < micLockUntil) return;
+    if (listening) {
+      if (now < micCanStopAt) return;
+      micLockUntil = now + 300;
+      stopListening();
+      return;
+    }
+    micLockUntil = now + 400;
+    micCanStopAt = now + 600;
+    startListening();
   }
 
   function submitEntry() {
     if (el['submit-btn'].disabled) return;
+    stopListening({ silent: true });
     var text = el['entry-input'].value.trim();
     if (!text) return;
     commitPerson(); // a name still sitting in the box counts
@@ -855,6 +1447,7 @@
     disarmReset();
     hideDetail();
     closeShop();
+    closeSettings();
     el.toast.classList.remove('show');
     // Back to the smallest planet, with shards and unlocks wiped too.
     MI.app.startOver().then(function () {
@@ -864,9 +1457,7 @@
   }
 
   function syncViewButton() {
-    var flat = MI.world.isFlatView();
-    el['view-icon'].textContent = flat ? '🪐' : '🏝️';
-    el['view-label'].textContent = flat ? 'planet view' : 'island view';
+    el['view-btn'].classList.toggle('is-island', MI.world.isFlatView());
   }
   function disarmReset() {
     clearTimeout(resetArmed);
@@ -879,14 +1470,20 @@
     if (MI.store.get().memories.length === 0) return; // nothing to lay out yet
     if (MI.world.isTransitioning()) return; // let the fold finish before reversing it
     var goingFlat = !MI.world.isFlatView();
-    el['view-icon'].textContent = goingFlat ? '🪐' : '🏝️';
-    el['view-label'].textContent = goingFlat ? 'planet view' : 'island view';
+    el['view-btn'].classList.toggle('is-island', goingFlat);
     hideDetail();
     MI.world.setFlatView(goingFlat);
   }
 
   function init() {
     cacheElements();
+    el['settings-btn'].addEventListener('click', function () {
+      if (el.settings.classList.contains('open')) closeSettings();
+      else openSettings();
+    });
+    el.settings.addEventListener('click', function (e) {
+      if (e.target === el.settings) closeSettings();
+    });
     el['reset-btn'].addEventListener('click', handleReset);
     el['view-btn'].addEventListener('click', function () {
       // The two views hold the character in different places and the fold animates the
@@ -896,6 +1493,7 @@
     });
 
     el['submit-btn'].addEventListener('click', submitEntry);
+    el['mic-btn'].addEventListener('click', toggleListening);
     el['entry-input'].addEventListener('keydown', function (e) {
       // It is a page in a book, so Enter is a new line; Ctrl/Cmd+Enter puts it on the planet.
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEntry(); }
@@ -931,6 +1529,17 @@
 
     MI.app.onEvent(handleAppEvent);
     el['ground-btn'].addEventListener('click', toggleGroundView);
+    // Settings is where you change who you are: the picker is the same full-sheet grid you
+    // would have seen the first time, and skins go straight to their shop tab.
+    el['character-btn'].addEventListener('click', function () {
+      closeSettings();
+      openPicker();
+    });
+    el['skins-btn'].addEventListener('click', function () {
+      closeSettings();
+      shopKind = 'skins';
+      openShop();
+    });
     el['picker-play'].addEventListener('click', chooseCharacter);
     el.picker.addEventListener('click', function (e) {
       if (e.target === el.picker) closePicker(); // the backdrop, not the sheet
@@ -963,6 +1572,7 @@
       if (el.picker.classList.contains('open')) { closePicker(); return; }
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
+      else if (el.settings.classList.contains('open')) closeSettings();
       else if (isBookOpen()) closeBook();
     });
 
