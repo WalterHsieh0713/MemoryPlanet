@@ -48,8 +48,12 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `shouldGrow(world, tiles, f)` — true once half the hexagons are land and a bigger size exists
 - `remap(world, oldTiles, newTiles, oldF, newF)` — mutates every saved slot onto the new grid, keeping tile size constant (island keeps its shape; new ocean appears around it) and bridging any gap so the island stays connected. Returns `{ mapping, added }`.
 
+## MI.placement  (`src/world/placement.js`, pure — runs under Node: `node scripts/test-placement.js`)
+- `choose(tiles, { home, buildings, land, taken, count }) -> { slot, via, tier } | null` — where the next building goes: the free hexagon nearest home that joins existing land and touches no building (house included). `via` is a bridge tile to turn into land when it could not join directly (tier 2); tiers 3-4 are last-resort fallbacks. Deterministic. Called by `MI.app.chooseSlot`; `world.heading` is no longer used.
+- `rings(tiles, start) -> { ring, order }` — steps from a tile through the graph.
+
 ## MI.island  (`src/world/island.js`, pure — runs under Node: `node scripts/test-island.js`)
-- `layout(landSlots, homeSlot, tiles) -> { cells: {slot: {i, j, ring}}, radius }` — coils the planet's land into a compact island on a flat hex grid (axial `i, j`; direction k is `DIRS[k]`, at -k*60 degrees, which `world.js` kitEdge() converts for the kit's road pieces)
+- `layout(landSlots, homeSlot, tiles, buildings?) -> { cells: {slot: {i, j, ring}}, radius }` — coils the planet's land into a compact island on a flat hex grid (axial `i, j`; `buildings` (a Set of slots) keeps building cells from touching; direction k is `DIRS[k]`, at -k*60 degrees, which `world.js` kitEdge() converts for the kit's road pieces)
 - `roads(cells, pairs, buildingSlots) -> {slot: [direction indices]}` — cheapest paths joining each memory pair, reusing already-paved cells and staying off other buildings
 - `toXZ(cell, spacing)`, `adjacent(a, b)`, `DIRS`
 
@@ -58,7 +62,8 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `list()`, `get(id)`, `isCharacter(id)`, `defaultId()`, `makeAvatar(id, fallbackBuilder) -> Promise<Object3D>`
 - `newPlayer()`, `updateSphere(player, dt, ctx)`, `updateFlat(player, dt, ctx)`
 - A player's sphere facing is a unit TANGENT VECTOR, not an angle, and `updateSphere` reports the rotation each step applied as `lastAxis`/`lastAngle`. Carry anything else that has a direction — the ground camera does — by that same rotation. Deriving a direction from a recomputed reference tangent instead is what made the camera swing when strafing.
-- `stepSphere(pos, move, distance, radius)`, `moveSphere(...)`, `moveFlat(...)`, `TILES_PER_SECOND`
+- `stepSphere(pos, move, distance, radius)`, `moveSphere(...)`, `moveFlat(pos, forward, right, input, distance, isLandAt, blockers?, radius?)`, `blockedStep(from, to, blockers, radius)`, `TILES_PER_SECOND`
+- `blockers` are solid circles `{x, z, r}` (island buildings, `state.island.blockers`): steps into one are refused and the move glides along its edge; a character already inside may only leave.
 - `ctx.speed` is WORLD UNITS per second: the caller multiplies `TILES_PER_SECOND` by a tile's size in that view.
 
 ## MI.economy  (`src/game/economy.js`)
