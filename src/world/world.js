@@ -5293,6 +5293,10 @@
 
   function galaxyScreens() {
     if (!state.galaxy || !state.galaxy.on) return [];
+    // A drag moves the camera between frames (lookAt), but its matrices are only rebuilt
+    // inside render(), which runs AFTER this. Projecting with the stale ones put every label
+    // and the card a frame behind the planets, so they swam around while dragging.
+    state.camera.updateMatrixWorld();
     var focusId = state.galaxy.focusId;
     var out = state.galaxy.planets.map(function (p) {
       var pos = p.group.getWorldPosition(galaxyScreenTmp.clone());
