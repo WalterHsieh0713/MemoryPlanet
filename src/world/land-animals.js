@@ -1,65 +1,124 @@
-// MI.world.landAnimals — GLB-based pets that walk on land only, in both views. Unlike the
-// procedural sky pets in cosmetics.js (which orbit above the island), these load a real model
-// from Kenney's Cube Pets pack (assets/standalone/animals/cube-pets/) and wander by stepping
-// tile to tile: pick a random LAND neighbour of the current tile, walk to it, repeat. Because a
-// target is only ever chosen from tiles already known to be land, it can't step into water or
-// off the island by construction — there's no separate boundary/fall check.
+// MI.world.landAnimals — GLB-based walkers that move tile to tile in both views, as opposed to
+// the procedural sky pets in cosmetics.js that orbit above the island. Two kinds run through
+// the same code: pets (Kenney Cube Pets) and characters (Kenney Mini Characters). Each wanders
+// by stepping tile to tile — pick a random walkable neighbour, walk to it, pause, repeat.
 //
-// This module knows nothing about world.js's internal state or MI.store/MI.island — world.js
-// hands it an `isLand(id)` check and a tile-id -> {x,y,z} position lookup each call, one set
-// for the sphere view and one for the flat view (the flat one keyed by world.js's own coiled
+// This module knows nothing about world.js's internal state or MI.store/MI.island. world.js
+// hands it a "can I stand here" test and a tile-id -> position lookup each call, one set for
+// the sphere view and one for the flat view (the flat one keyed by world.js's own coiled
 // island layout, since a hex grid neighbour isn't necessarily an adjacent cell once coiled).
+// That injection is the whole reason the two kinds can differ so much: a pet is given every
+// land tile, a character only tiles carrying a road, and neither case needed new movement code.
+// Because a target is only ever chosen from tiles the caller already vouched for, a walker
+// cannot step into water or off the island by construction — there is no separate fall check.
 //
-// Adding another animal later is one line in ANIMALS below, once its .glb is sorted into that
-// same folder (deer/cow/tiger are already there from an earlier asset pass).
+// Adding another is one line in KINDS below plus a catalog entry in src/game/economy.js.
 (function () {
   window.MI = window.MI || {};
   MI.world = MI.world || {};
 
-  var PACK = 'assets/standalone/animals/cube-pets/';
-  var STEP_MIN = 1.5, STEP_MAX = 2.5; // seconds per tile-to-tile walk, varied for less robotic pacing
-  var PAUSE_MIN = 0.7, PAUSE_MAX = 1.8; // seconds spent standing on each tile before the next step
   var HOP_HEIGHT = 0.05; // these models have no walk animation, so a small bob stands in for one
+  var WORLD_UP = new THREE.Vector3(0, 1, 0);
+  var WORLD_SIDE = new THREE.Vector3(1, 0, 0);
 
-  var ANIMALS = {
-    dog: 'animal-dog.glb'
+  // Two kinds of walker share this module. They differ only in which pack they load from and
+  // how long they idle — the wander FSM below is identical, and *where* each may walk is not
+  // decided here at all: world.js injects the "can I stand here" test (any land tile for pets,
+  // road tiles only for characters), which is why road-bound movement needed no new code.
+  //
+  // Sizes are deliberately NOT normalised per model. Within a pack they are already uniform
+  // (pets 1.43-2.01 tall, characters 0.66-0.79), so one scale per kind in world.js is enough
+  // and the spread that is left reads as character. Note the two packs are modelled at very
+  // different raw sizes though — a character is ~0.42x a pet in raw units — so the two scale
+  // constants in world.js are not comparable numbers; see the note there.
+  var KINDS = {
+    animal: {
+      pack: 'assets/standalone/animals/cube-pets/',
+      step: [1.5, 2.5],   // seconds per tile-to-tile walk, varied for less robotic pacing
+      pause: [0.7, 1.8],  // seconds standing on a tile before moving on
+      models: {
+        bunny: 'animal-bunny.glb',
+        pig: 'animal-pig.glb',
+        dog: 'animal-dog.glb',
+        fox: 'animal-fox.glb',
+        cow: 'animal-cow.glb',
+        deer: 'animal-deer.glb',
+        lion: 'animal-lion.glb',
+        elephant: 'animal-elephant.glb'
+      }
+    },
+    // People stroll rather than scurry, but they must keep visibly moving: a character is
+    // confined to the road route, and over half of that route is building tiles it stands
+    // *on*, so a long idle there reads as "it isn't working" rather than as calm. Step plus
+    // pause is kept to 3-5s so it hops to the next tile at roughly that rhythm.
+    character: {
+      pack: 'assets/standalone/characters/mini-characters/',
+      step: [1.2, 1.8],
+      pause: [2.0, 3.0],
+      models: {
+        'male-a': 'character-male-a.glb',
+        'male-b': 'character-male-b.glb',
+        'male-c': 'character-male-c.glb',
+        'male-d': 'character-male-d.glb',
+        'male-e': 'character-male-e.glb',
+        'male-f': 'character-male-f.glb',
+        'female-a': 'character-female-a.glb',
+        'female-b': 'character-female-b.glb',
+        'female-c': 'character-female-c.glb',
+        'female-d': 'character-female-d.glb',
+        'female-e': 'character-female-e.glb',
+        'female-f': 'character-female-f.glb'
+      }
+    }
   };
 
-  function isLandAnimal(id) {
-    return !!id && Object.prototype.hasOwnProperty.call(ANIMALS, id);
+  // Ids are unique across both registries, so an id alone says which pack and pacing to use.
+  function kindOf(id) {
+    if (!id) return null;
+    var found = null;
+    Object.keys(KINDS).forEach(function (kind) {
+      if (Object.prototype.hasOwnProperty.call(KINDS[kind].models, id)) found = kind;
+    });
+    return found;
   }
+
+  function isLandAnimal(id) { return kindOf(id) === 'animal'; }
+  function isCharacter(id) { return kindOf(id) === 'character'; }
 
   function easeInOut(t) {
     return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
   }
 
   // --- Loading --------------------------------------------------------------------------
-  // Own LoadingManager, separate from the hexagon-kit's — this is a different pack with its
-  // own colormap, and CLAUDE.md's rule is one LoadingManager per pack.
+  // One LoadingManager per pack, both separate from the hexagon-kit's: each pack ships its own
+  // colormap, and CLAUDE.md's rule is one LoadingManager per pack.
 
-  var loader = null;
+  var loaders = {};
   var templateCache = {};
 
-  function getLoader() {
-    if (!loader) {
+  function getLoader(kind) {
+    if (!loaders[kind]) {
+      var pack = KINDS[kind].pack;
       var manager = new THREE.LoadingManager();
       manager.setURLModifier(function (url) {
-        if (url.indexOf('colormap.png') !== -1) return PACK + 'Textures/variation-a.png';
+        if (url.indexOf('colormap.png') !== -1) return pack + 'Textures/variation-a.png';
         return url;
       });
-      loader = new THREE.GLTFLoader(manager);
+      loaders[kind] = new THREE.GLTFLoader(manager);
     }
-    return loader;
+    return loaders[kind];
   }
 
-  // Loads and normalises one animal's model once (centred on X/Z, resting at y=0, shadows on),
-  // cached so every instance clones the same geometry/materials rather than reloading.
+  // Loads and normalises one model once (centred on X/Z, resting at y=0, shadows on), cached
+  // so every instance clones the same geometry/materials rather than reloading.
   function loadTemplate(id) {
-    var file = ANIMALS[id];
-    if (!file) return Promise.resolve(null);
+    var kind = kindOf(id);
+    if (!kind) return Promise.resolve(null);
+    var spec = KINDS[kind];
+    var file = spec.models[id];
     if (!templateCache[id]) {
       templateCache[id] = new Promise(function (resolve) {
-        getLoader().load(PACK + file, function (gltf) {
+        getLoader(kind).load(spec.pack + file, function (gltf) {
           var group = new THREE.Group();
           group.add(gltf.scene);
           var box = new THREE.Box3().setFromObject(gltf.scene);
@@ -77,29 +136,42 @@
     return templateCache[id];
   }
 
-  function newWalker() {
-    return { group: null, tileId: null, targetId: null, fromTileId: null, t: 1, duration: 1.6, pause: 0 };
+  // Pacing rides on the walker rather than on module constants, so the two kinds can idle at
+  // completely different rhythms through the same FSM.
+  function newWalker(spec) {
+    return {
+      group: null, tileId: null, targetId: null, fromTileId: null,
+      t: 1, duration: 1.6, pause: 0,
+      stepRange: spec.step, pauseRange: spec.pause
+    };
   }
 
   // Two live instances sharing one loaded model — one positioned for the sphere view, one for
   // the flat view — so both can keep wandering independently while only one is ever shown.
   function makeWalkerPair(id) {
+    var kind = kindOf(id);
+    if (!kind) return Promise.resolve(null);
     return loadTemplate(id).then(function (template) {
       if (!template) return null;
-      var sphere = newWalker(); sphere.group = template.clone(true);
-      var flat = newWalker(); flat.group = template.clone(true);
-      return { sphere: sphere, flat: flat };
+      var spec = KINDS[kind];
+      var sphere = newWalker(spec); sphere.group = template.clone(true);
+      var flat = newWalker(spec); flat.group = template.clone(true);
+      return { kind: kind, sphere: sphere, flat: flat };
     });
   }
 
   // --- Wander FSM, shared by both views -------------------------------------------------
 
-  function randomStepDuration() {
-    return STEP_MIN + Math.random() * (STEP_MAX - STEP_MIN);
+  function inRange(range) {
+    return range[0] + Math.random() * (range[1] - range[0]);
   }
 
-  function randomPauseDuration() {
-    return PAUSE_MIN + Math.random() * (PAUSE_MAX - PAUSE_MIN);
+  function randomStepDuration(walker) {
+    return inRange(walker.stepRange);
+  }
+
+  function randomPauseDuration(walker) {
+    return inRange(walker.pauseRange);
   }
 
   // Only ever chooses among tiles `neighborsOf` reports as directly, visually adjacent to the
@@ -128,7 +200,7 @@
       walker.targetId = walker.tileId;
       walker.fromTileId = null;
       walker.t = 1;
-      walker.pause = randomPauseDuration();
+      walker.pause = randomPauseDuration(walker);
     }
     if (walker.tileId === null) return false;
 
@@ -142,11 +214,11 @@
       walker.fromTileId = previous;
       walker.targetId = pickNextTile(walker, neighborsOf, isLand);
       walker.t = 0;
-      walker.duration = randomStepDuration();
+      walker.duration = randomStepDuration(walker);
     }
 
     walker.t = Math.min(1, walker.t + dt / walker.duration);
-    if (walker.t >= 1) walker.pause = randomPauseDuration();
+    if (walker.t >= 1) walker.pause = randomPauseDuration(walker);
     return true;
   }
 
@@ -167,6 +239,15 @@
     var dir = fromDir.clone().lerp(toDir, ease).normalize();
     var hop = Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
     walker.group.position.copy(dir).multiplyScalar(ctx.height + hop);
+    // Stand beside the middle of the tile rather than on it, the same trick spawnPerson uses:
+    // a walker that keeps to the roads spends much of its time on tiles that already carry a
+    // building, and dead centre puts it inside one. Taken against a fixed world axis (not the
+    // direction of travel) so it varies smoothly with `dir` and never pops at a step boundary.
+    if (ctx.offset) {
+      var axis = Math.abs(dir.y) > 0.95 ? WORLD_SIDE : WORLD_UP;
+      var side = new THREE.Vector3().crossVectors(dir, axis);
+      if (side.lengthSq() > 1e-8) walker.group.position.addScaledVector(side.normalize(), ctx.offset);
+    }
     walker.group.scale.setScalar(ctx.scale);
 
     if (fromDir.distanceToSquared(toDir) > 1e-8) {
@@ -197,7 +278,7 @@
     var x = from.x + (to.x - from.x) * ease;
     var z = from.z + (to.z - from.z) * ease;
     var hop = Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
-    walker.group.position.set(x, ctx.baseY + hop, z);
+    walker.group.position.set(x + (ctx.offset || 0), ctx.baseY + hop, z); // beside the tile centre — see updateSphere
     walker.group.scale.setScalar(ctx.scale);
     if (Math.abs(to.x - from.x) > 1e-6 || Math.abs(to.z - from.z) > 1e-6) {
       walker.group.rotation.y = Math.atan2(to.x - from.x, to.z - from.z);
@@ -206,6 +287,7 @@
 
   MI.world.landAnimals = {
     isLandAnimal: isLandAnimal,
+    isCharacter: isCharacter,
     makeWalkerPair: makeWalkerPair,
     updateSphere: updateSphere,
     updateFlat: updateFlat

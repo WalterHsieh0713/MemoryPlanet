@@ -1,11 +1,12 @@
-// MI.economy — shards: earned by journaling, spent on themes, pets and character skins.
+// MI.economy — shards: earned by journaling, spent on themes, pets, characters and skins.
 // Reads and writes the wallet/unlocks/equipped fields of the stored world (MI.store); it
 // never touches the scene. Applying a purchase to the planet is MI.app.equip's job.
 (function () {
   window.MI = window.MI || {};
 
-  // Ids match src/world/themes.js and src/world/cosmetics.js — except land-walker pets
-  // (currently just 'dog'), whose ids match src/world/land-animals.js instead.
+  // Ids match src/world/themes.js and src/world/cosmetics.js, except the land-walkers — the
+  // GLB pets and every character — whose ids match the KINDS table in
+  // src/world/land-animals.js instead.
   var CATALOG = {
     themes: [
       { id: 'meadow', name: 'Meadow', price: 0, icon: '🌿', blurb: 'Green hills and a bright blue sea.' },
@@ -14,7 +15,15 @@
       { id: 'starlight', name: 'Starlight', price: 140, icon: '🌌', blurb: 'A violet world under a sky full of stars.' }
     ],
     pets: [
+      // Land-walkers (src/world/land-animals.js) first, cheapest up; sky-orbiters after.
+      { id: 'bunny', name: 'Bunny', price: 35, icon: '🐰', blurb: 'Hops from tile to tile, then sits very still.' },
+      { id: 'pig', name: 'Pig', price: 45, icon: '🐷', blurb: 'Snuffles along the paths, in no particular hurry.' },
       { id: 'dog', name: 'Dog', price: 50, icon: '🐶', blurb: 'Trots around your island on its own four paws.' },
+      { id: 'fox', name: 'Fox', price: 60, icon: '🦊', blurb: 'Slips between the rooftops, pausing to look back.' },
+      { id: 'cow', name: 'Cow', price: 65, icon: '🐮', blurb: 'Ambles the fields and stops to consider the view.' },
+      { id: 'deer', name: 'Deer', price: 70, icon: '🦌', blurb: 'Steps carefully over the grass, always listening.' },
+      { id: 'lion', name: 'Lion', price: 95, icon: '🦁', blurb: 'Patrols the island like it owns the place.' },
+      { id: 'elephant', name: 'Elephant', price: 120, icon: '🐘', blurb: 'Plods the long way round, entirely unbothered.' },
       { id: 'moonling', name: 'Moonling', price: 40, icon: '🌙', blurb: 'A sleepy little moon that circles your island.' },
       { id: 'cloud-sheep', name: 'Cloud Sheep', price: 55, icon: '🐑', blurb: 'Fluffy, floaty, always paddling its legs.' },
       { id: 'sky-koi', name: 'Sky Koi', price: 75, icon: '🐟', blurb: 'Swims laps through the air above your roofs.' },
@@ -26,9 +35,25 @@
       { id: 'cozy', name: 'Cozy Knits', price: 45, icon: '🧣', blurb: 'Bobble hats and scarves for everyone.' },
       { id: 'explorer', name: 'Explorer', price: 60, icon: '🧭', blurb: 'Sun hats and backpacks, ready to roam.' },
       { id: 'crown', name: 'Star Crowns', price: 90, icon: '👑', blurb: 'Royalty, every one of them.' }
+    ],
+    // Residents: land-walkers like the GLB pets, but they keep to the roads and mostly stand
+    // about. Their own equip slot, so a character and a pet can be out at the same time.
+    characters: [
+      { id: 'male-a', name: 'Arlo', price: 40, icon: '🧑', blurb: 'Walks the lanes and stops to watch the sea.' },
+      { id: 'female-a', name: 'Beatrix', price: 40, icon: '👩', blurb: 'Keeps to the paths, never in a rush.' },
+      { id: 'male-b', name: 'Cass', price: 55, icon: '🧑‍🌾', blurb: 'Ambles between the houses, hands in pockets.' },
+      { id: 'female-b', name: 'Della', price: 55, icon: '👩‍🌾', blurb: 'Takes the long way round, every time.' },
+      { id: 'male-c', name: 'Emmett', price: 70, icon: '🧑‍🔧', blurb: 'Stands at the roadside like he is waiting for someone.' },
+      { id: 'female-c', name: 'Fern', price: 70, icon: '👩‍🔧', blurb: 'Pauses on the path as if she has forgotten something.' },
+      { id: 'male-d', name: 'Gus', price: 85, icon: '🧑‍🍳', blurb: 'Strolls a few tiles, then thinks better of it.' },
+      { id: 'female-d', name: 'Hana', price: 85, icon: '👩‍🍳', blurb: 'Wanders the roads and watches the rooftops.' },
+      { id: 'male-e', name: 'Idris', price: 100, icon: '🧑‍🎨', blurb: 'Never strays off the path, not once.' },
+      { id: 'female-e', name: 'Juno', price: 100, icon: '👩‍🎨', blurb: 'Drifts from junction to junction, quite content.' },
+      { id: 'male-f', name: 'Kit', price: 120, icon: '🧑‍🚀', blurb: 'Paces the lanes like he is counting them.' },
+      { id: 'female-f', name: 'Liv', price: 120, icon: '👩‍🚀', blurb: 'Stops mid-road to admire what you have built.' }
     ]
   };
-  var EQUIP_KEY = { themes: 'theme', pets: 'pet', skins: 'skin' };
+  var EQUIP_KEY = { themes: 'theme', pets: 'pet', skins: 'skin', characters: 'character' };
 
   // Every earning rule in one place, so balancing is a one-line change.
   var REWARD = {
@@ -124,9 +149,9 @@
     return { ok: true, item: item };
   }
 
-  // `id` null puts a pet away (themes and skins always have one equipped).
+  // `id` null puts a pet or character away (themes and skins always have one equipped).
   function equip(kind, id) {
-    if (id === null ? kind !== 'pets' : !owns(kind, id)) return false;
+    if (id === null ? (kind !== 'pets' && kind !== 'characters') : !owns(kind, id)) return false;
     world().equipped[EQUIP_KEY[kind]] = id;
     MI.store.save();
     return true;

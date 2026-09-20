@@ -272,6 +272,7 @@
     if (kind === 'themes') MI.world.setTheme(id);
     else if (kind === 'pets') MI.world.setPet(id);
     else if (kind === 'skins') MI.world.setSkin(id);
+    else if (kind === 'characters') MI.world.setCharacter(id);
     return true;
   }
 
@@ -287,6 +288,7 @@
       MI.world.setTheme(world.equipped.theme);
       MI.world.setPet(world.equipped.pet);
       MI.world.setSkin(world.equipped.skin);
+      MI.world.setCharacter(world.equipped.character);
     });
   }
 

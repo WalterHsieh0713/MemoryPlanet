@@ -7,7 +7,8 @@
     frequency: saved.planet.frequency,
     theme: saved.equipped.theme,
     pet: saved.equipped.pet,
-    skin: saved.equipped.skin
+    skin: saved.equipped.skin,
+    character: saved.equipped.character
   })
     .then(function () {
       MI.ui.init();

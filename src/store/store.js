@@ -28,8 +28,8 @@
       planet: { frequency: firstFrequency() },
       // Progression — see src/game/economy.js.
       wallet: { shards: 0, lifetime: 0, streak: 0, lastDay: null },
-      unlocks: { themes: ['meadow'], pets: [], skins: ['classic'] },
-      equipped: { theme: 'meadow', pet: null, skin: 'classic' }
+      unlocks: { themes: ['meadow'], pets: [], skins: ['classic'], characters: [] },
+      equipped: { theme: 'meadow', pet: null, skin: 'classic', character: null }
     };
   }
 

@@ -27,7 +27,31 @@ Island view (was the flat view): the planet's land is coiled into a compact floa
 
 Assets (merged 2026-09-19 from `asset_packs_and_textures`): six more Kenney packs — fantasy town, factory, holiday, castle, pirate, cube pets — plus `assets/standalone/`, a staging area of individual objects sorted by kind. GLB and textures only; the `.fbx`/`.obj`/`.mtl` copies were dropped since only `vendor/GLTFLoader.js` reads models, and they were 40MB of the 74MB. **No code loaded any of them yet** — see the `.vercelignore` rule above before you do. (`assets/standalone/animals/cube-pets` is the first exception — see Land-walker pets below.)
 
-Land-walker pets (built 2026-09-19): a 5th pet kind alongside the four procedural sky-orbiters — `dog`, in `src/world/land-animals.js` — loads a real GLB (`assets/standalone/animals/cube-pets/animal-dog.glb`, its own `LoadingManager` per the pack-textures rule above) instead of building one from primitives, and wanders tile-to-tile instead of orbiting: pick a random *land* neighbour, walk to it, pause, repeat, in both the sphere and island views (one live instance each, since they wander independently). No walk animation on the model, so it's a position slide with a small hop rather than leg motion. Adding another animal (deer/cow/tiger are already sorted into that same folder) is one line in `ANIMALS` there plus a catalog entry in `src/game/economy.js` — nothing else has to change. One bug worth remembering: the island view's coiled layout (`MI.island`) isn't a 1:1 mirror of the planet's tile adjacency, so a land-walker's next step there has to come from `MI.island.adjacent` on the coiled cells, not the planet's own neighbour list — using the planet's neighbours there let the pet visually hop across a tile it was never really adjacent to.
+Characters (built 2026-09-19): residents who walk the roads, in their own shop tab and their own
+equip slot, so a character and a pet can be out at once. They reuse the land-walker framework
+untouched — `src/world/land-animals.js` now holds a `KINDS` table (pets from Cube Pets, the 12
+characters from Mini Characters, one `LoadingManager` each) and world.js injects what differs:
+where they may stand, and how big they are. Pacing moved onto the walker so the two kinds can
+keep different rhythms, and they render at exactly twice a pet's on-screen height —
+note `CHARACTER_*_SCALE` is ~4.7x `LAND_ANIMAL_*_SCALE`, not 2x, because the two packs are
+modelled at very different raw sizes (mean height 0.72 against 1.71); don't "tidy" those two
+pairs of numbers toward each other.
+
+Two things worth knowing about the road constraint. First, **the walkable set has to include the
+buildings a road runs through**: memories land two tiles apart, so a road segment is usually a
+single tile with a building either side — counting only tiles with a road *model* left all 5
+road tiles on a 9-memory world stranded with no road neighbour, and the character could never
+take a step. Second, roads only exist once two memories are linked, so on a new planet there is
+nowhere to stand; a character stays hidden and appears by itself once a road does, rather than
+being parked somewhere arbitrary. Third, the two consequences of that route are why a character
+must not dawdle and must not stand dead centre: over half the route is building tiles (6 of 11
+on a 9-memory world), so an idle of 7-16s — the first thing tried — spent most of its time
+standing invisibly *inside* a house and read as broken. It now steps about every 3-5s (step
+1.2-1.8s plus pause 2.0-3.0s in `KINDS`), and `ctx.offset` shifts it to the side of the tile the
+way `spawnPerson` does for memory-people. That offset is taken against a fixed world axis rather
+than the direction of travel, so it varies smoothly and never pops when a step changes heading.
+
+Land-walker pets (built 2026-09-19): a second pet kind alongside the four procedural sky-orbiters — 8 of them (bunny, pig, dog, fox, cow, deer, lion, elephant) in `src/world/land-animals.js` — each loads a real GLB from `assets/standalone/animals/cube-pets/` (its own `LoadingManager` per the pack-textures rule above) instead of being built from primitives, and wanders tile-to-tile instead of orbiting: pick a random *land* neighbour, walk to it, pause, repeat, in both the sphere and island views (one live instance each, since they wander independently). No walk animation on the models, so it's a position slide with a small hop rather than leg motion. Adding another is one line in `ANIMALS` there plus a catalog entry in `src/game/economy.js` — nothing else has to change, and the pack ships 24 to choose from. They deliberately share one scale constant rather than per-animal tuning: the pack models them uniformly (heights 1.43-2.01, the elephant shortest and the bunny tallest because of its ears), so the spread that's left reads as character. One bug worth remembering: the island view's coiled layout (`MI.island`) isn't a 1:1 mirror of the planet's tile adjacency, so a land-walker's next step there has to come from `MI.island.adjacent` on the coiled cells, not the planet's own neighbour list — using the planet's neighbours there let the pet visually hop across a tile it was never really adjacent to.
 
 Known gaps:
 - Classifier: `api/classify.js` makes the Claude path deployable, but it has still never been seen working — there is no local `.env`, and the deployed key may not be set either, so every entry in practice goes through the keyword heuristic, which has substring-matching bugs and weak people detection.

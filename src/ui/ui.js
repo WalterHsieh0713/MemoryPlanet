@@ -209,7 +209,7 @@
 
       var action = document.createElement('button');
       action.className = 'action';
-      if (inUse && kind === 'pets') {
+      if (inUse && (kind === 'pets' || kind === 'characters')) {
         action.className += ' use';
         action.textContent = 'Put away';
         action.addEventListener('click', function () { MI.app.equip(kind, null); renderShop(); });
