@@ -1956,7 +1956,7 @@
 
   /* Follow-mode thought bubble: sits above the memory you are looking at. */
   #thought {
-    position: fixed; z-index: 9; left: 0; top: 0;
+    position: fixed; z-index: 18; left: 0; top: 0;
     width: min(240px, calc(100vw - 32px));
     transform: translate(-50%, calc(-100% + 10px));
     pointer-events: none;
@@ -2035,6 +2035,84 @@
   body.card-open #theme-rack {
     opacity: 0; visibility: hidden; transform: translateX(12px);
     transition: opacity .2s ease, visibility .2s, transform .3s var(--spring);
+  }
+
+  /* --- who is this pet for --- */
+  #owner-pick, #pet-feed {
+    position: fixed; inset: 0; z-index: 22; display: grid; place-items: center; padding: 16px;
+    background: rgba(44, 95, 111, .24); backdrop-filter: blur(3px);
+    opacity: 0; visibility: hidden; transition: opacity .22s ease, visibility .22s;
+  }
+  #owner-pick.open, #pet-feed.open { opacity: 1; visibility: visible; }
+  #owner-pick .sheet, #pet-feed .sheet {
+    position: relative; width: min(380px, 100%); padding: 22px 24px 20px;
+    border-radius: 6px 14px 8px 12px; text-align: center;
+    transform: translateY(10px) rotate(-0.6deg); transition: transform .35s var(--spring);
+  }
+  #owner-pick.open .sheet, #pet-feed.open .sheet { transform: rotate(0.5deg); }
+  #owner-pick .who-pet, #pet-feed .who-pet { font-size: 40px; line-height: 1; margin-bottom: 6px; }
+  #owner-pick h2, #pet-feed h2 { margin: 0 0 4px; font-size: 21px; font-weight: 700; color: var(--ink); }
+  #owner-pick .blurb, #pet-feed .blurb { margin: 0 0 16px; font-size: 13.5px; color: var(--ink-mid); }
+  #owner-pick .close, #pet-feed .close {
+    position: absolute; top: 10px; right: 10px; width: 28px; height: 28px; padding: 0;
+    border: 0; border-radius: 50%; cursor: pointer; font-family: inherit; font-size: 13px;
+    background: #f1f6f8; color: var(--ink-soft);
+  }
+  #owner-pick .close:hover, #pet-feed .close:hover { background: #e2ecef; color: var(--ink); }
+  #owner-pick-list { display: flex; flex-direction: column; gap: 7px; }
+  #owner-pick-list button {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    min-height: 46px; padding: 8px 14px; border-radius: 12px; cursor: pointer;
+    border: 1px solid #e6d4b6; background: #fffdf4; color: var(--ink);
+    font-family: inherit; font-size: 15px; text-align: left;
+    transition: transform .2s var(--spring), background .2s ease;
+  }
+  #owner-pick-list button:hover { background: #fff8ec; transform: translateX(2px); }
+  #owner-pick-list .dot {
+    width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--accent); box-shadow: 0 0 0 2px #fff inset;
+  }
+  #owner-pick-list .has { margin-left: auto; font-size: 12px; color: var(--ink-mid); }
+  /* A treat: its picture, its name, and what it costs -- or that you already have one. */
+  #pet-feed-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+  #pet-feed-list button {
+    display: flex; align-items: center; gap: 8px; padding: 7px 10px;
+    min-height: 48px; border-radius: 12px; cursor: pointer;
+    border: 1px solid #e6d4b6; background: #fffdf4; color: var(--ink);
+    font-family: inherit; font-size: 14px; text-align: left;
+    transition: transform .2s var(--spring), background .2s ease;
+  }
+  #pet-feed-list button:hover:not(:disabled) { background: #fff8ec; transform: translateY(-2px); }
+  #pet-feed-list button:disabled { opacity: .45; cursor: default; }
+  #pet-feed-list img { width: 30px; height: 30px; flex: 0 0 auto; object-fit: contain; }
+  #pet-feed-list .cost { margin-left: auto; font-size: 12px; font-weight: 700; color: var(--coin); }
+  #pet-feed-list .have { margin-left: auto; font-size: 12px; font-weight: 700; color: #4fa58c; }
+
+  /* The nudge that says you are close enough to give them something. */
+  #pet-prompt {
+    position: fixed; left: 50%; bottom: 122px; z-index: 8;
+    transform: translateX(-50%) translateY(6px);
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 14px 7px 9px; border-radius: 999px;
+    background: rgba(255, 253, 244, .95); border: 1px solid #e6d4b6;
+    box-shadow: 1px 2px 0 #e4d2b0, 0 6px 14px rgba(112, 70, 44, .12);
+    font-size: 14px; color: var(--ink); pointer-events: none;
+    opacity: 0; visibility: hidden;
+    transition: opacity .18s ease, visibility .18s, transform .28s var(--spring);
+  }
+  #pet-prompt.show { opacity: 1; visibility: visible; transform: translateX(-50%); }
+  #pet-prompt kbd {
+    display: grid; place-items: center; min-width: 22px; height: 22px; padding: 0 5px;
+    border-radius: 6px; background: var(--ink); color: #fffdf4;
+    font: 700 12px inherit;
+  }
+  body.gated #pet-prompt, body.hub #pet-prompt {
+    opacity: 0 !important; visibility: hidden !important;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #owner-pick, #owner-pick .sheet, #owner-pick-list button,
+    #pet-feed, #pet-feed .sheet, #pet-feed-list button, #pet-prompt { transition-duration: .01ms; }
   }
 
   #loading {
@@ -2493,6 +2571,31 @@
     <div class="sub">Pick a look. You can swap it later in the friend hub.</div>
     <div id="introduce-grid" class="grid" role="radiogroup" aria-labelledby="introduce-title"></div>
     <button type="button" id="introduce-go" class="play">That's them</button>
+  </div>
+</div>
+
+<!-- Standing in front of a pet in follow mode: press F to give it something. -->
+<div id="pet-prompt" aria-hidden="true"><kbd>F</kbd><span id="pet-prompt-text"></span></div>
+
+<!-- Who is this pet for? Shown when a pet is bought, and from the Pets tray to move one. -->
+<div id="owner-pick" aria-hidden="true">
+  <div class="sheet paper" role="dialog" aria-modal="true" aria-labelledby="owner-pick-title">
+    <button class="close" id="owner-pick-close" aria-label="Close">✕</button>
+    <div class="who-pet"><span class="icon" id="owner-pick-icon"></span></div>
+    <h2 id="owner-pick-title">Who is this for?</h2>
+    <p class="blurb" id="owner-pick-sub">They will follow whoever you pick.</p>
+    <div id="owner-pick-list" role="radiogroup" aria-labelledby="owner-pick-title"></div>
+  </div>
+</div>
+
+<!-- The treats you can hand the pet you are standing in front of. -->
+<div id="pet-feed" aria-hidden="true">
+  <div class="sheet paper" role="dialog" aria-modal="true" aria-labelledby="pet-feed-title">
+    <button class="close" id="pet-feed-close" aria-label="Close">✕</button>
+    <div class="who-pet"><span class="icon" id="pet-feed-icon"></span></div>
+    <h2 id="pet-feed-title">Give them a treat</h2>
+    <p class="blurb" id="pet-feed-sub"></p>
+    <div id="pet-feed-list"></div>
   </div>
 </div>
 

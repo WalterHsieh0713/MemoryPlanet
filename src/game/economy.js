@@ -52,7 +52,7 @@
       { id: 'crown', name: 'Star Crowns', price: 90, icon: '👑', blurb: 'Royalty, every one of them.' }
     ]
   };
-  var EQUIP_KEY = { themes: 'theme', pets: 'pet', satellites: 'satellite', skins: 'skin' };
+  var EQUIP_KEY = { themes: 'theme', pets: 'pets', satellites: 'satellite', skins: 'skin' };
   // Kinds you are allowed to have none of. Themes and skins always have one equipped.
   var OPTIONAL = { pets: true, satellites: true };
 
@@ -151,7 +151,9 @@
     return pantry()[id] || 0;
   }
 
-  // Treats are consumable: each buy adds one to the pantry. Feeding takes one out.
+  // Treats are consumable: each buy adds one to the pantry. Feeding takes one out. Both ways
+  // of feeding go through the pantry -- the treats tray, and pressing F at a pet in follow
+  // mode, which buys one first if the jar is empty.
   function buyFood(id) {
     var item = find('food', id);
     if (!item) return { ok: false, reason: 'unknown' };
@@ -185,9 +187,35 @@
     return { ok: true, item: item };
   }
 
-  // `id` null puts a pet or satellite away; the two slots are independent, so putting one
-  // away leaves the other where it is.
-  function equip(kind, id) {
+  // Every owner's pet, keyed by 'player' or a person's id.
+  function petMap() {
+    var e = world().equipped;
+    if (!e.pets) e.pets = {};
+    return e.pets;
+  }
+
+  function petFor(owner) {
+    return petMap()[owner] || null;
+  }
+
+  // A pet is not a world-wide slot like a theme -- it belongs to somebody. `id` null puts
+  // that owner's pet away and leaves everyone else's alone.
+  function equipPet(id, owner) {
+    if (!owner) return false;
+    if (id !== null && !owns('pets', id)) return false;
+    var pets = petMap();
+    // One animal, one owner: giving it to somebody else takes it off whoever had it, rather
+    // than leaving the same dog walking at two people's heels.
+    Object.keys(pets).forEach(function (who) { if (pets[who] === id) delete pets[who]; });
+    if (id === null) delete pets[owner]; else pets[owner] = id;
+    MI.store.save();
+    return true;
+  }
+
+  // `id` null puts a pet or satellite away; the slots are independent, so putting one
+  // away leaves the others where they are.
+  function equip(kind, id, owner) {
+    if (kind === 'pets') return equipPet(id, owner);
     if (id === null ? !OPTIONAL[kind] : !owns(kind, id)) return false;
     world().equipped[EQUIP_KEY[kind]] = id;
     MI.store.save();
@@ -198,17 +226,20 @@
     return world().equipped[EQUIP_KEY[kind]];
   }
 
-  // Pets you can feed, the one currently out first so the pantry picker can put them
-  // at the front of the row without the UI re-sorting the catalog itself.
+  // Every pet currently at somebody's heels, as { owner, id, item }. The world is the only
+  // place that knows where they are standing; this is just who is out.
+  function petsOut() {
+    var pets = petMap();
+    return Object.keys(pets).map(function (owner) {
+      return { owner: owner, id: pets[owner], item: find('pets', pets[owner]) };
+    }).filter(function (row) { return !!row.item; });
+  }
+
+  // The pets you can feed: the ones actually out in the world, since a pet still in the
+  // shop is not standing anywhere to be handed anything. Each row carries the owner, so the
+  // picker can say whose animal it is when two people both have one.
   function petsForFeed() {
-    var out = equipped('pets');
-    return CATALOG.pets.filter(function (item) {
-      return owns('pets', item.id);
-    }).sort(function (a, b) {
-      if (a.id === out) return -1;
-      if (b.id === out) return 1;
-      return 0;
-    });
+    return petsOut();
   }
 
   MI.economy = {
@@ -226,6 +257,8 @@
     pantry: pantry,
     equip: equip,
     equipped: equipped,
+    petFor: petFor,
+    petsOut: petsOut,
     petsForFeed: petsForFeed,
     dayKey: dayKey
   };

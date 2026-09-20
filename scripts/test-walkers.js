@@ -144,5 +144,51 @@ walkers.makeWalkerPair(model, function () { return new THREE.Group(); }).then(fu
   // Leaving to travel: it eases back to the rest place beside the building.
   for (var g = 0; g < 600; g++) walkers.stepSpot(walker, 1 / 60, { dwell: false, rest: { x: 0.3, z: 0 }, blocked: core });
   assert(Math.abs(walker.spot.x - 0.3) < 1e-6 && Math.abs(walker.spot.z) < 1e-6, 'on the road it walks beside the building');
+  // --- Following an owner -----------------------------------------------------------------
+  // A pet keeps station near whoever it belongs to: close enough and it stands, further and
+  // it walks, a long way behind and it runs to catch up. Gaps are in tile-widths so one set
+  // of numbers holds on every planet size and in both views.
+  assert.strictEqual(walkers.followGait(0.2, false), 'hold', 'right beside its owner it stands');
+  assert.strictEqual(walkers.followGait(1.5, false), 'walk', 'a little way back it walks');
+  assert.strictEqual(walkers.followGait(6, false), 'run', 'a long way back it runs');
+
+  // Hysteresis: without it a pet jitters on the spot, starting and stopping every time its
+  // owner drifts a hair across the line. Once moving it closes right up before it stops.
+  var justOutside = walkers.FOLLOW_HEEL + 0.01;
+  assert.strictEqual(walkers.followGait(justOutside, false), 'walk',
+    'standing still, a gap past the heel sets it off');
+  assert.strictEqual(walkers.followGait(justOutside, true), 'walk',
+    'and already moving it keeps going');
+  assert.strictEqual(walkers.followGait(walkers.FOLLOW_HEEL * 0.4, true), 'hold',
+    'it only stops once it has properly caught up');
+
+  // Which way is my owner? On the island that is a straight line, but on the planet a pet
+  // walks the surface, so the direction has to be TANGENT where the pet is standing -- the
+  // straight line to its owner points through the ground.
+  var here = new THREE.Vector3(0, 1, 0);
+  var there = new THREE.Vector3(1, 1, 0).normalize();
+  var aim = walkers.followTangent(here, there);
+  assert(aim, 'there is a way to walk toward an owner further round the planet');
+  assert(Math.abs(aim.length() - 1) < 1e-9, 'the heading is a unit vector');
+  assert(Math.abs(aim.dot(here)) < 1e-9, 'and lies flat on the surface, not through it');
+  // Following it must actually close the gap.
+  var before = here.angleTo(there);
+  var after = here.clone().addScaledVector(aim, 0.01).normalize().angleTo(there);
+  assert(after < before, 'and walking along it gets the pet closer, ' + after + ' < ' + before);
+  assert(walkers.followTangent(here, here.clone()) === null,
+    'standing on your owner there is no way to walk toward them');
+
+  // Eating stops everything else: a pet handed a carrot stays where it is and chews, however
+  // far its owner wanders off, and picks the follow back up when it has finished.
+  var fed = {};
+  walkers.feed(fed, 5);
+  assert.strictEqual(walkers.petGait(fed, 99, 0), 'eat', 'a fed pet eats, even far from its owner');
+  for (var e = 0; e < 60 * 4; e++) walkers.petGait(fed, 99, 1 / 60);
+  assert.strictEqual(walkers.petGait(fed, 99, 0), 'eat', 'still eating after four of its five seconds');
+  for (var e2 = 0; e2 < 60 * 2; e2++) walkers.petGait(fed, 99, 1 / 60);
+  assert.strictEqual(walkers.petGait(fed, 99, 0), 'run', 'and then hurries back to its owner');
+  // An unfed pet is just following.
+  assert.strictEqual(walkers.petGait({}, 0.1, 1 / 60), 'hold', 'a pet nobody fed just keeps station');
+
   console.log('--- walker checks passed ---');
 }).catch(function (err) { console.error(err); process.exitCode = 1; });

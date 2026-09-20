@@ -56,6 +56,10 @@
       'galaxy-card', 'galaxy-card-meta', 'galaxy-delete', 'galaxy-tools',
       'galaxy-edit', 'galaxy-left', 'galaxy-right',
       'galaxy-new',
+      'owner-pick', 'owner-pick-close', 'owner-pick-icon', 'owner-pick-title',
+      'owner-pick-sub', 'owner-pick-list',
+      'pet-prompt', 'pet-prompt-text', 'pet-feed', 'pet-feed-close', 'pet-feed-icon',
+      'pet-feed-title', 'pet-feed-sub', 'pet-feed-list',
       'ship-card', 'ship-close', 'ship-flag', 'ship-name', 'ship-ask', 'ship-bar', 'ship-fill',
       'ship-count', 'ship-claim',
       'hub-tip', 'hub-tip-sub',
@@ -1199,25 +1203,37 @@
       });
       return;
     }
-    var equippedId = MI.economy.equipped(kind);
+    var equippedId = kind === 'pets' ? null : MI.economy.equipped(kind);
     ownedCatalog(kind).forEach(function (item) {
       var btn = document.createElement('button');
       btn.type = 'button';
-      var selected = item.id === equippedId;
-      var action = selected && kind !== 'themes' ? 'Put away ' : 'Use ';
-      btn.title = action + item.name;
-      btn.setAttribute('aria-label', action + item.name);
+      // A pet is "out" if anybody is walking it, and clicking it asks whose it should be
+      // rather than toggling a slot the world no longer has.
+      var owner = kind === 'pets' ? petOwnerOf(item.id) : null;
+      var selected = kind === 'pets' ? !!owner : item.id === equippedId;
+      var action = kind === 'pets'
+        ? (owner ? 'With ' + ownerName(owner) + ' — give to somebody else' : 'Give ' + item.name + ' to somebody')
+        : ((selected && kind !== 'themes' ? 'Put away ' : 'Use ') + item.name);
+      btn.title = action;
+      btn.setAttribute('aria-label', action);
       btn.setAttribute('aria-pressed', String(selected));
       btn.dataset.trayKind = kind;
       btn.dataset.itemId = item.id;
       if (kind === 'themes') btn.style.background = themeFill(item.id);
       else btn.textContent = item.icon;
       btn.addEventListener('click', function () {
+        if (kind === 'pets') { openOwnerPicker(item); return; }
         MI.app.equip(kind, selected && kind !== 'themes' ? null : item.id);
         renderThemeTray();
       });
       container.appendChild(btn);
     });
+  }
+
+  // Whose pet is this one, if anybody's.
+  function petOwnerOf(petId) {
+    var out = MI.economy.petsOut().filter(function (row) { return row.id === petId; })[0];
+    return out ? out.owner : null;
   }
 
   function trayIcon(section) {
@@ -2093,16 +2109,34 @@
   }
 
   var thoughtId = null;
+  var thoughtPersonId = null;
 
   function hideThought() {
     thoughtId = null;
+    thoughtPersonId = null;
     if (!el.thought) return;
     el.thought.classList.remove('show');
     el.thought.setAttribute('aria-hidden', 'true');
   }
 
+  function latestMemoryWith(personId) {
+    if (!personId) return null;
+    var list = memoriesWithPerson(MI.store.get(), personId);
+    return list.length ? list[0] : null;
+  }
+
+  function showPersonMemory(personId, pos) {
+    var memory = latestMemoryWith(personId);
+    if (!memory || !memory.placement) { hideThought(); return false; }
+    thoughtPersonId = personId;
+    MI.world.highlightSlot(memory.placement.slot, { soft: true });
+    if (pos) showThought(memory, pos);
+    return true;
+  }
+
   function showThought(memory, pos) {
-    if (!el.thought || !memory || !pos || overlaysOpen()) { hideThought(); return; }
+    if (!el.thought || !memory || !pos) { hideThought(); return; }
+    if (overlaysOpen() && !thoughtPersonId) { hideThought(); return; }
     if (thoughtId !== memory.id) {
       thoughtId = memory.id;
       el['thought-title'].textContent = memoryReminder(memory);
@@ -2118,6 +2152,7 @@
   function buy(kind, item) {
     var result = MI.economy.buy(kind, item.id);
     if (!result.ok) return;
+    if (kind === 'pets') { openOwnerPicker(item); return; } // a pet has to belong to somebody
     MI.app.equip(kind, item.id); // a new unlock goes straight on
     refreshWallet();
     renderShop();
@@ -2138,10 +2173,165 @@
 
   var feedItem = null;
   var feedPetId = null;
+  var feedOwner = null; // whose pet the overlay is about to feed
   var feedBusy = false;
   var feedDragging = false;
   var feedResize = null;
   var feedTimer = null;
+
+  // --- Standing in front of a pet ----------------------------------------------------------
+  // In follow mode, looking almost straight at one of the animals puts up a nudge; F opens
+  // the treats you can hand it. The treats tray is still there for everywhere else -- this
+  // is the close-up way, where the food lands in the world beside the pet that eats it.
+  var lookedPetOwner = null;
+
+  function showPetPrompt(owner, petId) {
+    lookedPetOwner = owner;
+    var pet = petId && MI.economy.find('pets', petId);
+    var can = !!owner && !el['pet-feed'].classList.contains('open');
+    el['pet-prompt-text'].textContent = pet
+      ? 'Give ' + pet.name + ' a treat' : 'Give them a treat';
+    el['pet-prompt'].classList.toggle('show', can);
+    el['pet-prompt'].setAttribute('aria-hidden', String(!can));
+    if (!owner) closePetFeed();
+  }
+
+  function openPetFeed() {
+    var owner = lookedPetOwner;
+    if (!owner) return;
+    var petId = MI.economy.petFor(owner);
+    var pet = petId && MI.economy.find('pets', petId);
+    if (!pet) return;
+    el['pet-feed-icon'].textContent = pet.icon;
+    el['pet-feed-title'].textContent = 'Give ' + pet.name + ' a treat';
+    el['pet-feed-sub'].textContent = ownerName(owner) === 'You'
+      ? 'Your ' + pet.name.toLowerCase() + '. They will stop and eat it.'
+      : ownerName(owner) + '’s ' + pet.name.toLowerCase() + '. They will stop and eat it.';
+    el['pet-feed-list'].innerHTML = '';
+
+    MI.economy.CATALOG.food.forEach(function (item) {
+      var held = MI.economy.stock(item.id);
+      var afford = held > 0 || MI.economy.balance() >= item.price;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.disabled = !afford;
+      var img = document.createElement('img');
+      img.src = treatPreview(item.id);
+      img.alt = '';
+      var name = document.createElement('span');
+      name.textContent = item.name;
+      var tag = document.createElement('span');
+      // One you already bought costs nothing to hand over; otherwise this buys it.
+      tag.className = held > 0 ? 'have' : 'cost';
+      tag.textContent = held > 0 ? '×' + held : item.price + '◆';
+      btn.appendChild(img);
+      btn.appendChild(name);
+      btn.appendChild(tag);
+      btn.title = held > 0 ? 'Give them one of yours' : 'Buy for ' + item.price + ' and give it to them';
+      btn.addEventListener('click', function () { givePetTreat(item, owner); });
+      el['pet-feed-list'].appendChild(btn);
+    });
+
+    el['pet-feed'].classList.add('open');
+    el['pet-feed'].setAttribute('aria-hidden', 'false');
+    el['pet-prompt'].classList.remove('show');
+    var first = el['pet-feed-list'].querySelector('button:not(:disabled)');
+    if (first) first.focus();
+  }
+
+  function closePetFeed() {
+    if (!el['pet-feed'].classList.contains('open')) return;
+    el['pet-feed'].classList.remove('open');
+    el['pet-feed'].setAttribute('aria-hidden', 'true');
+  }
+
+  function givePetTreat(item, owner) {
+    var fed = MI.app.buyAndFeedPet(item.id, owner);
+    if (!fed.ok) {
+      toast(item.icon, fed.reason === 'short' ? 'Not enough coins' : 'Nobody to feed',
+        fed.reason === 'short' ? 'Write a memory to earn some more.' : 'They wandered off.',
+        0, 2400);
+      return;
+    }
+    closePetFeed();
+    refreshStats();
+    renderThemeTray();
+    var pet = MI.economy.find('pets', MI.economy.petFor(owner));
+    toast(item.icon, (pet ? pet.name : 'They') + ' loved it',
+      'Munching away for a moment.', 0, 2400);
+  }
+
+  // --- Who is this pet for? ----------------------------------------------------------------
+  // A pet belongs to somebody and walks at their heels, so buying one asks whose it is
+  // rather than quietly making it yours. Also the way to move a pet later, from the Pets
+  // tray -- otherwise a mis-tap would be permanent.
+  function openOwnerPicker(item) {
+    if (!item) return;
+    var world = MI.store.get();
+    el['owner-pick-icon'].textContent = item.icon || '🐾';
+    el['owner-pick-title'].textContent = 'Who is ' + item.name + ' for?';
+    el['owner-pick-list'].innerHTML = '';
+
+    var rows = [{ id: 'player', name: 'You', color: null }].concat(
+      (world.people || []).map(function (person) {
+        return {
+          id: person.id, name: person.name,
+          color: person.appearance && person.appearance.color
+        };
+      }));
+
+    rows.forEach(function (row) {
+      var has = MI.economy.petFor(row.id);
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', String(has === item.id));
+      var dot = document.createElement('span');
+      dot.className = 'dot';
+      if (row.color !== null && row.color !== undefined) {
+        dot.style.background = '#' + row.color.toString(16).padStart(6, '0');
+      }
+      var name = document.createElement('span');
+      name.textContent = row.name;
+      btn.appendChild(dot);
+      btn.appendChild(name);
+      // Say what they already have, so giving somebody a second pet is a visible swap
+      // rather than a silent one.
+      if (has) {
+        var held = MI.economy.find('pets', has);
+        var note = document.createElement('span');
+        note.className = 'has';
+        note.textContent = has === item.id ? 'has this one' : 'swaps ' + (held ? held.name : 'their pet');
+        btn.appendChild(note);
+      }
+      btn.addEventListener('click', function () {
+        MI.app.equip('pets', item.id, row.id);
+        closeOwnerPicker();
+        renderThemeTray();
+        renderShop();
+        toast(item.icon, item.name + ' is ' + (row.id === 'player' ? 'yours' : row.name + '’s'),
+          'They will follow ' + (row.id === 'player' ? 'you' : row.name) + ' around.', 0, 2600);
+      });
+      el['owner-pick-list'].appendChild(btn);
+    });
+
+    el['owner-pick'].classList.add('open');
+    el['owner-pick'].setAttribute('aria-hidden', 'false');
+    var first = el['owner-pick-list'].querySelector('button');
+    if (first) first.focus();
+  }
+
+  function closeOwnerPicker() {
+    el['owner-pick'].classList.remove('open');
+    el['owner-pick'].setAttribute('aria-hidden', 'true');
+  }
+
+  // 'player' or a person's id -> the name to show beside their pet.
+  function ownerName(owner) {
+    if (owner === 'player') return 'You';
+    var who = MI.store.get().people.filter(function (p) { return p.id === owner; })[0];
+    return who ? who.name : 'A friend';
+  }
 
   function treatPreview(id) {
     return 'assets/standalone/food/previews/' + id + '.png';
@@ -2154,6 +2344,7 @@
     feedItem = item;
     feedBusy = false;
     var pets = MI.economy.petsForFeed();
+    feedOwner = pets[0] ? pets[0].owner : null;
     feedPetId = pets[0] ? pets[0].id : null;
     paintFeedPick();
     el.feed.dataset.step = 'pick';
@@ -2178,6 +2369,7 @@
     }
     feedItem = null;
     feedPetId = null;
+    feedOwner = null;
     feedBusy = false;
     renderThemeTray();
     renderShop();
@@ -2190,21 +2382,24 @@
     el['feed-treat-img'].alt = item ? item.name : '';
     el['feed-treat-name'].textContent = item ? item.name : 'Treat';
     el['feed-treat-count'].textContent = n === 1 ? 'One in the pantry' : n + ' in the pantry';
+    // Every pet that is out, badged with whose it is -- two friends can walk the same kind
+    // of animal, so the owner is what tells them apart, not the breed.
     var pets = MI.economy.petsForFeed();
-    var out = MI.economy.equipped('pets');
     el['feed-pets'].innerHTML = '';
-    pets.forEach(function (pet) {
+    pets.forEach(function (row) {
       var card = document.createElement('button');
       card.type = 'button';
-      card.className = 'card' + (pet.id === out ? ' out' : '');
+      card.className = 'card out';
       card.setAttribute('role', 'radio');
-      card.setAttribute('aria-checked', String(pet.id === feedPetId));
-      card.innerHTML = (pet.id === out ? '<span class="badge">out</span>' : '') +
+      card.setAttribute('aria-checked', String(row.owner === feedOwner));
+      card.innerHTML = '<span class="badge"></span>' +
         '<span class="icon"></span><span class="name"></span>';
-      card.querySelector('.icon').textContent = pet.icon;
-      card.querySelector('.name').textContent = pet.name;
+      card.querySelector('.badge').textContent = ownerName(row.owner);
+      card.querySelector('.icon').textContent = row.item.icon;
+      card.querySelector('.name').textContent = row.item.name;
       card.addEventListener('click', function () {
-        feedPetId = pet.id;
+        feedOwner = row.owner;
+        feedPetId = row.id;
         paintFeedPick();
       });
       el['feed-pets'].appendChild(card);
@@ -2213,12 +2408,12 @@
     el['feed-empty'].hidden = !none;
     el['feed-shop'].hidden = !none;
     el['feed-go'].hidden = none;
-    el['feed-go'].disabled = none || !feedPetId || n < 1;
+    el['feed-go'].disabled = none || !feedOwner || n < 1;
     el['feed-pick-sub'].hidden = none;
   }
 
   function enterFeedStage() {
-    if (!feedItem || !feedPetId || feedBusy) return;
+    if (!feedItem || !feedOwner || feedBusy) return;
     if (MI.economy.stock(feedItem.id) < 1) return;
     el.feed.dataset.step = 'stage';
     el['feed-stage'].classList.remove('yum');
@@ -2308,9 +2503,11 @@
   }
 
   function dropFeed() {
-    if (feedBusy || !feedItem || !feedPetId) return;
+    if (feedBusy || !feedItem || !feedOwner) return;
     var pet = MI.economy.find('pets', feedPetId);
-    var fed = MI.app.feedPet(feedItem.id, feedPetId);
+    // Fed by OWNER: the overlay is about one animal standing in the world, and two friends
+    // may both walk a fox.
+    var fed = MI.app.feedPet(feedItem.id, feedOwner);
     if (!fed.ok) {
       toast(feedItem.icon,
         fed.reason === 'no-pet' ? 'Nobody to feed' : 'None left',
@@ -3147,7 +3344,13 @@
     el['ground-btn'].addEventListener('click', toggleGroundView);
     MI.world.onViewChange(syncGroundButton);
     MI.world.onGroundView(syncGroundButton);
+    MI.world.onLookPet(showPetPrompt);
+    el['pet-feed-close'].addEventListener('click', closePetFeed);
+    el['pet-feed'].addEventListener('click', function (e) {
+      if (e.target === el['pet-feed']) closePetFeed(); // the dimmed surround
+    });
     MI.world.onLookMemory(function (memory, pos) {
+      if (thoughtPersonId) return; // hovering a friend owns the bubble until the pointer leaves
       if (memory && pos) showThought(memory, pos);
       else hideThought();
     });
@@ -3197,6 +3400,21 @@
       if (e.target === el.shop) closeShop(); // a click on the backdrop, not the sheet
     });
     el['feed-close'].addEventListener('click', closeFeed);
+    window.addEventListener('keydown', function (e) {
+      if (e.key !== 'f' && e.key !== 'F') return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      var el2 = document.activeElement;
+      // F is a letter before it is a shortcut: never steal it from the journal.
+      if (el2 && (el2.tagName === 'INPUT' || el2.tagName === 'TEXTAREA' || el2.isContentEditable)) return;
+      if (el['pet-feed'].classList.contains('open')) { closePetFeed(); return; }
+      if (!lookedPetOwner) return;
+      e.preventDefault();
+      openPetFeed();
+    });
+    el['owner-pick-close'].addEventListener('click', closeOwnerPicker);
+    el['owner-pick'].addEventListener('click', function (e) {
+      if (e.target === el['owner-pick']) closeOwnerPicker(); // the dimmed surround
+    });
     el.feed.addEventListener('click', function (e) {
       if (e.target === el.feed) closeFeed();
     });
@@ -3236,6 +3454,8 @@
       }
       if (e.key !== 'Escape') return;
       if (gateBusy) return;
+      if (el['pet-feed'].classList.contains('open')) { closePetFeed(); return; }
+      if (el['owner-pick'].classList.contains('open')) { closeOwnerPicker(); return; }
       if (el.gate.classList.contains('open')) {
         if (MI.store.listJournals().length) el.gate.classList.remove('open');
         return;
@@ -3290,8 +3510,16 @@
 
     // Pointer cursor only over tiles that open something, and a light mark under it. When
     // the pointer leaves, the open entry's own mark comes back.
-    MI.world.onHover(function (slot) {
+    MI.world.onHover(function (slot, extra) {
       if (document.body.classList.contains('gated')) { hideHubTip(); return false; }
+      if (extra && extra.personId) {
+        hideHubTip();
+        return showPersonMemory(extra.personId, extra.screen);
+      }
+      if (thoughtPersonId) {
+        thoughtPersonId = null;
+        if (!MI.world.isGroundView()) hideThought();
+      }
       if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
         if (!MI.world.isGroundView()) MI.world.highlightSlot(slot, { soft: true });
         showHubTip(MI.world.isGroundView());
