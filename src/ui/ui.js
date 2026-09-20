@@ -36,6 +36,7 @@
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'shop-blurb',
       'ground-btn', 'picker', 'picker-grid', 'picker-play',
+      'introduce', 'introduce-grid', 'introduce-go', 'introduce-title',
       'character-btn', 'theme-rack',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date',
@@ -1044,6 +1045,9 @@
       bump(el.wallet, 'bump');
       bump(el['book-btn'], 'nudge'); // the book just got another page
       floatCoins(event.reward.total);
+      if (event.needsLook) queueIntroduce(event.arrived);
+    } else if (event.type === 'edited') {
+      if (event.needsLook) queueIntroduce(event.arrived);
     } else if (event.type === 'grew') {
       syncViewButton(); // growing always returns to the planet view
       refreshStats();
@@ -1438,6 +1442,84 @@
   function closePicker() {
     el.picker.classList.remove('open');
     if (pickerOpener && pickerOpener.focus) pickerOpener.focus();
+  }
+
+  // --- New-friend look picker -----------------------------------------------------------
+  // Writing a name that is not already a person creates them. They wait off-planet until
+  // this sheet stamps a Mini Character look, then spawn. Demo seeds skip it.
+
+  var introduceQueue = [];
+  var introducePerson = null;
+  var introduceChoice = null;
+  var introduceTimer = null;
+  var introduceBusy = false;
+
+  function unusedLookId(exceptPersonId) {
+    var world = MI.store.get();
+    var taken = {};
+    var yours = world.player && MI.world.player.get && MI.world.player.get(world.player.character);
+    if (yours) taken[yours.model] = true;
+    (world.people || []).forEach(function (person) {
+      if (person.id === exceptPersonId) return;
+      var model = person.appearance && person.appearance.model;
+      if (model) taken[model] = true;
+    });
+    var looks = MI.world.characters();
+    for (var i = 0; i < looks.length; i++) {
+      if (!taken[looks[i].model]) return looks[i].id;
+    }
+    return looks[0] ? looks[0].id : null;
+  }
+
+  function pickIntroduceLook(id) {
+    introduceChoice = id;
+    fillAvatarGrid(el['introduce-grid'], introduceChoice, pickIntroduceLook);
+  }
+
+  function queueIntroduce(people) {
+    (people || []).forEach(function (person) {
+      if (!person || !person.id) return;
+      introduceQueue.push({ id: person.id, name: person.name });
+    });
+    if (introducePerson || introduceTimer) return;
+    introduceTimer = setTimeout(function () {
+      introduceTimer = null;
+      showNextIntroduce();
+    }, 520);
+  }
+
+  function showNextIntroduce() {
+    if (introducePerson || introduceBusy) return;
+    var next = introduceQueue.shift();
+    if (!next) return;
+    var world = MI.store.get();
+    var person = world.people.filter(function (p) { return p.id === next.id; })[0];
+    if (!person) { showNextIntroduce(); return; }
+    introducePerson = { id: person.id, name: person.name };
+    introduceChoice = unusedLookId(person.id);
+    el['introduce-title'].textContent = 'What does ' + person.name + ' look like?';
+    fillAvatarGrid(el['introduce-grid'], introduceChoice, pickIntroduceLook);
+    el.toast.classList.remove('show');
+    el.introduce.classList.add('open');
+    el.introduce.setAttribute('aria-hidden', 'false');
+    el['introduce-go'].focus();
+  }
+
+  function confirmIntroduce() {
+    if (!introducePerson || introduceBusy) return;
+    introduceBusy = true;
+    var id = introducePerson.id;
+    var lookId = introduceChoice;
+    introducePerson = null;
+    el.introduce.classList.remove('open');
+    el.introduce.setAttribute('aria-hidden', 'true');
+    MI.app.dressPerson(id, lookId).then(function () {
+      introduceBusy = false;
+      showNextIntroduce();
+    }, function () {
+      introduceBusy = false;
+      showNextIntroduce();
+    });
   }
 
   function closeHubCard() {
@@ -2847,8 +2929,10 @@
       setBusy(false);
       if (!result) { openBook(); return; } // nothing saved: leave the rewrite on screen
       stopEditing();
-      var said = describeEdit(result);
-      toast(said[0], said[1], said[2], 0, 4200);
+      if (!result.needsLook) {
+        var said = describeEdit(result);
+        toast(said[0], said[1], said[2], 0, 4200);
+      }
       refreshStats();
       renderBook();
       showDetail(result.memory);
@@ -2906,7 +2990,7 @@
         return;
       }
       var text = DEMO_ENTRIES[index++];
-      MI.app.addEntry(text, { focus: index === DEMO_ENTRIES.length }).then(function () {
+      MI.app.addEntry(text, { focus: index === DEMO_ENTRIES.length, pickLooks: false }).then(function () {
         refreshStats();
         setTimeout(next, 260);
       });
@@ -3102,6 +3186,10 @@
     el.picker.addEventListener('click', function (e) {
       if (e.target === el.picker) closePicker(); // the backdrop, not the sheet
     });
+    el['introduce-go'].addEventListener('click', confirmIntroduce);
+    el.introduce.addEventListener('click', function (e) {
+      if (e.target === el.introduce) confirmIntroduce();
+    });
     syncGroundButton();
     el['shop-btn'].addEventListener('click', openShop);
     el['shop-close'].addEventListener('click', closeShop);
@@ -3162,6 +3250,7 @@
         }
         return;
       }
+      if (el.introduce && el.introduce.classList.contains('open')) { confirmIntroduce(); return; }
       if (el.picker.classList.contains('open')) { closePicker(); return; }
       if (el.feed && el.feed.classList.contains('open')) { closeFeed(); return; }
       if (el['hub-card'] && el['hub-card'].classList.contains('open')) { closeHubCard(); return; }
