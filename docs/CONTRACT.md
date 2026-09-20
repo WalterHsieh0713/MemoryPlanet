@@ -63,14 +63,14 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 
 ## MI.economy  (`src/game/economy.js`)
 - `CATALOG = { themes, pets, satellites, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
-- **pets** walk on the land (GLB models, `src/world/pets.js`); **satellites** orbit in the sky (procedural, `src/world/cosmetics.js`). Separate slots — a world can have one of each.
+- **pets** walk on the land (GLB models, `src/world/walkers.js`); **satellites** orbit in the sky (procedural, `src/world/cosmetics.js`). Separate slots — a world can have one of each. Journal people also roam as residents using the walker models.
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
 - `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`
 
 ## MI.world  (owners: A = scene/planet/controls, B = spawn/assets/characters)
 - `init(canvasEl, { frequency, theme, pet, satellite, character, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
 - `setPlanet(frequency, { animate }) -> Promise` — swap to that grid (planet group scaled by frequency/10, so tiles keep their world size); clears props, caller replays the remapped world. `loadGrid(f)`, `currentTiles()`, `planetInfo()`
-- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/pets.js` (pets).
+- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/walkers.js` (pets and residents).
   - A **satellite** lives in the scene, not on the planet: `animateSatellite` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
   - A **pet** stands on the tiles, so it is parented to the planet (sphere view) and to the island group (flat view), one wandering instance each. `updatePet` steps it tile to tile and is skipped mid-transition.
 - `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`, `spawnHouse(house, { animate })`
@@ -84,7 +84,7 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - `highlightSlot(slot, { soft })` / `clearHighlight()` / `highlightedSlot()` — marks one tile: a vertex tint on the planet, a gold rim and a lift on the island. Survives theme changes and the fold.
 - `onHover(cb(slot | null) -> bool)` — one raycast per frame; return true for tiles that open something and the cursor becomes a pointer.
-- **Planned:** wandering people (walkers) on person-linked roads; clicking one shows who
+- **Planned:** person-linked roads and clicking a resident to show who
   they are and the memories they appear in.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
   `slotToDir(slot, homeDir) -> [x,y,z]`, `orientToSurface(object3d, dir, rotY, height)`,

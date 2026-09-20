@@ -1,7 +1,7 @@
 // MI.world.cosmetics — satellites and character skins, built from THREE primitives the same
 // way world.js builds its minifigure people, so they need no asset packs and match the toy
 // style. Satellites are the ones that orbit in the sky; the pets that walk on the land are
-// GLB models and live in src/world/pets.js instead.
+// GLB models and live in src/world/walkers.js instead.
 // Pure builders: no scene state. world.js decides where they go; src/game/economy.js decides
 // what they cost.
 (function () {

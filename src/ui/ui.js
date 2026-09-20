@@ -970,7 +970,7 @@
 
   function syncGroundButton() {
     var onGround = MI.world.isGroundView();
-    el['ground-label'].textContent = onGround ? 'back up' : 'ground view';
+    el['ground-label'].textContent = onGround ? 'back up' : 'follow me';
     el['ground-icon'].textContent = onGround ? '🔍' : '👣';
   }
 

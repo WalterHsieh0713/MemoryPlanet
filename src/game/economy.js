@@ -4,7 +4,7 @@
 (function () {
   window.MI = window.MI || {};
 
-  // Pets are the ones that walk on the land (ids match src/world/pets.js); satellites are
+  // Pets are the ones that walk on the land (ids match src/world/walkers.js); satellites are
   // the ones that orbit in the sky (ids match src/world/cosmetics.js, as themes and skins
   // do). They are bought and equipped separately and will grow apart from here — keep new
   // kinds in whichever list matches where the thing actually lives.
@@ -16,7 +16,15 @@
       { id: 'starlight', name: 'Starlight', price: 140, icon: '🌌', blurb: 'A violet world under a sky full of stars.' }
     ],
     pets: [
-      { id: 'dog', name: 'Dog', price: 50, icon: '🐶', blurb: 'Trots around your island on its own four paws.' }
+      // Land walkers from the Kenney Cube Pets pack.
+      { id: 'bunny', name: 'Bunny', price: 35, icon: '🐰', blurb: 'Hops from tile to tile, then sits very still.' },
+      { id: 'pig', name: 'Pig', price: 45, icon: '🐷', blurb: 'Snuffles along the paths, in no particular hurry.' },
+      { id: 'dog', name: 'Dog', price: 50, icon: '🐶', blurb: 'Trots around your island on its own four paws.' },
+      { id: 'fox', name: 'Fox', price: 60, icon: '🦊', blurb: 'Slips between the rooftops, pausing to look back.' },
+      { id: 'cow', name: 'Cow', price: 65, icon: '🐮', blurb: 'Ambles the fields and stops to consider the view.' },
+      { id: 'deer', name: 'Deer', price: 70, icon: '🦌', blurb: 'Steps carefully over the grass, always listening.' },
+      { id: 'lion', name: 'Lion', price: 95, icon: '🦁', blurb: 'Patrols the island like it owns the place.' },
+      { id: 'elephant', name: 'Elephant', price: 120, icon: '🐘', blurb: 'Plods the long way round, entirely unbothered.' }
     ],
     satellites: [
       { id: 'moonling', name: 'Moonling', price: 40, icon: '🌙', blurb: 'A sleepy little moon that circles your island.' },

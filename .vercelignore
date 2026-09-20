@@ -8,17 +8,16 @@ CLAUDE.md
 
 # Asset packs no code loads yet — kept out so deploys stay small. DELETE A LINE HERE the
 # moment code starts loading that pack, or it will 404 in production while working locally.
-# Currently loaded: kenney-hexagon-kit (buildings/terrain) and
-# assets/standalone/animals/cube-pets (the walking pets, src/world/pets.js) — note
-# that folder is deliberately NOT listed below, unlike its sibling categories.
+# Currently loaded: kenney-hexagon-kit (buildings/terrain), assets/standalone/animals/cube-pets
+# (walking pets) and assets/standalone/characters/mini-characters (residents and your avatar),
+# via src/world/walkers.js. Those sorted folders are deliberately absent below.
 assets/kenney_castle-kit/
 assets/kenney_cube-pets_1.0/
 assets/kenney_factory-kit_3.0/
 assets/kenney_fantasy-town-kit_2.0/
 assets/kenney_holiday-kit/
+assets/kenney_mini-characters/
 assets/kenney_pirate-kit/
-# assets/standalone/characters/ is deliberately absent: walk mode loads from there, and
-# the folder does not exist yet. Create it with a .glb and it deploys — do not add it here.
 assets/standalone/buildings/
 assets/standalone/decor/
 assets/standalone/holiday-decor/

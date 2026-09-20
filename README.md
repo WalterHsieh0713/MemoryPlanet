@@ -12,7 +12,7 @@ Open the journal with the rotating book labeled **Write a memory** on the left. 
 
 You start on a small 42-tile planet. Once half of it is land, it grows to the next size, up to 1002 tiles. Every memory earns shards (✦). You get more for big days, new friends and daily streaks, plus a bonus each time the planet grows. Spend shards in the **Shop** on themes, pets (they walk around your island), satellites (they orbit above it) and character skins.
 
-Your character lives on the planet. **WASD** walks them around in any view, so you can watch them wander the globe or the island from above. Press **ground view** to drop in behind them: the **wheel** zooms, holding the **middle mouse button** turns the camera, and **Esc** brings you back up.
+Your character lives on the planet. **WASD** walks them around in any view, so you can watch them wander the globe or the island from above. Press **follow me** to drop in behind them: the **wheel** zooms, holding the **middle mouse button** turns the camera, and **Esc** brings you back up.
 
 The 3D models are from Kenney's CC0 Hexagon Kit. The app loads Three.js r128 from the included local file and has no build step.
 

@@ -2,6 +2,35 @@
 
 Notable changes to Memory Planet, newest first.
 
+## Unreleased — residents and shared walkers
+
+### Added
+- **Land-walker pets** — eight choices in the separate Pets shop tab, in
+  `src/world/walkers.js`: bunny, pig, dog, fox, cow, deer, lion,
+  elephant), each a real GLB from `assets/standalone/animals/cube-pets/`, wandering tile to
+  tile on land in both the planet and island views. The models have no walk animation, so a
+  step is a position slide with a small hop.
+- **Residents** — people from journal memories now walk in planet and island views, using
+  stable models assigned from the 12 Kenney Mini Characters GLBs. The controllable avatar
+  uses models from the same pack and remains a permanent inhabitant in every view. Residents
+  share the pet walking logic and prefer the road route when it exists.
+  - Both packs are loaded per the repo's one-`LoadingManager`-per-pack rule, and both folders
+    were removed from `.vercelignore` in the same change.
+  - Residents come from saved memory people, with no shop tab or equip slot.
+
+### Notes for whoever touches this next
+- `RESIDENT_*_SCALE` is ~4.7x `PET_*_SCALE`, not 2x. The two packs are modelled at
+  very different raw sizes (mean height 0.72 against 1.71), so the constants are not
+  comparable numbers — don't tidy them toward each other.
+- A character's walkable set **includes the buildings a road runs through**. Memories land two
+  tiles apart, so a road segment is usually a single tile with a building either side:
+  counting only tiles carrying a road model left all 5 road tiles on a 9-memory world stranded
+  with no road neighbour, and the character could never take a step.
+- Characters step about every 3-5s and stand slightly to the side of a tile rather than dead
+  centre. Both matter: over half the road route is building tiles (6 of 11 on a 9-memory
+  world), so the first attempt — a 7-16s idle at the tile centre — spent most of its time
+  standing invisibly inside a house and read as broken.
+
 ## Unreleased — asset_packs_and_textures branch
 
 ### Added

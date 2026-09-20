@@ -5,7 +5,7 @@
 //
 // This module owns the avatar model and the movement maths and knows nothing about
 // world.js's state or MI.store: world.js hands it an `isLandAt` test and the camera's
-// tangent axes each frame, exactly as it does for src/world/pets.js.
+// tangent axes each frame, exactly as it does for src/world/walkers.js.
 //
 // Movement is continuous, not snapped to tiles. On the sphere a step ROTATES the position
 // vector about (pos x move): great-circle movement, so it never drifts off the unit sphere,
@@ -21,12 +21,11 @@
 // which is stable everywhere. `lastAxis`/`lastAngle` expose that rotation so world.js can
 // carry the ground camera along by it too, which is what keeps the two in step.
 //
-// Adding a character later is one line in CHARACTERS, once its .glb is in PACK.
+// Avatar choices map to the shared Mini Characters models in src/world/walkers.js.
 (function () {
   window.MI = window.MI || {};
   MI.world = MI.world || {};
 
-  var PACK = 'assets/standalone/characters/';
   // Tiles crossed per second. The caller turns this into world units by multiplying by
   // whatever a tile measures in ITS view (ctx.speed), because a tile's world size changes
   // with the planet's frequency and is different again on the island.
@@ -38,12 +37,12 @@
   // id, the name under the card in the picker, and the fallback minifigure's colour.
   // `file` is the .glb in PACK once one exists; null means "use the fallback".
   var CHARACTERS = [
-    { id: 'scout', name: 'Scout', color: 0xff9f68, file: null },
-    { id: 'sky', name: 'Sky', color: 0x7ec8e3, file: null },
-    { id: 'rose', name: 'Rose', color: 0xf7b7d2, file: null },
-    { id: 'fern', name: 'Fern', color: 0xa5d86e, file: null },
-    { id: 'iris', name: 'Iris', color: 0xc3a5f0, file: null },
-    { id: 'sunny', name: 'Sunny', color: 0xffd97d, file: null }
+    { id: 'scout', name: 'Scout', color: 0xff9f68, model: 'male-a' },
+    { id: 'sky', name: 'Sky', color: 0x7ec8e3, model: 'male-b' },
+    { id: 'rose', name: 'Rose', color: 0xf7b7d2, model: 'female-a' },
+    { id: 'fern', name: 'Fern', color: 0xa5d86e, model: 'female-b' },
+    { id: 'iris', name: 'Iris', color: 0xc3a5f0, model: 'female-c' },
+    { id: 'sunny', name: 'Sunny', color: 0xffd97d, model: 'male-c' }
   ];
 
   function list() {
@@ -69,35 +68,14 @@
   // Own LoadingManager, separate from the hexagon kit's — a different pack with its own
   // colormap, per CLAUDE.md's one-manager-per-pack rule.
 
-  var loader = null;
-  var templateCache = {};
-
-  function getLoader() {
-    if (!loader) loader = new THREE.GLTFLoader(new THREE.LoadingManager());
-    return loader;
-  }
-
   // `fallback` is world.js's makePersonModel, passed in rather than reached for, so this
   // module never depends on world.js internals. It is used both when a character has no
   // .glb yet and when one fails to load — the demo runs offline, so a missing model must
   // never leave you with no character at all (CLAUDE.md).
   function makeAvatar(id, fallback) {
     var character = get(id) || get(defaultId());
-    if (!character.file) return Promise.resolve(fallback(character.color));
-
-    if (!templateCache[character.id]) {
-      templateCache[character.id] = new Promise(function (resolve) {
-        getLoader().load(PACK + character.file, function (gltf) {
-          var group = gltf.scene;
-          group.traverse(function (node) {
-            if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
-          });
-          resolve(group);
-        }, undefined, function () { resolve(null); });
-      });
-    }
-    return templateCache[character.id].then(function (template) {
-      return template ? template.clone(true) : fallback(character.color);
+    return MI.world.walkers.makeModel(character.model).then(function (model) {
+      return model || fallback(character.color);
     });
   }
 

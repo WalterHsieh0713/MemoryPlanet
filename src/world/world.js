@@ -48,6 +48,13 @@
   var PET_SPHERE_SCALE = 0.07;
   var PET_FLAT_SCALE = 0.09;
 
+  // Characters render at twice a pet's on-screen height. These are NOT 2x the numbers above,
+  // and shouldn't be "tidied" to match them: the Mini Characters pack is modelled at about
+  // 0.42x the Cube Pets' raw size (mean height 0.72 against 1.71), so hitting a true 2x takes
+  // roughly 4.7x the constant. Measured from the packs' own bounding boxes.
+  var RESIDENT_SPHERE_SCALE = 0.33;
+  var RESIDENT_FLAT_SCALE = 0.43;
+
   var HEX_PACK = 'assets/kenney-hexagon-kit/';
   // The kit's tiles are 1.0 unit flat-to-flat; props are scaled to whatever the grid's real
   // tile spacing turns out to be, so changing the hexgrid frequency doesn't break the fit.
@@ -415,16 +422,33 @@
 
   function spawnPerson(person, options) {
     if (!state || !person || !person.placement) return Promise.resolve();
-    var opts = options || {};
-    var obj = makePersonModel(person.appearance && person.appearance.color);
-    var tile = MI.world.sphere.tile(person.placement.slot);
-    var scale = (tile ? tileScale(tile) : state.spacing) * 0.55;
-    prepareProp(obj, person.placement, scale, person.placement.rotY || 0);
-    obj.translateX(state.spacing * 0.3); // stand beside the building, not inside it
-    obj.userData.tag = { type: 'person', id: person.id, slot: person.placement.slot };
-    state.props.add(obj);
-    if (opts.animate !== false) popIn(obj);
-    return Promise.resolve(obj);
+    var currentState = state;
+    var modelId = MI.world.walkers.residentModelFor(person);
+    person.appearance = person.appearance || {};
+    if (person.appearance.model !== modelId) {
+      person.appearance.model = modelId;
+      MI.store.save();
+    }
+    return MI.world.walkers.makeWalkerPair(modelId, function () {
+      return makePersonModel(person.appearance && person.appearance.color);
+    }).then(function (pair) {
+      if (!pair || state !== currentState) return;
+      var previous = state.residentWalkers[person.id];
+      if (previous) {
+        state.residentGroup.remove(previous.sphere.group);
+        state.flatGroup.remove(previous.flat.group);
+      }
+      pair.person = person;
+      pair.sphere.tileId = pair.sphere.targetId = person.placement.slot;
+      pair.flat.tileId = pair.flat.targetId = person.placement.slot;
+      pair.sphere.group.userData.tag = { type: 'person', id: person.id, slot: person.placement.slot };
+      pair.flat.group.userData.tag = pair.sphere.group.userData.tag;
+      state.residentWalkers[person.id] = pair;
+      state.residentGroup.add(pair.sphere.group);
+      if (state.flatMode && state.island) state.flatGroup.add(pair.flat.group);
+      if (!options || options.animate !== false) popIn(pair.sphere.group);
+      return pair;
+    });
   }
 
   // Rotate the planet under the camera so `slot` faces the viewer. Meaningless in flat mode,
@@ -632,6 +656,7 @@
 
   function rebuildRoads() {
     if (!state) return;
+    state.roadSlotsCache = null; // the network is changing; characters re-read it next frame
     if (state.roadGroup) {
       state.planet.remove(state.roadGroup);
       state.roadGroup = null;
@@ -746,7 +771,10 @@
     state.flatGroup.scale.setScalar(1);
     state.flatGroup.rotation.set(0, angle, 0);
     // Kept for the planet <-> island animation (makeFoldRig).
-    state.island = { cells: cells, centres: centres };
+    // roadSlots: the island's road route, the flat-view counterpart of roadSlots() on the
+    // planet. Keyed off roadEdges rather than `roads` so the buildings a road runs through
+    // stay in — see the note on roadSlots() for why dropping them strands every road tile.
+    state.island = { cells: cells, centres: centres, roadSlots: Object.keys(roadEdges).map(Number) };
 
     // How far the island reaches from its middle, and how deep its rock hangs.
     var spread = 0;
@@ -804,21 +832,12 @@
       }));
     });
 
-    world.people.forEach(function (person) {
-      var slot = person.placement && person.placement.slot;
-      var c = centres[slot];
-      if (!c) return;
-      var obj = makePersonModel(person.appearance && person.appearance.color);
-      obj.scale.setScalar(FLAT_MODEL_SCALE * 0.55);
-      obj.position.set(c.x + FLAT_SPACING * 0.26, FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, c.z);
-      obj.userData.restY = obj.position.y;
-      obj.userData.tag = { type: 'person', id: person.id, slot: slot };
-      state.flatGroup.add(obj);
-    });
-
-    // Pets (src/world/pets.js) aren't stored data, so nothing above
-    // re-adds them — this group got wiped at the top of this function like everything else.
+    // Walkers (src/world/walkers.js) aren't stored data, so nothing above re-adds them —
+    // this group got wiped at the top of this function like everything else.
     if (state.petWalkers) state.flatGroup.add(state.petWalkers.flat.group);
+    Object.keys(state.residentWalkers).forEach(function (id) {
+      state.flatGroup.add(state.residentWalkers[id].flat.group);
+    });
     if (state.players && state.players.flat.group) {
       state.flatGroup.add(state.players.flat.group);
       // The island was just rebuilt from scratch, so wherever the character was standing
@@ -2020,6 +2039,8 @@
       state.roadGroup = null;
     }
     state.spinners.length = 0;
+    while (state.residentGroup.children.length) state.residentGroup.remove(state.residentGroup.children[0]);
+    state.residentWalkers = {};
   }
 
   // Swap to the grid for `frequency`: a fresh all-water mesh, scaled so tiles keep their
@@ -2176,7 +2197,7 @@
 
   // --- Satellites, pets and skins ------------------------------------------------------
   // Satellites orbit in the sky and are built from primitives (src/world/cosmetics.js).
-  // Pets walk the tiles and are GLB models (src/world/pets.js). They sit in separate
+  // Pets walk the tiles and are GLB models (src/world/walkers.js). They sit in separate
   // equip slots, so a world can have one of each out at the same time.
 
   // How high the satellite flies, in tile widths above the surface it is circling, and how wide
@@ -2210,19 +2231,33 @@
     animateSatellite(performance.now() / 1000);
   }
 
-  // The land walker. Independent of setSatellite above — equipping one never puts the
-  // other away. isPet() also screens out a stale saved id (a pet that no longer ships, or
-  // a satellite id arriving here) before we go and fetch a .glb for it.
+  // Pets roam any land. Independent of setSatellite above — equipping one never puts the
+  // other away. isPet() also screens out a stale saved id (a pet that no longer ships, or a
+  // satellite id arriving here) before we fetch a .glb for it.
   function setPet(id) {
-    clearPet();
+    clearWalker('petGroup', 'petWalkers');
     state.petId = id || null;
-    if (!MI.world.pets.isPet(id)) return;
+    if (id && MI.world.walkers.isPet(id)) {
+      spawnWalker(id, 'petGroup', 'petWalkers', function () { return state.petId === id; });
+    }
+  }
 
-    MI.world.pets.makeWalkerPair(id).then(function (pair) {
-      // The player may have equipped something else again before this finished loading.
-      if (!pair || state.petId !== id) return;
-      state.petWalkers = pair;
-      state.petGroup.add(pair.sphere.group);
+  function clearWalker(groupKey, walkersKey) {
+    var group = state[groupKey];
+    while (group.children.length) group.remove(group.children[0]);
+    // Also drop the flat instance if it's currently sitting in flatGroup (safe no-op
+    // otherwise — Object3D.remove() ignores an object that isn't actually a child).
+    if (state[walkersKey]) state.flatGroup.remove(state[walkersKey].flat.group);
+    state[walkersKey] = null;
+  }
+
+  // `stillWanted` guards the async gap: the player may have equipped something else again
+  // before the model finished loading.
+  function spawnWalker(id, groupKey, walkersKey, stillWanted) {
+    MI.world.walkers.makeWalkerPair(id).then(function (pair) {
+      if (!pair || !stillWanted()) return;
+      state[walkersKey] = pair;
+      state[groupKey].add(pair.sphere.group);
       // If we're already looking at the island, place it there now; otherwise buildFlatView
       // will add it the next time that view is (re)built.
       if (state.flatMode && state.island && state.island.centres) state.flatGroup.add(pair.flat.group);
@@ -2231,19 +2266,30 @@
     });
   }
 
-  function clearPet() {
-    while (state.petGroup.children.length) state.petGroup.remove(state.petGroup.children[0]);
-    // Also drop the flat instance if it's currently sitting in flatGroup (safe no-op
-    // otherwise — Object3D.remove() ignores an object that isn't actually a child).
-    if (state.petWalkers) state.flatGroup.remove(state.petWalkers.flat.group);
-    state.petWalkers = null;
+  // The road route, which is where characters are allowed to walk: every slot a road passes
+  // through, buildings included.
+  //
+  // Buildings have to be in it. A memory lands two tiles from the last one, so a road segment
+  // is usually a SINGLE tile with a building either side — drop the buildings and every road
+  // tile is stranded with no road neighbour at all, and a character can never take a step
+  // (measured on a 9-memory world: 5 road tiles, all 5 isolated). Keeping them makes the route
+  // connected, which is what a path is for. The road only stops at a door because the building
+  // owns that tile; the way through it is still the way through.
+  //
+  // Cached because computeRoadEdges runs a BFS per memory pair and this is read every frame;
+  // rebuildRoads() clears the cache whenever the network actually changes.
+  function roadSlots() {
+    if (!state.roadSlotsCache) {
+      state.roadSlotsCache = new Set(Object.keys(computeRoadEdges()).map(Number));
+    }
+    return state.roadSlotsCache;
   }
 
   // Every real hexagon neighbour of a tile on the PLANET grid — sphere-view only. The flat
   // view's island is a coiled layout (MI.island), where a planet neighbour isn't necessarily
-  // an adjacent cell any more (see flatPetNeighbors below) — using this for both views,
+  // an adjacent cell any more (see flatWalkerNeighbors below) — using this for both views,
   // as an earlier version did, is what let the pet occasionally "hop" across an unrelated cell.
-  function petNeighbors(tileId) {
+  function walkerNeighbors(tileId) {
     var tile = MI.world.sphere.tile(tileId);
     if (!tile) return [];
     return tile.neighbors.filter(function (id) {
@@ -2255,7 +2301,7 @@
   // The flat view's real visual neighbours: other tiles whose coiled {i,j} cell is actually
   // adjacent to this one (MI.island.adjacent), not whichever tiles happen to be neighbours on
   // the planet grid the coiling was computed from.
-  function flatPetNeighbors(cells) {
+  function flatWalkerNeighbors(cells) {
     return function (tileId) {
       var cell = cells[tileId];
       if (!cell) return [];
@@ -2268,40 +2314,79 @@
     };
   }
 
-  // Pets tick here instead of animateSatellite's sky loop, since their movement is a
-  // tile-to-tile walk rather than a closed-form orbit. Builds the small "what does land mean
-  // here / where is tile X" context pets.js needs, once per frame, for each view.
-  function updatePet(dt) {
-    var walkers = state.petWalkers;
-    if (!walkers || !state.tiles) return;
+  // Walkers tick here instead of animateSatellite's sky loop, since their movement is a
+  // tile-to-tile walk rather than a closed-form orbit. Builds the small "where may I stand /
+  // where is tile X" context walkers.js needs, once per frame, for each view.
+  //
+  // Pets and residents run the identical FSM and differ only in what is passed in: a pet
+  // gets every land tile, while a resident prefers roads when they exist.
+  function updateWalkers(dt) {
+    if (!state.tiles) return;
+    if (state.petWalkers) {
+      driveWalkers(state.petWalkers, dt, {
+        canStand: function (id) { return !state.waterTileIds.has(id); },
+        islandCanStand: function (centres) { return function (id) { return !!centres[id]; }; },
+        sphereScale: PET_SPHERE_SCALE,
+        flatScale: PET_FLAT_SCALE
+      });
+    }
+    var residentIds = Object.keys(state.residentWalkers);
+    if (!residentIds.length) return;
+    var roads = roadSlots();
+    var islandRoads = state.island && state.island.roadSlots
+      ? new Set(state.island.roadSlots) : new Set();
+    residentIds.forEach(function (personId) {
+      var pair = state.residentWalkers[personId];
+      // A new resident can walk their own land even before a second memory makes a road.
+      driveWalkers(pair, dt, {
+        anchor: pair.person.placement.slot,
+        canStand: function (id) { return !state.waterTileIds.has(id) && (!roads.size || roads.has(id)); },
+        islandCanStand: function (centres) { return function (id) {
+          return !!centres[id] && (!islandRoads.size || islandRoads.has(id));
+        }; },
+        sphereScale: RESIDENT_SPHERE_SCALE,
+        flatScale: RESIDENT_FLAT_SCALE,
+        offset: true // most of the road route is building tiles; stand beside them, not in them
+      });
+    });
+  }
 
-    var isLand = function (id) { return !state.waterTileIds.has(id); };
+  function driveWalkers(walkers, dt, spec) {
+    var canStand = spec.canStand;
     var findAnchor = function () {
       var world = MI.store.get();
-      if (typeof world.home === 'number' && isLand(world.home)) return world.home;
+      if (typeof spec.anchor === 'number' && canStand(spec.anchor)) return spec.anchor;
+      if (typeof world.home === 'number' && canStand(world.home)) return world.home;
       for (var i = 0; i < state.tiles.length; i++) {
-        if (isLand(state.tiles[i].id)) return state.tiles[i].id;
+        if (canStand(state.tiles[i].id)) return state.tiles[i].id;
       }
       return null;
     };
-    MI.world.pets.updateSphere(walkers.sphere, dt, {
-      isLand: isLand, neighborsOf: petNeighbors, findAnchor: findAnchor,
+    MI.world.walkers.updateSphere(walkers.sphere, dt, {
+      isLand: canStand, neighborsOf: walkerNeighbors, findAnchor: findAnchor,
       dirOf: function (id) { var t = MI.world.sphere.tile(id); return t ? new THREE.Vector3().fromArray(t.dir) : null; },
-      height: RADIUS + LAND_LIFT, scale: state.spacing * PET_SPHERE_SCALE
+      height: RADIUS + LAND_LIFT, scale: state.spacing * spec.sphereScale,
+      offset: spec.offset ? state.spacing * 0.3 : 0 // matches spawnPerson's "beside the building"
     });
 
     if (state.island && state.island.centres) {
       var centres = state.island.centres;
-      var flatIsLand = function (id) { return !!centres[id]; };
+      var islandCanStand = spec.islandCanStand(centres);
       var flatFindAnchor = function () {
         var world = MI.store.get();
-        if (centres[world.home]) return world.home;
-        var keys = Object.keys(centres);
-        return keys.length ? Number(keys[0]) : null;
+        if (islandCanStand(spec.anchor)) return spec.anchor;
+        if (islandCanStand(world.home)) return world.home;
+        var found = null;
+        Object.keys(centres).forEach(function (id) {
+          if (found === null && islandCanStand(Number(id))) found = Number(id);
+        });
+        return found;
       };
-      MI.world.pets.updateFlat(walkers.flat, dt, {
-        isLand: flatIsLand, neighborsOf: flatPetNeighbors(state.island.cells), findAnchor: flatFindAnchor,
-        centres: centres, baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * PET_FLAT_SCALE
+      MI.world.walkers.updateFlat(walkers.flat, dt, {
+        isLand: islandCanStand, neighborsOf: flatWalkerNeighbors(state.island.cells),
+        findAnchor: flatFindAnchor, centres: centres,
+        baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * spec.flatScale,
+        offset: spec.offset ? FLAT_SPACING * 0.26 : 0 // the island-view half of the same shift
       });
     }
   }
@@ -2511,9 +2596,8 @@
     if (state.camMode === 'ground') updateGroundCamera();
   }
 
-  // One avatar per view, since each view keeps its own position. A character with no .glb
-  // yet falls back to the same minifigure the journal's people use, so this needs no new
-  // assets to work at all.
+  // One avatar per view, since each view keeps its own position. The shared loader falls
+  // back to a procedural figure if a model cannot load.
   function setCharacter(id) {
     if (!state) return Promise.resolve();
     var wanted = MI.world.player.isCharacter(id) ? id : MI.world.player.defaultId();
@@ -2659,7 +2743,7 @@
   // --- Init ---------------------------------------------------------------------------
 
   // options (all optional, from the saved world): { frequency, theme, satellite, pet,
-  // character, skin }.
+  // character, skin }. Residents come from saved memory people during restore.
   function init(canvasEl, options) {
     var opts = options || {};
     var renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
@@ -2705,15 +2789,17 @@
     // In the scene, not on the planet: the satellite keeps flying when the planet folds away.
     var satelliteGroup = new THREE.Group();
     scene.add(satelliteGroup);
-    // Pets (src/world/pets.js) need one instance per view, since they
+    // Pets (src/world/walkers.js) need one instance per view, since they
     // wander independently in each. Unlike satelliteGroup above, the sphere instance lives inside
     // `planet` — it stands on the tiles, so it has to hide and scale with them. The flat
     // instance lives inside `flatGroup` itself (added back in by buildFlatView, since that
     // group is fully cleared and rebuilt on every flat-view refresh) so it automatically
     // inherits the island's fold rotation.
-    var petGroup = new THREE.Group();
-    planet.add(petGroup);
-    // Your character, one instance per view, parented for the same reasons as petGroup.
+    var petWalkerGroup = new THREE.Group();
+    planet.add(petWalkerGroup);
+    var residentGroup = new THREE.Group();
+    planet.add(residentGroup);
+    // Your character, one instance per view, parented for the same reasons.
     var playerGroup = new THREE.Group();
     planet.add(playerGroup);
 
@@ -2740,8 +2826,13 @@
       // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
       // what's already on screen; one recoloured atlas per theme.
       kitMaterials: [], foliageGeometries: [], atlasCache: {},
-      themeId: null, skin: opts.skin || 'classic', satelliteId: null, satellite: null, satelliteGroup: satelliteGroup,
-      petId: null, petGroup: petGroup, petWalkers: null,
+      themeId: null, skin: opts.skin || 'classic',
+      satelliteId: null, satellite: null, satelliteGroup: satelliteGroup,
+      // Walkers: pets roam any land, residents follow the roads. roadSlotsCache is that
+      // road route, rebuilt when the network changes.
+      petId: null, petGroup: petWalkerGroup, petWalkers: null,
+      residentGroup: residentGroup, residentWalkers: {},
+      roadSlotsCache: null,
       // camMode is 'orbit' or 'ground'; orbitRestore is the orbit camera stashed on the
       // way into ground view, so leaving puts the view back exactly as it was. groundForward
       // is a TANGENT VECTOR in the character's own group's space, carried along by the same
@@ -3055,7 +3146,7 @@
       }
       animateWater(now / 1000);
       animateSatellite(now / 1000);
-      if (!state.transition) updatePet(dt);
+      if (!state.transition) updateWalkers(dt);
       if (!state.transition) updatePlayer(dt);
       if (state.pollHover) state.pollHover();
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
