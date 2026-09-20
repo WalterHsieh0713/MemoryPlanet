@@ -363,7 +363,21 @@
     el.book.style.removeProperty('--from-s');
     el['book-btn'].setAttribute('aria-expanded', 'false');
     el['book-btn'].classList.remove('hand-off');
-    if (bookOpener && bookOpener.isConnected) bookOpener.focus();
+    // Closing used to focus the mini book, which peeked and paused the spin until
+    // you clicked away. Resume the idle turn as soon as the journal is gone.
+    skipMiniPeek = true;
+    unpeekMiniBook();
+    var spin = el['book-btn'].querySelector('.mini-spin');
+    if (spin) {
+      clearTimeout(miniResumeTimer);
+      playMiniSpin(spin);
+    }
+    if (bookOpener && bookOpener !== el['book-btn'] && bookOpener.isConnected) {
+      bookOpener.focus();
+    } else if (document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
+    skipMiniPeek = false;
   }
 
   function isBookOpen() {
@@ -375,6 +389,7 @@
   // unhovering unwinds that turn then continues the 14s spin from the same spot.
   var miniResumeTimer = null;
   var miniPeeking = false;
+  var skipMiniPeek = false;
   var MINI_FACE = -16;
   var MINI_TURN_MS = 400;
 
@@ -409,6 +424,7 @@
   }
 
   function peekMiniBook() {
+    if (skipMiniPeek) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     if (el['book-btn'].classList.contains('hand-off')) return;
     clearTimeout(miniResumeTimer);
