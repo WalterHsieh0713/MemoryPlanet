@@ -8,6 +8,7 @@
     theme: saved.equipped.theme,
     pet: saved.equipped.pet,
     satellite: saved.equipped.satellite,
+    character: saved.player && saved.player.character,
     skin: saved.equipped.skin
   })
     .then(function () {

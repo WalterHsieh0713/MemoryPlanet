@@ -25,8 +25,8 @@
 
   // Which tile contains this direction. The grid's tiles are the Voronoi cells of their
   // own centres, so "nearest centre" is not an approximation here — it is exactly the tile
-  // you are standing on. Used by walk mode (src/world/player.js) to ask whether the ground
-  // under the character is land, once or twice a frame.
+  // you are standing on. Used by your character (src/world/player.js) to ask whether the
+  // ground under it is land, once or twice a frame.
   function nearestSlot(dir) {
     if (!grid) throw new Error('MI.world.sphere: setGrid() must be called first');
     var best = -1, bestDot = -Infinity;

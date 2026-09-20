@@ -235,8 +235,8 @@
   }
 
   // Replays everything already stored — used on page load, with no animation or camera moves.
-  // The main house. A brand-new planet is all ocean, so walk mode would have nowhere to
-  // put you: this claims one hexagon up front, as land with a house on it, and points
+  // The main house. A brand-new planet is all ocean, so your character would have nowhere
+  // to stand: this claims one hexagon up front, as land with a house on it, and points
   // `home` at it. Worlds that already have a home (their first memory set it) are left
   // alone, so this never moves an existing island.
   var HOUSE_ASSET = 'building-house.glb';

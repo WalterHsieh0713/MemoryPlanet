@@ -148,6 +148,73 @@ for (var t = 0; t < 24; t++) {
 check('a diagonal into the coast slides rather than sticking', slid > 0,
   'all 24 headings were fully cornered');
 
+// --- Parallel transport: facing and camera stay put as you move ----------------------------
+// The bug this replaced: facing and the ground camera were angles measured from a "reference
+// tangent" recomputed at each position. That tangent swings as you move and flips near the
+// poles, so both drifted on their own — most visibly when strafing. Now a step reports the
+// rotation it is, and everything that has a direction is carried along by it.
+var player3 = player.newPlayer();
+player3.group = { position: { copy: function () { return { multiplyScalar: function () {} }; } },
+  scale: { setScalar: function () {} }, quaternion: { setFromRotationMatrix: function () {} } };
+player3.placed = true;
+player3.dir.copy(homeDir);
+player3.facing.copy(axesAt(homeDir).forward);
+
+// A second tangent, carried by the same rotations. If transport is right, the angle between
+// it and the facing must never change — that constant angle IS the camera sitting behind you.
+var carried = player3.facing.clone().applyAxisAngle(player3.dir, 0.9);
+var angle0 = player3.facing.angleTo(carried);
+var worstAngle = 0, worstTangent = 0, worstLength = 0;
+
+for (var m = 0; m < 600; m++) {
+  // Strafe hard, which is exactly what used to make the camera swing around.
+  var fr = axesAt(player3.dir);
+  player.updateSphere(player3, 0.016, {
+    forward: fr.forward, right: fr.right,
+    input: { forward: m % 120 < 60 ? 1 : 0, strafe: 1 },
+    isLandAt: function () { return true; },
+    speed: 2.0, height: RADIUS, radius: RADIUS, scale: 1
+  });
+  if (player3.lastAngle) carried.applyAxisAngle(player3.lastAxis, player3.lastAngle);
+  worstAngle = Math.max(worstAngle, Math.abs(player3.facing.angleTo(carried) - angle0));
+  worstTangent = Math.max(worstTangent, Math.abs(carried.dot(player3.dir)));
+  worstLength = Math.max(worstLength, Math.abs(carried.length() - 1));
+}
+// The facing itself turns toward travel, so the angle is allowed to change; what must NOT
+// happen is the carried vector drifting off the surface or changing length.
+check('a carried direction stays tangent to the surface', worstTangent < 1e-6,
+  'worst dot with up ' + worstTangent.toExponential(2));
+check('a carried direction stays unit length', worstLength < 1e-9,
+  'worst error ' + worstLength.toExponential(2));
+check('the facing stays tangent while strafing',
+  Math.abs(player3.facing.dot(player3.dir)) < 1e-6,
+  'dot with up ' + player3.facing.dot(player3.dir).toExponential(2));
+check('the facing stays unit length', Math.abs(player3.facing.length() - 1) < 1e-9);
+
+// Crossing a pole must not flip anything. Walk straight over the top and watch the carried
+// vector: its angle to the direction of travel is what the old reference tangent destroyed.
+var polar2 = player.newPlayer();
+polar2.group = player3.group;
+polar2.placed = true;
+polar2.dir.set(0, 0, 1);
+polar2.facing.set(0, 1, 0);
+var polarCarried = polar2.facing.clone();
+var polarJump = 0, prevAngle = null;
+for (var q = 0; q < 500; q++) {
+  var ax2 = { forward: polar2.facing.clone(), right: new THREE.Vector3().crossVectors(polar2.facing, polar2.dir).normalize() };
+  player.updateSphere(polar2, 0.016, {
+    forward: ax2.forward, right: ax2.right, input: { forward: 1, strafe: 0 },
+    isLandAt: function () { return true; },
+    speed: 3.0, height: RADIUS, radius: RADIUS, scale: 1
+  });
+  if (polar2.lastAngle) polarCarried.applyAxisAngle(polar2.lastAxis, polar2.lastAngle);
+  var a2 = polar2.facing.angleTo(polarCarried);
+  if (prevAngle !== null) polarJump = Math.max(polarJump, Math.abs(a2 - prevAngle));
+  prevAngle = a2;
+}
+check('nothing flips when the character walks over a pole', polarJump < 0.05,
+  'biggest one-frame swing ' + polarJump.toFixed(4) + ' rad');
+
 // --- The island (flat) view ------------------------------------------------------------------
 // A 3x3 metre square of land around the origin; anything outside is off the island.
 var flatLand = function (p) { return Math.abs(p.x) <= 1.5 && Math.abs(p.z) <= 1.5; };
@@ -195,4 +262,6 @@ if (failures) {
 console.log('island: stopped at z=' + fp.z.toFixed(3) + ', slid to x=' + (slidFlat ? slidFlat.x.toFixed(3) : '-'));
 console.log('sphere: ' + sampled + ' sampled positions across 24 headings, all on land');
 console.log('slides: ' + slid + ' of 24 coastal headings slid, ' + cornered + ' fully cornered');
+console.log('transport: worst tangent drift ' + worstTangent.toExponential(2) +
+  ', biggest polar swing ' + polarJump.toFixed(4) + ' rad');
 console.log('--- all player checks passed ---');

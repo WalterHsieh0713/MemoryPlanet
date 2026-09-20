@@ -1,19 +1,27 @@
-// MI.world.player — the character you embody in walk mode. Owns the avatar model and the
-// movement maths; knows nothing about world.js's state or MI.store. world.js hands it an
-// `isLandAt` test and the framing it needs each frame, one set for the sphere view and one
-// for the island view, exactly as it does for src/world/pets.js.
+// MI.world.player — your character: the one figure on the planet that you drive. It is a
+// permanent inhabitant, not a mode. It stands on the world in every view, walks when you
+// press WASD whether you are looking from orbit or from the ground, and ground view is
+// simply a camera that rides along behind it.
+//
+// This module owns the avatar model and the movement maths and knows nothing about
+// world.js's state or MI.store: world.js hands it an `isLandAt` test and the camera's
+// tangent axes each frame, exactly as it does for src/world/pets.js.
 //
 // Movement is continuous, not snapped to tiles. On the sphere a step ROTATES the position
-// vector about (pos x move): that is great-circle movement, so it never drifts off the unit
-// sphere, has no pole singularity, and needs no trigonometric special cases. On the island
-// the same step is a plain XZ translation.
+// vector about (pos x move): great-circle movement, so it never drifts off the unit sphere,
+// has no pole singularity and needs no trigonometric special cases. On the island it is a
+// plain XZ translation. A blocked step is retried with each input axis alone, so walking
+// into the sea slides you along the coast instead of sticking.
 //
-// Walking into the sea does not stick you to the shore. A blocked step is retried with each
-// input axis alone, so you slide along the coastline — see slide() below.
+// FACING IS A VECTOR, NOT AN ANGLE. An earlier version stored it as an angle measured from
+// a "reference tangent" recomputed at each position. That tangent rotates as you move and
+// flips outright near the poles, so the character's facing and the ground camera's azimuth
+// both drifted on their own — most visibly when strafing. Instead the facing is a tangent
+// vector carried along by the same rotation that moves the character (parallel transport),
+// which is stable everywhere. `lastAxis`/`lastAngle` expose that rotation so world.js can
+// carry the ground camera along by it too, which is what keeps the two in step.
 //
-// Adding a character later is one line in CHARACTERS, once its .glb is in PACK. No model
-// ships yet, so every entry currently falls back to the procedural minifigure world.js
-// builds for people; a .glb named here takes over with nothing else to change.
+// Adding a character later is one line in CHARACTERS, once its .glb is in PACK.
 (function () {
   window.MI = window.MI || {};
   MI.world = MI.world || {};
@@ -72,7 +80,7 @@
   // `fallback` is world.js's makePersonModel, passed in rather than reached for, so this
   // module never depends on world.js internals. It is used both when a character has no
   // .glb yet and when one fails to load — the demo runs offline, so a missing model must
-  // never leave you with no avatar at all (CLAUDE.md).
+  // never leave you with no character at all (CLAUDE.md).
   function makeAvatar(id, fallback) {
     var character = get(id) || get(defaultId());
     if (!character.file) return Promise.resolve(fallback(character.color));
@@ -98,17 +106,30 @@
   function newPlayer() {
     return {
       group: null,
-      // Sphere view: a unit direction. Island view: metres in the XZ plane.
+      // Sphere view: a unit direction, plus a unit tangent at it for the facing.
       dir: new THREE.Vector3(0, 1, 0),
-      x: 0, z: 0,
-      heading: 0,       // facing, as a rotation about the local up
+      facing: new THREE.Vector3(1, 0, 0),
+      // The rotation the last step applied, so world.js can carry the ground camera along
+      // with it. lastAngle 0 means the character did not move this frame.
+      lastAxis: new THREE.Vector3(0, 1, 0),
+      lastAngle: 0,
+      // Island view: metres in the XZ plane, facing as a plain rotation about +Y. No
+      // curvature there, so an angle is fine and there is nothing to transport.
+      x: 0, z: 0, heading: 0,
       bob: 0,           // walk-cycle phase, advanced only while actually moving
       moving: false,
       placed: false     // false until world.js has put it on its starting tile
     };
   }
 
-  // WASD as a direction in the plane the camera is looking across. `input` is
+  // Make `v` a unit tangent at `up`: drop whatever points along up. Returns null when
+  // nothing is left, which happens when v and up are parallel.
+  function tangent(v, up) {
+    var out = v.clone().addScaledVector(up, -v.dot(up));
+    return out.lengthSq() < 1e-12 ? null : out.normalize();
+  }
+
+  // WASD as a direction in the plane the camera looks across. `input` is
   // { forward: -1..1, strafe: -1..1 }; forward/right are unit tangent vectors.
   function inputDirection(forward, right, input, out) {
     out.set(0, 0, 0);
@@ -118,29 +139,10 @@
     return out.normalize();
   }
 
-  // One great-circle step. `pos` is a unit vector, `move` a unit tangent vector at pos.
-  // Returns a NEW unit vector; `pos` is untouched.
-  function stepSphere(pos, move, distance, radius) {
-    var axis = new THREE.Vector3().crossVectors(pos, move);
-    if (axis.lengthSq() < 1e-12) return pos.clone();
-    axis.normalize();
-    return pos.clone().applyAxisAngle(axis, distance / radius).normalize();
-  }
-
-  // Take the step if it lands on land. If it doesn't, try each input axis on its own and
-  // take the first that does — that is what turns "blocked by the sea" into "slide along
-  // the shore". Returns the position actually taken, or null if nothing moved.
-  function slide(candidates, isLandAt) {
-    for (var i = 0; i < candidates.length; i++) {
-      if (candidates[i] && isLandAt(candidates[i])) return candidates[i];
-    }
-    return null;
-  }
-
-  // The directions to try, in order: the whole input first, then each axis on its own.
-  // inputDirection returns null for a component too small to normalise — a near-axis
-  // input like cos(PI/2), which is 6e-17 rather than 0 — and those are dropped here, so a
-  // null direction can never reach stepSphere.
+  // The directions to try, in order: the whole input first, then each axis on its own, so a
+  // diagonal into a coast keeps whichever half is still land. inputDirection returns null
+  // for a component too small to normalise — a near-axis input like cos(PI/2), which is
+  // 6e-17 rather than 0 — and those are dropped here, so a null can never reach a step.
   function moveDirections(forward, right, input) {
     var variants = [input,
       { forward: input.forward, strafe: 0 },
@@ -153,12 +155,50 @@
     return out;
   }
 
-  // Sphere step with sliding. Exposed for scripts/test-player.js.
-  function moveSphere(pos, forward, right, input, distance, radius, isLandAt) {
+  // The rotation a step IS: an axis and an angle. Kept separate from applying it because
+  // the same rotation also has to be applied to the facing and to the ground camera, and
+  // that is exactly what keeps all three in step as you cross the sphere.
+  function sphereRotation(pos, move, distance, radius) {
+    var axis = new THREE.Vector3().crossVectors(pos, move);
+    if (axis.lengthSq() < 1e-12) return null;
+    return { axis: axis.normalize(), angle: distance / radius };
+  }
+
+  // One great-circle step. `pos` is a unit vector, `move` a unit tangent vector at pos.
+  // Returns a NEW unit vector; `pos` is untouched.
+  function stepSphere(pos, move, distance, radius) {
+    var turn = sphereRotation(pos, move, distance, radius);
+    return turn ? pos.clone().applyAxisAngle(turn.axis, turn.angle).normalize() : pos.clone();
+  }
+
+  // Take the first candidate that lands on land. Returns it, or null if nothing moved.
+  function slide(candidates, isLandAt, positionOf) {
+    for (var i = 0; i < candidates.length; i++) {
+      var pos = positionOf ? positionOf(candidates[i]) : candidates[i];
+      if (pos && isLandAt(pos)) return candidates[i];
+    }
+    return null;
+  }
+
+  // Sphere step with sliding, as { pos, axis, angle } so the caller can reuse the rotation.
+  function stepSphereSliding(pos, forward, right, input, distance, radius, isLandAt) {
     var dirs = moveDirections(forward, right, input);
-    if (!dirs.length) return null;
-    var candidates = dirs.map(function (d) { return stepSphere(pos, d, distance, radius); });
-    return slide(candidates, isLandAt);
+    var candidates = [];
+    for (var i = 0; i < dirs.length; i++) {
+      var turn = sphereRotation(pos, dirs[i], distance, radius);
+      if (!turn) continue;
+      candidates.push({
+        pos: pos.clone().applyAxisAngle(turn.axis, turn.angle).normalize(),
+        axis: turn.axis, angle: turn.angle
+      });
+    }
+    return slide(candidates, isLandAt, function (c) { return c.pos; });
+  }
+
+  // Position only. Exposed for scripts/test-player.js.
+  function moveSphere(pos, forward, right, input, distance, radius, isLandAt) {
+    var moved = stepSphereSliding(pos, forward, right, input, distance, radius, isLandAt);
+    return moved ? moved.pos : null;
   }
 
   // Island step with sliding, in the XZ plane. `pos` and the result are { x, z }.
@@ -171,8 +211,14 @@
     return slide(candidates, isLandAt);
   }
 
-  // Ease the model's facing toward where it is actually travelling, so a direction change
-  // reads as a turn rather than a snap. Angles wrap, hence the shortest-way normalisation.
+  // Ease the facing toward where the character is actually travelling, so a change of
+  // direction reads as a turn rather than a snap. Both are unit tangents at `up`.
+  function turnFacing(facing, target, up, dt) {
+    var next = tangent(facing.clone().lerp(target, Math.min(1, TURN_RATE * dt)), up);
+    if (next) facing.copy(next);
+  }
+
+  // Angles wrap, hence the shortest-way normalisation. Island view only.
   function turnToward(current, target, dt) {
     var delta = target - current;
     while (delta > Math.PI) delta -= Math.PI * 2;
@@ -181,28 +227,39 @@
   }
 
   // --- Per-frame update, one per view ----------------------------------------------------
-  // ctx (sphere): { forward, right, input, isLandAt, height, scale, radius }
-  // ctx (flat):   { forward, right, input, isLandAt, baseY, scale }
-  // `forward`/`right` are the camera's tangent axes, so W is always "away from the camera".
+  // ctx (sphere): { forward, right, input, isLandAt, speed, height, scale, radius }
+  // ctx (flat):   { forward, right, input, isLandAt, speed, baseY, scale }
+  // `forward`/`right` are the camera's tangent axes, so W is "away from the camera" in
+  // every view, looking down from orbit as well as standing on the ground.
 
   function updateSphere(player, dt, ctx) {
     if (!player.group || !player.placed) return;
 
-    var moved = moveSphere(player.dir, ctx.forward, ctx.right, ctx.input,
+    var moved = stepSphereSliding(player.dir, ctx.forward, ctx.right, ctx.input,
       ctx.speed * dt, ctx.radius, ctx.isLandAt);
     player.moving = !!moved;
-    if (moved) {
-      // Face the way we actually went, which after a slide is not always the way we asked.
-      var travel = new THREE.Vector3().subVectors(moved, player.dir);
-      player.dir.copy(moved);
-      setHeadingFromTravel(player, travel, player.dir, dt);
-    }
-    advanceBob(player, dt);
+    player.lastAngle = 0;
 
-    var up = player.dir;
-    player.group.position.copy(up).multiplyScalar(ctx.height + bobOffset(player));
+    if (moved) {
+      // Carry the facing along by the same rotation, then ease it toward the way we
+      // actually went — after a slide that is not always the way we asked to go.
+      player.facing.applyAxisAngle(moved.axis, moved.angle);
+      var travel = new THREE.Vector3().subVectors(moved.pos, player.dir);
+      player.dir.copy(moved.pos);
+      player.lastAxis.copy(moved.axis);
+      player.lastAngle = moved.angle;
+
+      var target = tangent(travel, player.dir);
+      if (target) turnFacing(player.facing, target, player.dir, dt);
+    }
+    // Numerical drift would otherwise slowly tilt the facing off the tangent plane.
+    var straight = tangent(player.facing, player.dir);
+    if (straight) player.facing.copy(straight);
+
+    advanceBob(player, dt);
+    player.group.position.copy(player.dir).multiplyScalar(ctx.height + bobOffset(player));
     player.group.scale.setScalar(ctx.scale);
-    orientOnSphere(player, up);
+    orientOnSphere(player);
   }
 
   function updateFlat(player, dt, ctx) {
@@ -225,30 +282,12 @@
     player.group.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), player.heading);
   }
 
-  // Heading on the sphere is an angle about the local up, measured from a stable reference
-  // tangent, so it survives the player walking over the pole.
-  function setHeadingFromTravel(player, travel, up, dt) {
-    var flat = travel.clone().sub(up.clone().multiplyScalar(travel.dot(up)));
-    if (flat.lengthSq() < 1e-12) return;
-    flat.normalize();
-    var ref = referenceTangent(up);
-    var side = new THREE.Vector3().crossVectors(up, ref);
-    var target = Math.atan2(flat.dot(side), flat.dot(ref));
-    player.heading = turnToward(player.heading, target, dt);
-  }
-
-  // A tangent at `up` that varies smoothly and never degenerates: cross with whichever
-  // world axis `up` is least aligned to.
-  function referenceTangent(up) {
-    var axis = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
-    return new THREE.Vector3().crossVectors(axis, up).normalize();
-  }
-
-  function orientOnSphere(player, up) {
-    var ref = referenceTangent(up);
-    var side = new THREE.Vector3().crossVectors(up, ref);
-    var forward = ref.clone().multiplyScalar(Math.cos(player.heading))
-      .addScaledVector(side, Math.sin(player.heading)).normalize();
+  // Stand upright on the surface, facing along `facing`. No reference tangent and no angle
+  // anywhere in here: the basis comes straight from the two vectors already carried.
+  function orientOnSphere(player) {
+    var up = player.dir;
+    var forward = tangent(player.facing, up);
+    if (!forward) return;
     var right = new THREE.Vector3().crossVectors(up, forward).normalize();
     forward.crossVectors(right, up).normalize();
     player.group.quaternion.setFromRotationMatrix(
@@ -273,8 +312,10 @@
     newPlayer: newPlayer,
     updateSphere: updateSphere,
     updateFlat: updateFlat,
+    tangent: tangent,
     // Exposed for scripts/test-player.js.
     stepSphere: stepSphere,
+    stepSphereSliding: stepSphereSliding,
     moveSphere: moveSphere,
     moveFlat: moveFlat,
     inputDirection: inputDirection,

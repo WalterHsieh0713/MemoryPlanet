@@ -59,7 +59,7 @@
   }
   #planet-hint { margin-top: 6px; font-size: 12px; font-weight: 600; color: var(--ink-mid); }
 
-  #walk-btn {
+  #ground-btn {
     position: fixed; left: 20px; top: 160px; z-index: 5;
     display: flex; align-items: center; gap: 7px;
     border: none; cursor: pointer; font-family: inherit;
@@ -68,8 +68,8 @@
     color: var(--ink); font-size: 12px; font-weight: 700;
     transition: transform .25s var(--spring), background .2s ease;
   }
-  #walk-btn:hover { background: #f4fafc; transform: translateY(-1px); }
-  #walk-btn:active { transform: scale(.96); }
+  #ground-btn:hover { background: #f4fafc; transform: translateY(-1px); }
+  #ground-btn:active { transform: scale(.96); }
   #view-btn {
     position: fixed; left: 20px; top: 202px; z-index: 5;
     display: flex; align-items: center; gap: 7px;
@@ -679,7 +679,7 @@
   <button id="shop-btn" aria-haspopup="dialog">Shop</button>
 </div>
 <button id="view-btn"><span id="view-icon">🏝️</span><span id="view-label">island view</span></button>
-<button id="walk-btn"><span id="walk-icon">🚶</span><span id="walk-label">walk around</span></button>
+<button id="ground-btn"><span id="ground-icon">👣</span><span id="ground-label">ground view</span></button>
 <button id="reset-btn">start over</button>
 
 <button id="book-btn" aria-haspopup="dialog" aria-controls="book" aria-expanded="false">
@@ -769,10 +769,10 @@
 <div id="picker">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="picker-title">
     <h2 id="picker-title">Select character</h2>
-    <div class="sub">Who do you want to be?</div>
+    <div class="sub">Who lives on your planet?</div>
     <div id="picker-grid" class="grid" role="radiogroup" aria-labelledby="picker-title"></div>
     <button id="picker-play" class="play">Play</button>
-    <div class="hint">WASD to walk &middot; scroll to zoom &middot; hold middle mouse to look &middot; Esc to leave</div>
+    <div class="hint">WASD walks them in any view &middot; <b>ground view</b> to follow along</div>
   </div>
 </div>
 
