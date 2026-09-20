@@ -1275,7 +1275,9 @@
 
     // Walkers (src/world/walkers.js) aren't stored data, so nothing above re-adds them —
     // this group got wiped at the top of this function like everything else.
-    if (state.petWalkers) state.flatGroup.add(state.petWalkers.flat.group);
+    Object.keys(state.petWalkers).forEach(function (owner) {
+      state.flatGroup.add(state.petWalkers[owner].flat.group);
+    });
     Object.keys(state.residentWalkers).forEach(function (id) {
       state.flatGroup.add(state.residentWalkers[id].flat.group);
     });
@@ -1997,10 +1999,10 @@
   // and your character, in both of their per-view instances.
   function eachFigure(fn) {
     if (!state) return;
-    if (state.petWalkers) {
-      fn(state.petWalkers.sphere.group, 'pet', 'sphere');
-      fn(state.petWalkers.flat.group, 'pet', 'flat');
-    }
+    Object.keys(state.petWalkers).forEach(function (owner) {
+      fn(state.petWalkers[owner].sphere.group, 'pet', 'sphere');
+      fn(state.petWalkers[owner].flat.group, 'pet', 'flat');
+    });
     Object.keys(state.residentWalkers).forEach(function (id) {
       fn(state.residentWalkers[id].sphere.group, 'resident', 'sphere');
       fn(state.residentWalkers[id].flat.group, 'resident', 'flat');
@@ -2881,12 +2883,46 @@
   // Pets roam any land. Independent of setSatellite above — equipping one never puts the
   // other away. isPet() also screens out a stale saved id (a pet that no longer ships, or a
   // satellite id arriving here) before we fetch a .glb for it.
+  // The whole owner -> pet map at once, since one call has to be able to add, move and
+  // remove pets together (reassigning a pet is a remove and an add, and doing them as two
+  // calls left the animal briefly at two people's heels).
+  function setPets(map) {
+    var wanted = map || {};
+    state.petOwners = wanted;
+    // Anyone whose pet changed or went away loses the one they had.
+    Object.keys(state.petWalkers).forEach(function (owner) {
+      var pair = state.petWalkers[owner];
+      if (wanted[owner] === pair.petId) return;
+      state.petGroup.remove(pair.sphere.group);
+      state.flatGroup.remove(pair.flat.group);
+      disposeWalkerPair(pair);
+      delete state.petWalkers[owner];
+    });
+    Object.keys(wanted).forEach(function (owner) {
+      var id = wanted[owner];
+      if (!id || !MI.world.walkers.isPet(id) || state.petWalkers[owner]) return;
+      MI.world.walkers.makeWalkerPair(id).then(function (pair) {
+        // They may have been given a different animal while this was loading.
+        if (!pair || !state || state.petOwners[owner] !== id || state.petWalkers[owner]) return;
+        pair.petId = id;
+        pair.owner = owner;
+        state.petWalkers[owner] = pair;
+        state.petGroup.add(pair.sphere.group);
+        if (state.flatMode && state.island && state.island.centres) {
+          state.flatGroup.add(pair.flat.group);
+        }
+        popIn(pair.sphere.group);
+        popIn(pair.flat.group);
+      });
+    });
+  }
+
+  // Kept for callers that only mean the player's own pet.
   function setPet(id) {
-    clearWalker('petGroup', 'petWalkers');
-    state.petId = id || null;
-    if (id && MI.world.walkers.isPet(id)) {
-      spawnWalker(id, 'petGroup', 'petWalkers', function () { return state.petId === id; });
-    }
+    var next = {};
+    Object.keys(state.petOwners).forEach(function (o) { next[o] = state.petOwners[o]; });
+    if (id) next.player = id; else delete next.player;
+    setPets(next);
   }
 
   var FOOD_DIR = 'assets/standalone/food/';
@@ -2929,16 +2965,24 @@
     });
   }
 
-  // A treat floats next to the pet that is out, then vanishes. The pantry has already
-  // spent it; this is only the nibble on the planet.
-  function feedPet(foodId) {
-    if (!state || !state.petWalkers) return false;
+  // How long a pet stops to eat, in seconds. Long enough to read as a moment rather than a
+  // flicker, short enough that you are not left waiting for your own pet.
+  var EAT_SECONDS = 5;
+
+  // Drop a treat in front of one owner's pet: the food appears beside it and the animal
+  // stops following and eats for EAT_SECONDS (walkers.js owns the countdown).
+  function feedPet(foodId, owner) {
+    if (!state) return false;
+    var pair = state.petWalkers[owner || 'player'];
+    if (!pair) return false;
     var item = MI.economy && MI.economy.find('food', foodId);
     if (!item || !item.file) return false;
+    MI.world.walkers.feed(pair.sphere, EAT_SECONDS);
+    MI.world.walkers.feed(pair.flat, EAT_SECONDS);
     loadGLB(FOOD_DIR + item.file).then(function (gltf) {
-      if (!gltf || !state.petWalkers) return;
-      attachTreat(state.petWalkers.sphere.group, gltf);
-      attachTreat(state.petWalkers.flat.group, gltf);
+      if (!gltf || !state || !state.petWalkers[owner || 'player']) return;
+      attachTreat(pair.sphere.group, gltf);
+      attachTreat(pair.flat.group, gltf);
     });
     return true;
   }
@@ -2999,16 +3043,107 @@
   //
   // Pets and residents run the identical FSM and differ only in what is passed in: a pet
   // gets every land tile, while a resident prefers roads when they exist.
+  // --- Pets follow their owner ---------------------------------------------------------
+  // A pet does not wander the tiles any more: it belongs to somebody and keeps at their
+  // heels. That makes it a MOVER like your character rather than a tile-stepping walker --
+  // src/world/player.js already walks great circles on the sphere and XZ on the island,
+  // stops at the sea, slides along a wall, and is covered by test-player.js. All a pet adds
+  // is where it wants to go, which is "wherever my owner is".
+  var PET_RUN_MULTIPLE = 2.1; // of walking pace, when it has been left behind
+
+  // Where an owner is standing, in the view's own terms: a unit direction on the sphere,
+  // { x, z } on the island. Your character carries these itself; a friend is a walker, so
+  // it comes off the group the world last drew them at.
+  function ownerAt(owner, view) {
+    if (owner === 'player') {
+      var me = state.players[view];
+      if (!me || !me.placed || !me.group) return null;
+      return view === 'sphere' ? me.dir.clone() : { x: me.x, z: me.z };
+    }
+    var pair = state.residentWalkers[owner];
+    if (!pair || !pair[view].group || pair[view].tileId === null) return null;
+    var at = pair[view].group.position;
+    return view === 'sphere' ? at.clone().normalize() : { x: at.x, z: at.z };
+  }
+
+  // One mover per pet per view, sharing the walker's model and its animation mixer.
+  function petMover(pet) {
+    if (!pet.mover) {
+      pet.mover = MI.world.player.newPlayer();
+      pet.mover.group = pet.group;
+      pet.mover.animator = pet.animator;
+    }
+    return pet.mover;
+  }
+
+  function updatePets(dt) {
+    Object.keys(state.petWalkers).forEach(function (owner) {
+      ['sphere', 'flat'].forEach(function (view) {
+        if (view === 'flat' && !(state.island && state.island.centres)) return;
+        var pair = state.petWalkers[owner];
+        var pet = pair[view];
+        if (!pet.group) return;
+        var goal = ownerAt(owner, view);
+        if (!goal) return; // their owner is not standing anywhere in this view yet
+        var mover = petMover(pet);
+        var tile = view === 'sphere' ? state.spacing : FLAT_SPACING;
+
+        // Put down beside its owner the first time, rather than walking in from wherever
+        // the model happened to be created.
+        if (!mover.placed) {
+          if (view === 'sphere') mover.dir.copy(goal);
+          else { mover.x = goal.x; mover.z = goal.z; }
+          mover.placed = true;
+        }
+
+        var forward, gap;
+        if (view === 'sphere') {
+          gap = mover.dir.angleTo(goal) * RADIUS / tile;
+          forward = MI.world.walkers.followTangent(mover.dir, goal);
+        } else {
+          var dx = goal.x - mover.x, dz = goal.z - mover.z;
+          var flat = Math.hypot(dx, dz);
+          gap = flat / tile;
+          forward = flat > 1e-6 ? new THREE.Vector3(dx / flat, 0, dz / flat) : null;
+        }
+
+        var gait = MI.world.walkers.petGait(pet, gap, dt);
+        // Eating beats getting about: the clip is in the GLBs beside walk and idle, and the
+        // animator cross-fades to it like any other.
+        if (pet.animator) pet.animator.setAction(gait === 'eat' ? 'eat' : null);
+        var going = forward && (gait === 'walk' || gait === 'run');
+        var input = { forward: going ? 1 : 0, strafe: 0 };
+        if (!forward) forward = new THREE.Vector3(0, 0, 1);
+        var right = view === 'sphere'
+          ? new THREE.Vector3().crossVectors(mover.dir, forward).normalize()
+          : new THREE.Vector3(forward.z, 0, -forward.x);
+        var pace = MI.world.player.TILES_PER_SECOND * tile
+          * (gait === 'run' ? PET_RUN_MULTIPLE : 1);
+
+        if (view === 'sphere') {
+          MI.world.player.updateSphere(mover, dt, {
+            forward: forward, right: right, input: input,
+            isLandAt: function (dir) { return !state.waterTileIds.has(MI.world.sphere.nearestSlot(dir)); },
+            speed: pace, height: RADIUS + LAND_LIFT, radius: RADIUS,
+            scale: state.spacing * PET_SPHERE_SCALE
+          });
+        } else {
+          MI.world.player.updateFlat(mover, dt, {
+            forward: forward, right: right, input: input, isLandAt: flatIsLand,
+            // Pets are small and get underfoot; they are not stopped by buildings.
+            blockers: null, blockerRadius: 0,
+            speed: pace,
+            baseY: flatGroundY({ x: mover.x, z: mover.z }),
+            scale: FLAT_MODEL_SCALE * PET_FLAT_SCALE
+          });
+        }
+      });
+    });
+  }
+
   function updateWalkers(dt) {
     if (!state.tiles) return;
-    if (state.petWalkers) {
-      driveWalkers(state.petWalkers, dt, {
-        canStand: function (id) { return !state.waterTileIds.has(id); },
-        islandCanStand: function (centres) { return function (id) { return !!centres[id]; }; },
-        sphereScale: PET_SPHERE_SCALE,
-        flatScale: PET_FLAT_SCALE
-      });
-    }
+    updatePets(dt);
     var residentIds = Object.keys(state.residentWalkers);
     if (!residentIds.length) return;
     if (!state.residentRoutesCache) state.residentRoutesCache = residentSphereRoutes(MI.store.get());
@@ -3785,6 +3920,59 @@
     return best;
   }
 
+  // The pet you are looking at, by owner, or null. Same reach and same "am I facing it"
+  // test as pickLookedMemory above -- a pet is a smaller thing than a building, so it has to
+  // be nearer before it counts, but the shape of the question is identical.
+  var lookPetListener = null;
+  var LOOK_PET_NEAR = 1.5;
+  var LOOK_PET_KEEP = 2.0;
+
+  function pickLookedPet() {
+    var p = activePlayer();
+    if (!p || !p.placed || !state.flatMode) return null;
+    var fx = state.groundForward.x, fz = state.groundForward.z;
+    var fl = Math.sqrt(fx * fx + fz * fz);
+    if (fl < 1e-6) return null;
+    fx /= fl; fz /= fl;
+    var reach = FLAT_SPACING;
+    var current = state.lookedPetOwner || null;
+    var best = null, bestScore = Infinity;
+
+    function consider(owner, near, minDot) {
+      var pair = state.petWalkers[owner];
+      if (!pair || !pair.flat.group) return;
+      var at = pair.flat.group.position;
+      var dx = at.x - p.x, dz = at.z - p.z;
+      var dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > reach * near) return;
+      var facing = 1;
+      if (dist > 0.12) facing = (dx * fx + dz * fz) / dist;
+      if (facing < minDot) return;
+      var score = dist / reach - facing;
+      if (score < bestScore) { bestScore = score; best = owner; }
+    }
+
+    // Whatever you were already looking at gets a wider margin, so the prompt does not
+    // flicker off every time you or the animal shift a little.
+    if (current && state.petWalkers[current]) {
+      consider(current, LOOK_PET_KEEP, LOOK_KEEP_DOT);
+      if (best) return best;
+    }
+    best = null; bestScore = Infinity;
+    Object.keys(state.petWalkers).forEach(function (owner) {
+      consider(owner, LOOK_PET_NEAR, LOOK_DOT);
+    });
+    return best;
+  }
+
+  function notifyLookPet() {
+    if (!lookPetListener) return;
+    var owner = isGroundView() ? pickLookedPet() : null;
+    if (owner === (state.lookedPetOwner || null)) return;
+    state.lookedPetOwner = owner;
+    lookPetListener(owner, owner ? MI.economy.petFor(owner) : null);
+  }
+
   function memoryScreenPos(memory) {
     if (!memory || !memory.placement || !state.island || !state.camera) return null;
     var slot = memory.placement.slot;
@@ -4057,7 +4245,9 @@
       themeId: null, skin: opts.skin || 'classic',
       satelliteId: null, satellite: null, satelliteGroup: satelliteGroup,
       // Walkers: pets roam any land; residents patrol their own memory routes.
-      petId: null, petGroup: petWalkerGroup, petWalkers: null,
+      // A pet belongs to somebody, so these are keyed by owner ('player' or a person's id),
+      // exactly like residentWalkers. petOwners is the map the world was last built from.
+      petOwners: {}, petGroup: petWalkerGroup, petWalkers: {},
       residentGroup: residentGroup, residentWalkers: {},
       residentRoutesCache: null, residentStopsCache: null,
       roadEdgesCache: null,
@@ -4361,7 +4551,7 @@
 
     return setPlanet(opts.frequency || REFERENCE_FREQUENCY, { animate: false }).then(function () {
       setSatellite(opts.satellite || null);
-      setPet(opts.pet || null);
+      setPets(opts.pets || {});
       // Your character is always on the planet, so it is built at boot like the scenery
       // rather than when some mode is switched on.
       setCharacter(opts.character || MI.world.player.defaultId());
@@ -5326,6 +5516,7 @@
       if (state.folding) hideFigures();
       else if (figuresLive) showFigures();
       notifyLookMemory();
+      notifyLookPet();
       pollHubApproach();
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
@@ -5869,22 +6060,34 @@
   };
   // The walking pet, per view: the sphere instance and (once the island exists) the flat
   // one, in world space. Two entries, not one, because a pet wanders each view separately.
+  // Every pet that is out, keyed by whose it is. `shown` is whether it is really being
+  // drawn: the flat instance sits inside flatGroup, which is hidden for the whole of the
+  // planet view, so its own visible flag says nothing on its own.
   MI.world.__pet = function () {
-    if (!state || !state.petWalkers) return null;
-    var out = {};
-    ['sphere', 'flat'].forEach(function (view) {
-      var group = state.petWalkers[view].group;
-      var p = group.getWorldPosition(new THREE.Vector3());
-      out[view] = {
-        x: p.x, y: p.y, z: p.z, scale: group.scale.x,
-        visible: group.visible && !!group.parent, tile: state.petWalkers[view].tileId,
-        // Its own flag says nothing on its own: the flat instance sits inside flatGroup,
-        // which is hidden for the whole of the planet view. `shown` is whether it is
-        // actually being drawn -- the only form of the question a fold check can use.
-        shown: MI.world.walkers.isShown(group)
-      };
+    if (!state) return null;
+    var all = {};
+    Object.keys(state.petWalkers).forEach(function (owner) {
+      var out = { id: state.petWalkers[owner].petId };
+      ['sphere', 'flat'].forEach(function (view) {
+        var pet = state.petWalkers[owner][view];
+        var group = pet.group;
+        if (!group) return;
+        var p = group.getWorldPosition(new THREE.Vector3());
+        var goal = ownerAt(owner, view);
+        out[view] = {
+          x: p.x, y: p.y, z: p.z, scale: group.scale.x,
+          visible: group.visible && !!group.parent,
+          shown: MI.world.walkers.isShown(group),
+          eating: (pet.eatLeft || 0) > 0, eatLeft: +(pet.eatLeft || 0).toFixed(2),
+          // How far it is from its owner, in tile-widths -- the number the follow is about.
+          gap: goal === null ? null : (view === 'sphere'
+            ? group.position.clone().normalize().angleTo(goal) * RADIUS / state.spacing
+            : Math.hypot(goal.x - group.position.x, goal.z - group.position.z) / FLAT_SPACING)
+        };
+      });
+      all[owner] = out;
     });
-    return out;
+    return all;
   };
   // World point -> canvas pixels, for cropping a screenshot in on something small. The
   // browser checks in docs/HANDOFF.md are the only caller: a state assertion will happily
@@ -5991,11 +6194,14 @@
   MI.world.setTheme = setTheme;
   MI.world.setSatellite = setSatellite;
   MI.world.setPet = setPet;
+  MI.world.setPets = setPets;
   MI.world.feedPet = feedPet;
   MI.world.setGroundView = setGroundView;
   MI.world.isGroundView = isGroundView;
   MI.world.onGroundView = onGroundView;
   MI.world.onLookMemory = function (cb) { lookMemoryListener = cb; };
+  MI.world.onLookPet = function (cb) { lookPetListener = cb; };
+  MI.world.lookedPet = function () { return state && state.lookedPetOwner || null; };
   MI.world.onViewChange = onViewChange;
   MI.world.setCharacter = setCharacter;
   MI.world.characters = function () { return MI.world.player.list(); };

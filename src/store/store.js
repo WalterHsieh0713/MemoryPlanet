@@ -25,7 +25,7 @@
 
   function emptyWorld() {
     return {
-      version: 4, nextSlot: null, home: null, seed: Date.now(),
+      version: 5, nextSlot: null, home: null, seed: Date.now(),
       // Set once the journal is created on the shelf. An empty ocean used as a boot backdrop
       // has neither, and save() refuses to write it over a real journal.
       id: null, name: null,
@@ -56,7 +56,9 @@
       // Pets walk on the land, satellites orbit in the sky (src/game/economy.js). Separate
       // slots on purpose: a world can have one of each out at once.
       unlocks: { themes: ['meadow'], pets: [], satellites: [], skins: ['classic'] },
-      equipped: { theme: 'meadow', pet: null, satellite: null, skin: 'classic' },
+      // `pets` is an owner map, not one slot: 'player' or a person's id -> the pet at their
+      // heels, since a pet belongs to somebody now rather than to the world.
+      equipped: { theme: 'meadow', pets: {}, satellite: null, skin: 'classic' },
       // Consumable treats bought for pets (src/game/economy.js). Counts, not unlocks.
       pantry: {}
     };
@@ -101,7 +103,16 @@
     w.equipped.satellite = was && !LAND_PETS_AT_V4[was] ? was : null;
   }
 
-  // Fill anything an older save is missing, so the rest of the app can rely on the v4 shape.
+  // Up to v4 a world had one `equipped.pet` and no notion of whose it was. v5 makes a pet
+  // belong to somebody, so the old single pet becomes the player's -- in effect it always
+  // was, since it followed nobody and the player is the one constant in every world.
+  function giveThePetAnOwner(w) {
+    var was = w.equipped.pet || null;
+    w.equipped.pets = was ? { player: was } : {};
+    delete w.equipped.pet;
+  }
+
+  // Fill anything an older save is missing, so the rest of the app can rely on the v5 shape.
   function normalize(w) {
     var fresh = emptyWorld();
     if (!w.memories) w.memories = [];
@@ -123,7 +134,8 @@
       });
     });
     if (!(w.version >= 4)) splitPets(w);
-    w.version = 4;
+    if (!(w.version >= 5)) giveThePetAnOwner(w);
+    w.version = 5;
     if (w.name != null) w.name = clampName(w.name) || null;
     return w;
   }

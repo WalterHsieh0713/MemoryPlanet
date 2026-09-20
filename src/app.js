@@ -579,22 +579,42 @@
   }
 
   // Unlock-aware equip: records it (MI.economy) and shows it on the planet.
-  function equip(kind, id) {
-    if (!MI.economy.equip(kind, id)) return false;
+  // `owner` is only meaningful for pets ('player' or a person's id), since a pet belongs to
+  // somebody while a theme belongs to the world. The whole map goes to the world afterwards,
+  // because moving a pet from one person to another is a removal and an addition at once.
+  function equip(kind, id, owner) {
+    if (!MI.economy.equip(kind, id, owner)) return false;
     if (kind === 'themes') MI.world.setTheme(id);
-    else if (kind === 'pets') MI.world.setPet(id);
+    else if (kind === 'pets') MI.world.setPets(MI.store.get().equipped.pets);
     else if (kind === 'satellites') MI.world.setSatellite(id);
     else if (kind === 'skins') MI.world.setSkin(id);
     return true;
   }
 
-  // Spend one treat from the pantry on a pet you own. The overlay is the moment;
-  // this only takes the food. An unknown pet or an empty jar leaves the pantry alone.
-  function feedPet(foodId, petId) {
-    var who = petId || MI.store.get().equipped.pet;
-    if (!who || !MI.economy.owns('pets', who)) return { ok: false, reason: 'no-pet' };
+  // Spend one treat from the pantry on one owner's pet. Both ways in end up here: the
+  // treats tray, which stages the moment in its own little scene, and pressing F at a pet
+  // in follow mode, which drops the food where the animal is actually standing.
+  // `world` is left alone if there is no such pet or the jar is empty.
+  function feedPet(foodId, owner) {
+    var who = owner || 'player';
+    if (!MI.economy.petFor(who)) return { ok: false, reason: 'no-pet' };
     if (!MI.economy.takeFood(foodId)) return { ok: false, reason: 'empty' };
-    return { ok: true, item: MI.economy.find('food', foodId), petId: who };
+    return { ok: true, item: MI.economy.find('food', foodId), owner: who };
+  }
+
+  // The F door: buy one if the jar is empty, then feed it and drop it in the world.
+  function buyAndFeedPet(foodId, owner) {
+    var who = owner || 'player';
+    if (!MI.economy.petFor(who)) return { ok: false, reason: 'no-pet' };
+    if (MI.economy.stock(foodId) < 1) {
+      var bought = MI.economy.buy('food', foodId);
+      if (!bought.ok) return bought;
+    }
+    var fed = feedPet(foodId, who);
+    if (!fed.ok) return fed;
+    MI.world.feedPet(foodId, who);
+    emit({ type: 'fed', item: fed.item, owner: who });
+    return fed;
   }
 
   // Replay a stored world onto the scene: swap the grid, cosmetics and character, then
@@ -615,7 +635,7 @@
       });
     }).then(function () {
       MI.world.setTheme(world.equipped.theme);
-      MI.world.setPet(world.equipped.pet);
+      MI.world.setPets(world.equipped.pets);
       MI.world.setSatellite(world.equipped.satellite);
       MI.world.setSkin(world.equipped.skin);
       // A wiped or brand-new world is all ocean, so claim the home tile and put the house
@@ -688,7 +708,7 @@
 
   MI.app = {
     addEntry: addEntry, updateEntry: updateEntry, restore: restore, growPlanet: growPlanet,
-    equip: equip, feedPet: feedPet, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
+    equip: equip, feedPet: feedPet, buyAndFeedPet: buyAndFeedPet, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
     ensureHub: ensureHub, setMemoryPhoto: setMemoryPhoto, dressPerson: dressPerson,
     rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
     claimShip: claimShip, checkShips: checkShips

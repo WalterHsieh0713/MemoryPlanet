@@ -208,42 +208,72 @@
   var BLEND_SECONDS = 0.18;   // standing <-> walking crossfade
   // Model units one walk cycle covers, near enough: the clips animate in place, so this is the
   // rate that looks right rather than a measurement. Raise it to turn the legs over slower.
+  // PER KIND, because the packs are modelled at very different raw sizes and the rate is in
+  // the MODEL's own units: a pet is drawn at PET_SPHERE_SCALE (0.07) against a resident's 0.33,
+  // so the same walking pace comes out as 10 model units a second for a pet and 2.1 for a
+  // person. On one shared stride of 1.9 the pet asked for 5.3x and got MAX_RATE, which is why
+  // its legs whirred at a fixed rate that had nothing to do with how fast it was going.
   var WALK_STRIDE = 1.9;
+  var STRIDE = { animal: 9.0, character: 1.9, ship: 1.9 };
+  // The run clips are already about twice the speed of the walk ones, so a runner needs
+  // roughly twice the stride to come out at the same sane rate.
+  var RUN_STRIDE_MULTIPLE = 2;
+  // Above this many strides a second it is running rather than walking.
+  var RUN_AT = 1.5;
   var MIN_RATE = 0.55, MAX_RATE = 2.2;
 
   // `phase` (0..1) offsets where in the cycle this instance starts, so a crowd of residents
   // doesn't march in lockstep. Returns null when the model has nothing to play.
-  function makeAnimator(model, phase) {
+  function makeAnimator(model, phase, stride) {
     var clips = clipsOf.get(model);
     if (!clips || !clips.length) return null;
-    var walkClip = THREE.AnimationClip.findByName(clips, 'walk');
-    var idleClip = THREE.AnimationClip.findByName(clips, 'idle');
-    if (!walkClip && !idleClip) return null;
+    var pace = stride || WALK_STRIDE;
+    function clip(name) { return THREE.AnimationClip.findByName(clips, name); }
+    // The character pack calls its fast gait `sprint`, the pets call theirs `run`.
+    var found = { idle: clip('idle'), walk: clip('walk'),
+      run: clip('run') || clip('sprint'), eat: clip('eat') };
+    if (!found.walk && !found.idle) return null;
 
     var mixer = new THREE.AnimationMixer(model);
-    // Both actions run the whole time and are cross-weighted, so nothing has to be started,
-    // stopped or scheduled as the walker sets off and stops again.
-    var walk = walkClip && mixer.clipAction(walkClip);
-    var idle = idleClip && mixer.clipAction(idleClip);
-    if (walk) { walk.play(); walk.setEffectiveWeight(0); walk.time = (phase || 0) * walkClip.duration; }
-    if (idle) { idle.play(); idle.setEffectiveWeight(1); idle.time = (phase || 0) * idleClip.duration; }
-    var blend = 0; // 0 standing, 1 walking
+    // Every action runs the whole time and they are cross-weighted, so nothing has to be
+    // started, stopped or scheduled as the walker sets off, speeds up, eats and stops again.
+    var actions = {}, weight = {};
+    Object.keys(found).forEach(function (name) {
+      if (!found[name]) return;
+      actions[name] = mixer.clipAction(found[name]);
+      actions[name].play();
+      actions[name].time = (phase || 0) * found[name].duration;
+      weight[name] = name === 'idle' ? 1 : 0;
+      actions[name].setEffectiveWeight(weight[name]);
+    });
+
+    var doing = null; // an action that overrides the gait, e.g. 'eat'
 
     return {
+      // Something the walker is busy with, which beats walking and standing. null to go back
+      // to getting about.
+      setAction: function (name) { doing = actions[name] ? name : null; },
       // `speed` is the distance covered this frame in the MODEL's own units (world distance
       // divided by the scale it is drawn at), so one setting works at every planet size.
       update: function (dt, speed) {
-        var target = speed > 1e-4 ? 1 : 0;
+        var strides = speed / pace;
+        var want = doing ? doing
+          : speed <= 1e-4 ? 'idle'
+          : (actions.run && strides > RUN_AT) ? 'run'
+          : actions.walk ? 'walk' : 'idle';
+        if (!actions[want]) want = actions.idle ? 'idle' : want;
         var step = dt / BLEND_SECONDS;
-        blend += Math.max(-step, Math.min(step, target - blend));
-        if (walk) {
-          walk.setEffectiveWeight(blend);
-          if (target) {
-            walk.setEffectiveTimeScale(
-              Math.max(MIN_RATE, Math.min(MAX_RATE, speed / WALK_STRIDE)));
-          }
+        Object.keys(actions).forEach(function (name) {
+          var target = name === want ? 1 : 0;
+          weight[name] += Math.max(-step, Math.min(step, target - weight[name]));
+          actions[name].setEffectiveWeight(weight[name]);
+        });
+        // Turn the legs over at the rate the thing is actually travelling at.
+        if (want === 'walk' || want === 'run') {
+          var rate = want === 'run' ? strides / RUN_STRIDE_MULTIPLE : strides;
+          actions[want].setEffectiveTimeScale(
+            Math.max(MIN_RATE, Math.min(MAX_RATE, rate)));
         }
-        if (idle) idle.setEffectiveWeight(1 - blend);
         mixer.update(dt);
       },
       dispose: function () {
@@ -288,8 +318,8 @@
       var phase = Math.random();
       var sphere = newWalker(spec); sphere.group = cloneModel(template);
       var flat = newWalker(spec); flat.group = cloneModel(template);
-      sphere.animator = makeAnimator(sphere.group, phase);
-      flat.animator = makeAnimator(flat.group, phase);
+      sphere.animator = makeAnimator(sphere.group, phase, STRIDE[kind]);
+      flat.animator = makeAnimator(flat.group, phase, STRIDE[kind]);
       return { kind: kind, sphere: sphere, flat: flat };
     });
   }
@@ -304,7 +334,7 @@
       if (!template) return null;
       var walker = newWalker(KINDS[kind]);
       walker.group = cloneModel(template);
-      walker.animator = makeAnimator(walker.group, Math.random());
+      walker.animator = makeAnimator(walker.group, Math.random(), STRIDE[kind]);
       return walker;
     });
   }
@@ -549,6 +579,54 @@
     return { dwell: dwell, heading: heading };
   }
 
+  // --- Following an owner -------------------------------------------------------------------
+  // A pet belongs to somebody and keeps station near them rather than wandering the tiles on
+  // its own. Gaps are in TILE-WIDTHS, like every other distance a walker measures, so one set
+  // of numbers holds at every planet size and in both views.
+  var FOLLOW_HEEL = 0.9;    // within this it is "with them" and stands
+  var FOLLOW_CHASE = 3.5;   // beyond this it has been left behind and runs to catch up
+  var FOLLOW_CAUGHT = 0.45; // once moving it closes to HERE before stopping -- see below
+
+  // Two thresholds rather than one, because with a single line a pet starting and stopping
+  // as its owner drifts a hair either side of it jitters on the spot. Standing, it waits
+  // until the gap opens past the heel; moving, it closes right up before it settles.
+  function followGait(gap, moving) {
+    if (gap >= FOLLOW_CHASE) return 'run';
+    return gap <= (moving ? FOLLOW_CAUGHT : FOLLOW_HEEL) ? 'hold' : 'walk';
+  }
+
+  // Hand a pet a treat: it stops where it is and eats for `seconds`, then picks the follow
+  // back up. Deliberately a plain countdown on the walker rather than a mode somewhere else
+  // -- the pet is the only thing that needs to know it is busy.
+  function feed(walker, seconds) {
+    walker.eatLeft = seconds;
+  }
+
+  // What a pet is doing this frame. Eating beats everything; otherwise it is keeping station
+  // with its owner. `gap` is the distance to them in tile-widths.
+  function petGait(walker, gap, dt) {
+    if (walker.eatLeft > 0) {
+      walker.eatLeft -= dt;
+      if (walker.eatLeft > 0) return 'eat';
+      walker.eatLeft = 0;
+    }
+    var gait = followGait(gap, !!walker.following);
+    walker.following = gait !== 'hold';
+    return gait;
+  }
+
+  // Which way to set off, on the planet. A pet walks the surface, so the direction to its
+  // owner is the component of the straight line between them that lies FLAT where the pet is
+  // standing -- the line itself points down through the ground. Null when there is no such
+  // direction: the two are on the same spot, or exactly opposite, and either way there is no
+  // one way to go.
+  var tangentTmp = new THREE.Vector3();
+  function followTangent(fromDir, toDir) {
+    tangentTmp.copy(toDir).addScaledVector(fromDir, -toDir.dot(fromDir));
+    if (tangentTmp.lengthSq() < 1e-12) return null;
+    return tangentTmp.clone().normalize();
+  }
+
   // --- Facing -------------------------------------------------------------------------------
   // A road bends by up to 60 degrees at a tile boundary, and snapping to the new heading there
   // spun the walker on the spot in the middle of a stride. Turn toward it at a limited rate
@@ -763,6 +841,12 @@
     makeAnimator: makeAnimator,
     portraitUrl: portraitUrl,
     isShown: isShown,
+    followGait: followGait,
+    followTangent: followTangent,
+    feed: feed,
+    petGait: petGait,
+    FOLLOW_HEEL: FOLLOW_HEEL,
+    FOLLOW_CHASE: FOLLOW_CHASE,
     pickLoiterSpot: pickLoiterSpot,
     stepSpot: stepSpot,
     makeWalkerPair: makeWalkerPair,

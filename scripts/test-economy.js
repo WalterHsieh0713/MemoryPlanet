@@ -7,7 +7,7 @@ globalThis.MI = {
     _world: {
       wallet: { shards: 40, lifetime: 40, streak: 0, lastDay: null },
       unlocks: { themes: ['meadow'], pets: [], satellites: [], skins: ['classic'] },
-      equipped: { theme: 'meadow', pet: null, satellite: null, skin: 'classic' },
+      equipped: { theme: 'meadow', pets: {}, satellite: null, skin: 'classic' },
       pantry: {},
       memories: []
     },
@@ -54,17 +54,18 @@ MI.store.get().wallet.shards = 20;
 viaBuy = economy.buy('food', 'cookie');
 check(viaBuy.ok && economy.stock('cookie') === 1, 'buy("food") still fills the pantry');
 
+// Who is out, and whose they are.
 MI.store.get().unlocks.pets = ['fox', 'bunny', 'dog'];
-MI.store.get().equipped.pet = 'dog';
-var order = economy.petsForFeed().map(function (p) { return p.id; });
-check(order[0] === 'dog', 'the pet that is out is first in the feed list');
-check(order.join(',') === 'dog,bunny,fox', 'owned pets keep catalog order after the one that is out');
-MI.store.get().equipped.pet = null;
-order = economy.petsForFeed().map(function (p) { return p.id; });
-check(order[0] === 'bunny', 'with nobody out, catalog order stands');
+economy.equip('pets', 'dog', 'player');
+economy.equip('pets', 'fox', 'person-sam');
+var out = economy.petsOut();
+check(out.length === 2, 'two pets are out, got ' + out.length);
+check(economy.petFor('player') === 'dog', 'the player walks the dog');
+check(out.filter(function (r) { return r.owner === 'person-sam'; })[0].id === 'fox',
+  'and Sam has the fox');
 
 if (failed) {
   console.error(failed + ' failed');
   process.exit(1);
 }
-console.log('ok — food pantry, coins, stacking treats');
+console.log('ok — food pantry, coins, pet owners');
