@@ -2109,16 +2109,34 @@
   }
 
   var thoughtId = null;
+  var thoughtPersonId = null;
 
   function hideThought() {
     thoughtId = null;
+    thoughtPersonId = null;
     if (!el.thought) return;
     el.thought.classList.remove('show');
     el.thought.setAttribute('aria-hidden', 'true');
   }
 
+  function latestMemoryWith(personId) {
+    if (!personId) return null;
+    var list = memoriesWithPerson(MI.store.get(), personId);
+    return list.length ? list[0] : null;
+  }
+
+  function showPersonMemory(personId, pos) {
+    var memory = latestMemoryWith(personId);
+    if (!memory || !memory.placement) { hideThought(); return false; }
+    thoughtPersonId = personId;
+    MI.world.highlightSlot(memory.placement.slot, { soft: true });
+    if (pos) showThought(memory, pos);
+    return true;
+  }
+
   function showThought(memory, pos) {
-    if (!el.thought || !memory || !pos || overlaysOpen()) { hideThought(); return; }
+    if (!el.thought || !memory || !pos) { hideThought(); return; }
+    if (overlaysOpen() && !thoughtPersonId) { hideThought(); return; }
     if (thoughtId !== memory.id) {
       thoughtId = memory.id;
       el['thought-title'].textContent = memoryReminder(memory);
@@ -3332,6 +3350,7 @@
       if (e.target === el['pet-feed']) closePetFeed(); // the dimmed surround
     });
     MI.world.onLookMemory(function (memory, pos) {
+      if (thoughtPersonId) return; // hovering a friend owns the bubble until the pointer leaves
       if (memory && pos) showThought(memory, pos);
       else hideThought();
     });
@@ -3491,8 +3510,16 @@
 
     // Pointer cursor only over tiles that open something, and a light mark under it. When
     // the pointer leaves, the open entry's own mark comes back.
-    MI.world.onHover(function (slot) {
+    MI.world.onHover(function (slot, extra) {
       if (document.body.classList.contains('gated')) { hideHubTip(); return false; }
+      if (extra && extra.personId) {
+        hideHubTip();
+        return showPersonMemory(extra.personId, extra.screen);
+      }
+      if (thoughtPersonId) {
+        thoughtPersonId = null;
+        if (!MI.world.isGroundView()) hideThought();
+      }
       if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
         if (!MI.world.isGroundView()) MI.world.highlightSlot(slot, { soft: true });
         showHubTip(MI.world.isGroundView());

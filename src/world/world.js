@@ -566,6 +566,12 @@
   var NAMETAG_WORLD_W = 0.9;
   var NAMETAG_WORLD_H = 0.24;
   var NAMETAG_HEAD_Y = 0.92; // Mini Characters rest at y=0 and stand ~0.7 tall
+  // Scratch for hideFarNameTags — reused every frame, never allocated in the loop.
+  var nameTagWorld = new THREE.Vector3();
+  var nameTagCam = new THREE.Vector3();
+  var nameTagOrigin = new THREE.Vector3();
+  // Hide a little before the limb so a tag does not clip a sliver through the silhouette.
+  var NAMETAG_FRONT = 0.12;
 
   function makeNameTag(text) {
     var canvas = document.createElement('canvas');
@@ -600,7 +606,7 @@
     var tex = new THREE.CanvasTexture(canvas);
     tex.encoding = THREE.sRGBEncoding;
     var mat = new THREE.SpriteMaterial({
-      map: tex, transparent: true, depthTest: false, depthWrite: false
+      map: tex, transparent: true, depthTest: true, depthWrite: false
     });
     var sprite = new THREE.Sprite(mat);
     sprite.position.y = NAMETAG_HEAD_Y;
@@ -633,6 +639,23 @@
     group.children.forEach(function (ch) {
       if (!ch.userData || !ch.userData.isNameTag) return;
       ch.scale.set(ch.userData.nameTagWorldW / s, ch.userData.nameTagWorldH / s, 1);
+    });
+  }
+
+  // Sprites would otherwise draw through the planet: they billboard and, even with depth
+  // testing, a tag on the far hemisphere can still peek around the silhouette. Hide any
+  // tag whose person is not on the face of the planet the camera is looking at.
+  function hideFarNameTags(group) {
+    if (!group || !state || !state.camera || !state.planet) return;
+    group.getWorldPosition(nameTagWorld);
+    state.camera.getWorldPosition(nameTagCam);
+    state.planet.getWorldPosition(nameTagOrigin);
+    nameTagWorld.sub(nameTagOrigin);
+    nameTagCam.sub(nameTagOrigin);
+    var facing = nameTagWorld.dot(nameTagCam);
+    var shown = facing > NAMETAG_FRONT * nameTagWorld.length() * nameTagCam.length();
+    group.children.forEach(function (ch) {
+      if (ch.userData && ch.userData.isNameTag) ch.visible = shown;
     });
   }
 
@@ -3190,6 +3213,7 @@
       });
       sizeNameTag(pair.sphere.group);
       sizeNameTag(pair.flat.group);
+      hideFarNameTags(pair.sphere.group);
     });
   }
 
@@ -4340,12 +4364,16 @@
     // One raycast per frame at most — picking on the planet walks the whole merged mesh.
     var hoverCursor = 'grab';
     var hoverPending = null;
+    var hoverPoint = null;
+    var hoveringPerson = false;
     canvasEl.addEventListener('mousemove', function (e) {
       if (dragging || state.transition) return;
       hoverPending = e;
+      hoverPoint = { x: e.clientX, y: e.clientY };
     });
     canvasEl.addEventListener('mouseleave', function () {
       hoverPending = null;
+      hoverPoint = null;
       hoverCursor = 'grab';
       canvasEl.style.cursor = 'grab';
       if (state.galaxy && state.galaxy.on) {
@@ -4356,8 +4384,9 @@
       if (hoverListener) hoverListener(null);
     });
     state.pollHover = function () {
-      if (!hoverPending || dragging || state.transition) return;
+      if (dragging || state.transition) return;
       if (state.hub && state.hub.on) {
+        if (!hoverPending) return;
         var event = hoverPending;
         hoverPending = null;
         var hid = pickHubLook(event, canvasEl, true);
@@ -4366,6 +4395,26 @@
         canvasEl.style.cursor = hoverCursor;
         return;
       }
+      var locked = typeof document !== 'undefined' && document.pointerLockElement;
+      var canHoverPeople = state.flatMode && hoverPoint && !locked
+        && (state.camMode === 'orbit' || state.camMode === 'ground');
+      if (canHoverPeople && offerPersonHoverAt(hoverPoint.x, hoverPoint.y)) {
+        hoveringPerson = true;
+        hoverCursor = 'pointer';
+        canvasEl.style.cursor = hoverCursor;
+        hoverPending = null;
+        return;
+      }
+      if (hoveringPerson) {
+        hoveringPerson = false;
+        if (!hoverPending) {
+          if (hoverListener) hoverListener(null);
+          hoverCursor = state.camMode === 'ground' ? 'default' : 'grab';
+          canvasEl.style.cursor = hoverCursor;
+          return;
+        }
+      }
+      if (!hoverPending) return;
       if (state.camMode === 'ground') {
         var groundEvent = hoverPending;
         hoverPending = null;
@@ -4377,24 +4426,24 @@
         return;
       }
       if (state.camMode !== 'orbit') { hoverPending = null; return; }
-      var event = hoverPending;
+      var orbitEvent = hoverPending;
       hoverPending = null;
       if (state.galaxy && state.galaxy.on) {
         if (state.galaxy.busy) return;
-        var gid = pickGalaxy(event, canvasEl);
+        var gid = pickGalaxy(orbitEvent, canvasEl);
         if (setGalaxyHover(gid) && galaxyHoverListener) galaxyHoverListener(gid);
         hoverCursor = gid ? 'pointer' : 'grab';
         canvasEl.style.cursor = hoverCursor;
         return;
       }
-      var shipId = pickShip(event, canvasEl);
+      var shipId = pickShip(orbitEvent, canvasEl);
       if (shipId) {
         if (hoverListener) hoverListener(null);
         hoverCursor = 'pointer';
         canvasEl.style.cursor = hoverCursor;
         return;
       }
-      var slot = pickSlot(event, canvasEl);
+      var slot = pickSlot(orbitEvent, canvasEl);
       var over = hoverListener ? hoverListener(slot == null ? null : slot) : false;
       hoverCursor = over ? 'pointer' : 'grab';
       canvasEl.style.cursor = hoverCursor;
@@ -5967,11 +6016,14 @@
 
     if (state.flatMode) {
       // Flat tiles are whole models, so the hit lands on some mesh deep inside a tile
-      // group — walk back up to whichever ancestor carries the slot tag.
+      // group — walk back up to whichever ancestor carries the slot tag. Skip people:
+      // they stand on a tile, and hovering them is its own path (pickPerson).
       var flatHits = raycaster.intersectObject(state.flatGroup, true);
       for (var i = 0; i < flatHits.length; i++) {
         for (var node = flatHits[i].object; node; node = node.parent) {
-          if (node.userData && node.userData.tag) return node.userData.tag.slot;
+          var tag = node.userData && node.userData.tag;
+          if (!tag || tag.type === 'person') continue;
+          return tag.slot;
         }
       }
       return null;
@@ -5981,6 +6033,95 @@
     var hits = raycaster.intersectObject(state.planetMesh);
     if (!hits.length) return null;
     return state.faceToTileId[hits[0].faceIndex];
+  }
+
+  // How close the pointer must be to a friend's on-screen figure, in pixels. Characters are
+  // a third of a house and the island camera sits far off, so a mesh raycast misses often.
+  var PERSON_HOVER_PX = 72;
+
+  function dist2ToSegment(px, py, ax, ay, bx, by) {
+    var abx = bx - ax, aby = by - ay;
+    var apx = px - ax, apy = py - ay;
+    var ab2 = abx * abx + aby * aby;
+    var t = ab2 < 1e-6 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2));
+    var dx = px - (ax + abx * t), dy = py - (ay + aby * t);
+    return dx * dx + dy * dy;
+  }
+
+  function projectToScreen(v, slack) {
+    if (!state || !state.camera) return null;
+    var p = v.clone().project(state.camera);
+    var pad = slack ? 1.8 : 1.35;
+    if (p.z > 1 || p.x < -pad || p.x > pad || p.y < -pad || p.y > pad) return null;
+    var canvas = state.renderer.domElement;
+    var box = canvas.getBoundingClientRect();
+    return {
+      x: box.left + (p.x * 0.5 + 0.5) * box.width,
+      y: box.top + (-p.y * 0.5 + 0.5) * box.height
+    };
+  }
+
+  function personHeadWorld(personId) {
+    if (!state || !personId) return null;
+    var pair = state.residentWalkers[personId];
+    if (!pair) return null;
+    var group = state.flatMode ? pair.flat.group : pair.sphere.group;
+    if (!group || !group.parent) return null;
+    if (MI.world.walkers && !MI.world.walkers.isShown(group)) return null;
+    var v = new THREE.Vector3();
+    group.getWorldPosition(v);
+    v.y += NAMETAG_HEAD_Y * (group.scale.y || 1) + 0.22;
+    return v;
+  }
+
+  function personScreenPos(personId) {
+    var head = personHeadWorld(personId);
+    return head ? projectToScreen(head, false) : null;
+  }
+
+  // Nearest friend to the pointer on the island: hit their mesh if we can, otherwise the
+  // on-screen line from feet to head. Re-run every frame so the bubble follows them.
+  function pickPersonAt(clientX, clientY) {
+    if (!state || !state.flatMode || !state.residentWalkers) return null;
+    var reach = PERSON_HOVER_PX * PERSON_HOVER_PX;
+    var best = null, bestD = reach;
+    Object.keys(state.residentWalkers).forEach(function (id) {
+      var pair = state.residentWalkers[id];
+      var group = pair && pair.flat && pair.flat.group;
+      if (!group || !group.parent) return;
+      if (MI.world.walkers && !MI.world.walkers.isShown(group)) return;
+      var feet = new THREE.Vector3();
+      group.getWorldPosition(feet);
+      var head = feet.clone();
+      head.y += NAMETAG_HEAD_Y * (group.scale.y || 1);
+      var a = projectToScreen(feet, true);
+      var b = projectToScreen(head, true);
+      if (!a && !b) return;
+      if (!a) a = b;
+      if (!b) b = a;
+      var d = dist2ToSegment(clientX, clientY, a.x, a.y, b.x, b.y);
+      if (d < bestD) { bestD = d; best = id; }
+    });
+    return best;
+  }
+
+  function offerPersonHoverAt(clientX, clientY) {
+    var id = pickPersonAt(clientX, clientY);
+    if (!id) return false;
+    if (hoverListener) hoverListener(null, { personId: id, screen: personScreenPos(id) });
+    return true;
+  }
+
+  // A friend under the pointer on the island. Asked before pickSlot so hovering them can
+  // mark their latest memory instead of the tile they happen to be standing on.
+  function pickPerson(e, canvasEl) {
+    if (!e) return null;
+    return pickPersonAt(e.clientX, e.clientY);
+  }
+
+  function offerPersonHover(e, canvasEl) {
+    if (!e) return false;
+    return offerPersonHoverAt(e.clientX, e.clientY);
   }
 
   // A ship under the pointer, if there is one. Asked BEFORE pickSlot by whoever handles the
