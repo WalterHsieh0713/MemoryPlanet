@@ -53,6 +53,7 @@
       'galaxy-new',
       'ship-card', 'ship-close', 'ship-flag', 'ship-name', 'ship-ask', 'ship-bar', 'ship-fill',
       'ship-count', 'ship-claim',
+      'hub-tip', 'hub-tip-sub',
       'hub-ui', 'hub-leave', 'hub-card', 'hub-card-name', 'hub-card-sub',
       'hub-card-friend', 'hub-card-friend-meta', 'hub-card-titles',
       'hub-card-swap', 'hub-card-close',
@@ -1385,12 +1386,41 @@
     });
   }
 
+  var hubTipX = 0, hubTipY = 0;
+
+  function hideHubTip() {
+    if (!el['hub-tip']) return;
+    el['hub-tip'].hidden = true;
+    el['hub-tip'].classList.remove('show');
+    el['hub-tip'].setAttribute('aria-hidden', 'true');
+  }
+
+  function showHubTip(ground) {
+    if (!el['hub-tip'] || document.pointerLockElement) { hideHubTip(); return; }
+    if (el['hub-tip-sub']) {
+      el['hub-tip-sub'].textContent = ground ? 'Walk up to enter' : 'Click to meet friends';
+    }
+    el['hub-tip'].hidden = false;
+    el['hub-tip'].classList.add('show');
+    el['hub-tip'].setAttribute('aria-hidden', 'false');
+    placeHubTip(hubTipX, hubTipY);
+  }
+
+  function placeHubTip(x, y) {
+    hubTipX = x;
+    hubTipY = y;
+    if (!el['hub-tip'] || !el['hub-tip'].classList.contains('show')) return;
+    el['hub-tip'].style.left = x + 'px';
+    el['hub-tip'].style.top = y + 'px';
+  }
+
   function openHub() {
     closeSettings();
     closeShop();
     closePicker();
     hideDetail();
     hideShip();
+    hideHubTip();
     if (isBookBusy()) closeBook();
     closeHubCard();
     return Promise.resolve(MI.world.enterHub());
@@ -1404,6 +1434,7 @@
   function syncHubUi(on) {
     document.body.classList.toggle('hub', !!on);
     if (el['hub-ui']) el['hub-ui'].setAttribute('aria-hidden', on ? 'false' : 'true');
+    if (on) hideHubTip();
     if (on) {
       closeSettings();
       closeShop();
@@ -2912,16 +2943,22 @@
     // Pointer cursor only over tiles that open something, and a light mark under it. When
     // the pointer leaves, the open entry's own mark comes back.
     MI.world.onHover(function (slot) {
-      if (document.body.classList.contains('gated')) return false;
+      if (document.body.classList.contains('gated')) { hideHubTip(); return false; }
       if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
-        MI.world.highlightSlot(slot, { soft: true });
+        if (!MI.world.isGroundView()) MI.world.highlightSlot(slot, { soft: true });
+        showHubTip(MI.world.isGroundView());
         return true;
       }
+      hideHubTip();
       var memory = slot === null || slot === undefined ? null : MI.store.findMemoryBySlot(slot);
       if (memory) MI.world.highlightSlot(slot, { soft: true });
       else if (openSlot === null) MI.world.clearHighlight();
       else MI.world.highlightSlot(openSlot);
       return !!memory;
+    });
+
+    window.addEventListener('pointermove', function (e) {
+      placeHubTip(e.clientX, e.clientY);
     });
 
     MI.world.onGalaxyHover(function (id) {
@@ -2943,6 +2980,7 @@
       enterExisting(id);
     });
     MI.world.onGalaxyFrame(syncGalaxyLabels);
+    MI.world.onViewChange(hideHubTip);
     MI.world.onHubPick(showHubCard);
     MI.world.onHubChange(syncHubUi);
     el['hub-leave'].addEventListener('click', exitHub);
