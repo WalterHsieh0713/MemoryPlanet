@@ -34,20 +34,15 @@
   var BOB_RATE = 9;       // steps per second of the stand-in bob, for a model with no clips
   var BOB_HEIGHT = 0.035;
 
-  // id, the name under the card in the picker, and the fallback minifigure's colour.
-  // `file` is the .glb in PACK once one exists; null means "use the fallback".
+  // The twelve Kenney Mini Character looks. Ids stay stable so a saved world keeps the same
+  // body; names are internal only (the picker and hub show the model, not a label).
   var CHARACTERS = [
     { id: 'scout', name: 'Scout', color: 0xff9f68, model: 'male-a' },
     { id: 'sky', name: 'Sky', color: 0x7ec8e3, model: 'male-b' },
     { id: 'rose', name: 'Rose', color: 0xf7b7d2, model: 'female-a' },
     { id: 'fern', name: 'Fern', color: 0xa5d86e, model: 'female-b' },
     { id: 'iris', name: 'Iris', color: 0xc3a5f0, model: 'female-c' },
-    { id: 'sunny', name: 'Sunny', color: 0xffd97d, model: 'male-c' }
-  ];
-  // Extra Mini Character looks, shown in the friend hub. The first-run gate still offers
-  // the six named ones above; these are the rest of the pack, so a friend using one of
-  // them has a body on the plaza you can walk up to.
-  var EXTRA_LOOKS = [
+    { id: 'sunny', name: 'Sunny', color: 0xffd97d, model: 'male-c' },
     { id: 'ash', name: 'Ash', color: 0x9aa7b2, model: 'male-d' },
     { id: 'glen', name: 'Glen', color: 0x6b8f71, model: 'male-e' },
     { id: 'nico', name: 'Nico', color: 0x5c6b8a, model: 'male-f' },
@@ -61,7 +56,7 @@
   }
 
   function allLooks() {
-    return CHARACTERS.concat(EXTRA_LOOKS);
+    return CHARACTERS.slice();
   }
 
   function get(id) {

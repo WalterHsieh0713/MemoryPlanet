@@ -559,6 +559,91 @@
     return person;
   }
 
+  // A friend's name, floating just above the head. Sprites face the camera on their own, so
+  // the same plaque works on the planet (where up is the tile normal) and on the island.
+  // Size is kept in WORLD units by counter-scaling after the walker group is scaled, or a
+  // tag on a small planet would shrink to a speck and one on the island would cover a house.
+  var NAMETAG_WORLD_W = 0.9;
+  var NAMETAG_WORLD_H = 0.24;
+  var NAMETAG_HEAD_Y = 0.92; // Mini Characters rest at y=0 and stand ~0.7 tall
+
+  function makeNameTag(text) {
+    var canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    var ctx = canvas.getContext('2d');
+    var label = String(text || '').trim().slice(0, 18);
+    if (!label) return null;
+    ctx.font = '700 22px Quicksand, Nunito, sans-serif';
+    var w = Math.min(240, Math.max(64, ctx.measureText(label).width + 28));
+    var x = (256 - w) / 2, y = 16, h = 34, r = 12;
+    ctx.fillStyle = 'rgba(255, 247, 236, 0.94)';
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232, 201, 160, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#c45c26';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 128, y + h / 2 + 1);
+    var tex = new THREE.CanvasTexture(canvas);
+    tex.encoding = THREE.sRGBEncoding;
+    var mat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthTest: false, depthWrite: false
+    });
+    var sprite = new THREE.Sprite(mat);
+    sprite.position.y = NAMETAG_HEAD_Y;
+    sprite.center.set(0.5, 0);
+    sprite.renderOrder = 3;
+    sprite.userData.isNameTag = true;
+    sprite.userData.nameTagWorldW = NAMETAG_WORLD_W;
+    sprite.userData.nameTagWorldH = NAMETAG_WORLD_H;
+    return sprite;
+  }
+
+  function disposeNameTag(group) {
+    if (!group) return;
+    var drop = [];
+    group.children.forEach(function (ch) {
+      if (ch.userData && ch.userData.isNameTag) drop.push(ch);
+    });
+    drop.forEach(function (ch) {
+      group.remove(ch);
+      if (ch.material) {
+        if (ch.material.map) ch.material.map.dispose();
+        ch.material.dispose();
+      }
+    });
+  }
+
+  function sizeNameTag(group) {
+    if (!group) return;
+    var s = group.scale.x || 1;
+    group.children.forEach(function (ch) {
+      if (!ch.userData || !ch.userData.isNameTag) return;
+      ch.scale.set(ch.userData.nameTagWorldW / s, ch.userData.nameTagWorldH / s, 1);
+    });
+  }
+
+  function setNameTag(group, name) {
+    disposeNameTag(group);
+    var sprite = makeNameTag(name);
+    if (!sprite) return;
+    group.add(sprite);
+    sizeNameTag(group);
+  }
+
   function spawnPerson(person, options) {
     if (!state || !person || !person.placement) return Promise.resolve();
     var currentState = state;
@@ -583,6 +668,8 @@
       pair.flat.tileId = pair.flat.targetId = person.placement.slot;
       pair.sphere.group.userData.tag = { type: 'person', id: person.id, slot: person.placement.slot };
       pair.flat.group.userData.tag = pair.sphere.group.userData.tag;
+      setNameTag(pair.sphere.group, person.name);
+      setNameTag(pair.flat.group, person.name);
       state.residentWalkers[person.id] = pair;
       state.residentGroup.add(pair.sphere.group);
       if (state.flatMode && state.island) state.flatGroup.add(pair.flat.group);
@@ -2872,7 +2959,9 @@
   function disposeWalkerPair(pair) {
     if (!pair) return;
     ['sphere', 'flat'].forEach(function (view) {
-      if (pair[view] && pair[view].animator) pair[view].animator.dispose();
+      if (!pair[view]) return;
+      if (pair[view].animator) pair[view].animator.dispose();
+      disposeNameTag(pair[view].group);
     });
   }
 
@@ -2964,6 +3053,8 @@
           }
         }
       });
+      sizeNameTag(pair.sphere.group);
+      sizeNameTag(pair.flat.group);
     });
   }
 
@@ -2976,9 +3067,9 @@
   // sail on (buildIslandUnderside builds water UNDER the tiles), so there is nowhere to put
   // one; they are hidden with the rest of the planet when the view folds.
 
-  // Hulls are 8.8-13.1 long in their own units against a hexagon-kit tile's 1.0, so a ship
-  // takes roughly one tile of ocean at this scale — the size of the buildings, as asked.
-  var SHIP_SCALE = 0.11;
+  // Hulls are 8.8-13.1 long in their own units against a hexagon-kit tile's 1.0. At 0.07 a
+  // ship is a bit under a tile — smaller than the houses, still readable from orbit.
+  var SHIP_SCALE = 0.07;
   // How deep a hull sits IN the water, in the model's own units. Measured off the mesh: the
   // keel is at 0 and the hull reaches its full beam at about 1.75, which is the deck — so the
   // waterline is the tapering part below that. Sitting the model on y=0 like a building left
@@ -3645,6 +3736,85 @@
 
   function isGroundView() {
     return !!state && state.camMode === 'ground';
+  }
+
+  // Follow-mode thought bubbles: the memory building in front of you, close enough to read
+  // as "looking at it". Sticky once chosen so a glance off-centre does not flicker the card.
+  var lookMemoryListener = null;
+  var LOOK_NEAR = 2.8;
+  var LOOK_KEEP = 3.4;
+  var LOOK_DOT = 0.32;
+  var LOOK_KEEP_DOT = 0.05;
+
+  function pickLookedMemory() {
+    var p = activePlayer();
+    if (!p || !p.placed || !state.island || !state.island.centres) return null;
+    var world = MI.store.get();
+    var centres = state.island.centres;
+    var fx = state.groundForward.x, fz = state.groundForward.z;
+    var fl = Math.sqrt(fx * fx + fz * fz);
+    if (fl < 1e-6) return null;
+    fx /= fl; fz /= fl;
+    var reach = FLAT_SPACING;
+    var current = state.lookedMemoryId || null;
+    var best = null, bestScore = Infinity;
+
+    function consider(m, near, minDot) {
+      if (!m || !m.placement) return;
+      var c = centres[m.placement.slot];
+      if (!c) return;
+      var dx = c.x - p.x, dz = c.z - p.z;
+      var dist = Math.sqrt(dx * dx + dz * dz);
+      if (dist > reach * near) return;
+      var facing = 1;
+      if (dist > 0.12) facing = (dx * fx + dz * fz) / dist;
+      if (facing < minDot) return;
+      var score = dist / reach - facing;
+      if (score < bestScore) { bestScore = score; best = m; }
+    }
+
+    if (current) {
+      var keep = null;
+      (world.memories || []).forEach(function (m) { if (m.id === current) keep = m; });
+      consider(keep, LOOK_KEEP, LOOK_KEEP_DOT);
+      if (best) return best;
+    }
+
+    best = null; bestScore = Infinity;
+    (world.memories || []).forEach(function (m) { consider(m, LOOK_NEAR, LOOK_DOT); });
+    return best;
+  }
+
+  function memoryScreenPos(memory) {
+    if (!memory || !memory.placement || !state.island || !state.camera) return null;
+    var slot = memory.placement.slot;
+    var c = state.island.centres[slot];
+    if (!c) return null;
+    var y = (state.island.groundY && state.island.groundY[slot] || 0) + 0.48;
+    var v = new THREE.Vector3(c.x, y, c.z);
+    if (state.flatGroup) v.applyMatrix4(state.flatGroup.matrixWorld);
+    v.project(state.camera);
+    if (v.z > 1 || v.x < -1.35 || v.x > 1.35 || v.y < -1.4 || v.y > 1.4) return null;
+    var canvas = state.renderer.domElement;
+    var rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + (v.x * 0.5 + 0.5) * rect.width,
+      y: rect.top + (-v.y * 0.5 + 0.5) * rect.height
+    };
+  }
+
+  function notifyLookMemory() {
+    if (!lookMemoryListener) return;
+    var live = state.camMode === 'ground' && state.flatMode && !state.transition
+      && !(state.hub && state.hub.on);
+    if (!live) {
+      state.lookedMemoryId = null;
+      lookMemoryListener(null, null);
+      return;
+    }
+    var mem = pickLookedMemory();
+    state.lookedMemoryId = mem ? mem.id : null;
+    lookMemoryListener(mem, mem ? memoryScreenPos(mem) : null);
   }
 
   // Follow mode is the island's third-person camera. Entering glides the camera in from
@@ -5155,6 +5325,7 @@
       // caught too.
       if (state.folding) hideFigures();
       else if (figuresLive) showFigures();
+      notifyLookMemory();
       pollHubApproach();
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
@@ -5226,46 +5397,6 @@
     if (hubChangeListener) hubChangeListener(isHub());
   }
 
-  function makeHubLabel(text, ink) {
-    var canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
-    var ctx = canvas.getContext('2d');
-    var label = String(text || '').slice(0, 18);
-    ctx.font = '700 22px Quicksand, Nunito, sans-serif';
-    var w = Math.min(232, Math.max(72, ctx.measureText(label).width + 28));
-    var x = (256 - w) / 2, y = 16, h = 34, r = 12;
-    ctx.fillStyle = 'rgba(255, 247, 236, 0.94)';
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(232, 201, 160, 0.95)';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = ink || '#2c5f6f';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, 128, y + h / 2 + 1);
-    var tex = new THREE.CanvasTexture(canvas);
-    tex.encoding = THREE.sRGBEncoding;
-    var mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
-    var sprite = new THREE.Sprite(mat);
-    sprite.scale.set(1.6, 0.4, 1);
-    sprite.position.y = 1.08;
-    sprite.center.set(0.5, 0);
-    sprite.userData.isHubLabel = true;
-    return sprite;
-  }
-
   function hubIsLand(p) {
     // One disk, not a circle per hex: inscribed circles leave gaps at the hex corners,
     // which is what made walking seize up in some directions.
@@ -5280,6 +5411,7 @@
     state.hub.player = null;
     (state.hub.figures || []).forEach(function (fig) {
       if (fig.animator) fig.animator.dispose();
+      disposeNameTag(fig.group);
     });
     state.hub.figures = [];
     state.hub.blockers = [];
@@ -5291,24 +5423,7 @@
     }
   }
 
-  function retagHubFigures() {
-    if (!state || !state.hub) return;
-    var world = MI.store.get();
-    state.hub.figures.forEach(function (fig) {
-      var info = MI.world.hub.inspect(world, fig.id);
-      var toDrop = [];
-      fig.group.children.forEach(function (ch) {
-        if (ch.userData && ch.userData.isHubLabel) toDrop.push(ch);
-      });
-      toDrop.forEach(function (ch) { fig.group.remove(ch); });
-      var name = info.person ? info.person.name : info.look.name;
-      var ink = info.you ? '#2c5f6f' : (info.person ? '#c45c26' : '#3d6b52');
-      fig.group.add(makeHubLabel(name, ink));
-    });
-  }
-
   function placeHubFigures() {
-    var world = MI.store.get();
     var list = MI.world.hub.looks();
     var spots = MI.world.hub.figureSpots(list.length, FLAT_SPACING);
     var scale = FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE;
@@ -5324,10 +5439,6 @@
         holder.scale.setScalar(scale);
         holder.rotation.y = spot.yaw;
         holder.userData.tag = { type: 'hub-look', id: look.id };
-        var info = MI.world.hub.inspect(world, look.id);
-        var name = info.person ? info.person.name : look.name;
-        var ink = info.you ? '#2c5f6f' : (info.person ? '#c45c26' : '#3d6b52');
-        holder.add(makeHubLabel(name, ink));
         state.hub.group.add(holder);
         state.hub.figures.push({
           id: look.id,
@@ -5336,7 +5447,18 @@
           spot: spot
         });
       });
-    }));
+    })).then(function () {
+      retagHubFigures();
+    });
+  }
+
+  function retagHubFigures() {
+    if (!state || !state.hub) return;
+    var world = MI.store.get();
+    (state.hub.figures || []).forEach(function (fig) {
+      var info = MI.world.hub.inspect(world, fig.id);
+      setNameTag(fig.group, info && info.person ? info.person.name : '');
+    });
   }
 
   function placeHubPlayer() {
@@ -5873,6 +5995,7 @@
   MI.world.setGroundView = setGroundView;
   MI.world.isGroundView = isGroundView;
   MI.world.onGroundView = onGroundView;
+  MI.world.onLookMemory = function (cb) { lookMemoryListener = cb; };
   MI.world.onViewChange = onViewChange;
   MI.world.setCharacter = setCharacter;
   MI.world.characters = function () { return MI.world.player.list(); };

@@ -41,6 +41,10 @@
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
       'tag-mood', 'tag-cat', 'tag-big', 'mic-btn', 'settings-btn', 'settings',
+      'photo-row', 'photo-input', 'photo-btn', 'photo-btn-label', 'photo-preview',
+      'photo-preview-img', 'photo-clear',
+      'detail-photo', 'detail-photo-img', 'detail-photo-add', 'detail-photo-remove',
+      'detail-photo-input',
       'book-tabs-left', 'book-tabs-right', 'book-write-panel', 'book-right-body',
       'book-heading', 'book-mobile-tabs', 'write-title', 'edit-cancel', 'detail-edit',
       'world-title', 'world-title-text', 'journals-btn',
@@ -54,6 +58,7 @@
       'ship-card', 'ship-close', 'ship-flag', 'ship-name', 'ship-ask', 'ship-bar', 'ship-fill',
       'ship-count', 'ship-claim',
       'hub-tip', 'hub-tip-sub',
+      'thought', 'thought-title', 'thought-who', 'thought-when',
       'hub-ui', 'hub-leave', 'hub-card', 'hub-card-name', 'hub-card-sub',
       'hub-card-friend', 'hub-card-friend-meta', 'hub-card-titles',
       'hub-card-swap', 'hub-card-close',
@@ -271,6 +276,7 @@
     touched = {};
     el['tag-person-input'].value = '';
     paintTagRow();
+    setDraftPhoto(null);
   }
 
   function currentTags() {
@@ -281,6 +287,71 @@
       mood: mood ? { label: mood.label, valence: mood.valence, intensity: mood.intensity } : null,
       importance: tags.big ? 4 : null
     };
+  }
+
+  // Photos live as compressed jpeg data URLs on the Memory so a reload still has them.
+  // Kept small so localStorage (the whole journal) does not fill up on a handful of snaps.
+  var draftPhoto = null;
+  var PHOTO_MAX = 640;
+  var PHOTO_QUALITY = 0.72;
+
+  function setDraftPhoto(dataUrl) {
+    draftPhoto = dataUrl || null;
+    paintPhotoRow();
+  }
+
+  function paintPhotoRow() {
+    var has = !!draftPhoto;
+    if (el['photo-preview']) el['photo-preview'].hidden = !has;
+    if (el['photo-preview-img']) el['photo-preview-img'].src = draftPhoto || '';
+    if (el['photo-btn-label']) el['photo-btn-label'].textContent = has ? 'Change photo' : 'Add a photo';
+  }
+
+  function loadPhotoFile(file) {
+    if (!file) return Promise.reject(new Error('empty'));
+    if (file.type && file.type.indexOf('image/') !== 0) return Promise.reject(new Error('not-image'));
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: 'from-image' }).catch(function () {
+        return createImageBitmap(file);
+      });
+    }
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('bad-image')); };
+      img.src = url;
+    });
+  }
+
+  function compressPhoto(file) {
+    return loadPhotoFile(file).then(function (bmp) {
+      var w = bmp.width || bmp.naturalWidth;
+      var h = bmp.height || bmp.naturalHeight;
+      var scale = Math.min(1, PHOTO_MAX / Math.max(w, h, 1));
+      var cw = Math.max(1, Math.round(w * scale));
+      var ch = Math.max(1, Math.round(h * scale));
+      var canvas = document.createElement('canvas');
+      canvas.width = cw;
+      canvas.height = ch;
+      canvas.getContext('2d').drawImage(bmp, 0, 0, cw, ch);
+      if (bmp.close) bmp.close();
+      return canvas.toDataURL('image/jpeg', PHOTO_QUALITY);
+    });
+  }
+
+  function photoFail(err) {
+    if (err && err.message === 'quota') {
+      toast('📸', 'Not enough room', 'That photo is a bit large to keep. Try a smaller one.', 0, 3200);
+      return;
+    }
+    toast('📸', 'Could not use that photo', 'Try a jpg or png from your camera roll.', 0, 2800);
+  }
+
+  function pickPhotoIntoDraft(file) {
+    return compressPhoto(file).then(function (dataUrl) {
+      setDraftPhoto(dataUrl);
+    }).catch(photoFail);
   }
 
   // --- Opening the book ---------------------------------------------------------------------
@@ -294,10 +365,6 @@
 
   var bookView = { kind: 'write' };
   var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
-  var CLIP = {
-    achievement: '#c9a46a', everyday: '#8fbf7a', travel: '#6aa7c9',
-    home: '#d4a574', social: '#c989b0', other: '#9aa7b0'
-  };
 
   function isNarrowBook() {
     return window.matchMedia('(max-width: 680px)').matches;
@@ -502,6 +569,22 @@
     } catch (e) {
       return iso;
     }
+  }
+
+  function formatTime(iso) {
+    if (!iso || String(iso).length <= 10) return '';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function withTime(label, iso) {
+    var time = formatTime(iso);
+    return time ? label + ' · ' + time : label;
+  }
+
+  function memoryWhen(memory) {
+    return withTime(dayLabel(memoryOn(memory)), memory.createdAt);
   }
 
   function personHex(person) {
@@ -805,14 +888,18 @@
 
     var date = document.createElement('span');
     date.className = 'd-date';
-    date.textContent = dayLabel(memoryOn(memory));
+    date.textContent = memoryWhen(memory);
     row.appendChild(date);
 
     if (!compact) {
       var clip = document.createElement('span');
       clip.className = 'd-clip';
-      clip.style.background = CLIP[memory.category] || CLIP.other;
-      clip.title = memory.category;
+      if (memory.photo) {
+        var pic = document.createElement('img');
+        pic.src = memory.photo;
+        pic.alt = '';
+        clip.appendChild(pic);
+      }
       row.appendChild(clip);
     }
 
@@ -1296,20 +1383,44 @@
   function fillAvatarGrid(container, selectedId, onPick) {
     var characters = MI.world.characters();
     var chosen = selectedId || (characters[0] && characters[0].id);
+    var cards = container.querySelectorAll('.card');
+    if (cards.length === characters.length) {
+      characters.forEach(function (character, i) {
+        cards[i].setAttribute('aria-checked', String(character.id === chosen));
+      });
+      return chosen;
+    }
     container.innerHTML = '';
-    characters.forEach(function (character) {
+    characters.forEach(function (character, i) {
       var card = document.createElement('button');
       card.className = 'card';
       card.type = 'button';
       card.setAttribute('role', 'radio');
       card.setAttribute('aria-checked', String(character.id === chosen));
+      card.setAttribute('aria-label', 'Look ' + (i + 1));
+      card.dataset.id = character.id;
       var tint = '#' + ('000000' + character.color.toString(16)).slice(-6);
-      card.innerHTML = '<span class="figure" style="--tint: ' + tint + '">' +
-        '<span class="head"></span><span class="body"></span><span class="legs"></span></span>' +
-        '<span class="name"></span>';
-      card.querySelector('.name').textContent = character.name;
+      var fallback = document.createElement('span');
+      fallback.className = 'figure css';
+      fallback.style.setProperty('--tint', tint);
+      fallback.innerHTML = '<span class="head"></span><span class="body"></span><span class="legs"></span>';
+      var img = document.createElement('img');
+      img.className = 'figure';
+      img.alt = '';
+      img.setAttribute('aria-hidden', 'true');
+      img.hidden = true;
+      card.appendChild(fallback);
+      card.appendChild(img);
       card.addEventListener('click', function () { onPick(character.id); });
       container.appendChild(card);
+      if (MI.world.walkers && MI.world.walkers.portraitUrl) {
+        MI.world.walkers.portraitUrl(character.model).then(function (url) {
+          if (!url || !img.isConnected) return;
+          img.src = url;
+          img.hidden = false;
+          fallback.hidden = true;
+        });
+      }
     });
     return chosen;
   }
@@ -1339,14 +1450,22 @@
     var info = MI.world.inspectHubLook(lookId);
     if (!info) { closeHubCard(); return; }
     hubLookId = lookId;
-    el['hub-card-name'].textContent = info.person ? info.person.name : info.look.name;
+    if (info.person) {
+      el['hub-card-name'].hidden = false;
+      el['hub-card-name'].textContent = info.person.name;
+    } else if (info.you) {
+      el['hub-card-name'].hidden = false;
+      el['hub-card-name'].textContent = 'You';
+    } else {
+      el['hub-card-name'].hidden = true;
+      el['hub-card-name'].textContent = '';
+    }
     if (info.you) {
       el['hub-card-sub'].textContent = info.person
         ? 'This is you — ' + info.person.name + ' wears this look too'
         : 'This is you';
     } else if (info.person) {
-      el['hub-card-sub'].textContent = (info.person.relationship || 'friend')
-        + ' · wearing ' + info.look.name;
+      el['hub-card-sub'].textContent = info.person.relationship || 'friend';
     } else {
       el['hub-card-sub'].textContent = 'Nobody is using this look';
     }
@@ -1377,11 +1496,10 @@
     MI.world.applyHubSwap(wanted).then(function (result) {
       if (!result || !result.ok) return;
       closeHubCard();
-      var name = result.look ? result.look.name : 'that look';
       if (result.person) {
         toast('🤝', 'Looks swapped', result.person.name + ' took your old look.', 0, 2400);
       } else {
-        toast('✨', 'Now ' + name, 'Walk around — this is you.', 0, 2200);
+        toast('✨', 'That is you', 'Walk around — this is your new look.', 0, 2200);
       }
     });
   }
@@ -1851,6 +1969,68 @@
     el['ground-btn'].classList.toggle('on', onGround);
     el['ground-btn'].setAttribute('aria-pressed', onGround ? 'true' : 'false');
     el['ground-btn'].tabIndex = available ? 0 : -1;
+    if (!onGround) hideThought();
+  }
+
+  function memoryReminder(memory) {
+    var title = String(memory.title || '').trim();
+    if (title) return title;
+    var text = String(memory.text || '').replace(/\s+/g, ' ').trim();
+    var m = text.match(/^[^.!?]+[.!?]?/);
+    var cut = (m && m[0] || text).trim();
+    if (cut.length > 88) cut = cut.slice(0, 85).replace(/\s+\S*$/, '') + '…';
+    return cut;
+  }
+
+  function memoryCompany(memory) {
+    var world = MI.store.get();
+    var names = [];
+    (memory.people || []).forEach(function (id) {
+      for (var i = 0; i < (world.people || []).length; i++) {
+        if (world.people[i].id === id && world.people[i].name) {
+          names.push(world.people[i].name);
+          return;
+        }
+      }
+    });
+    if (!names.length) return 'a moment on your own';
+    if (names.length === 1) return 'with ' + names[0];
+    if (names.length === 2) return 'with ' + names[0] + ' and ' + names[1];
+    return 'with ' + names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  }
+
+  function overlaysOpen() {
+    return el.book.classList.contains('open')
+      || el.shop.classList.contains('open')
+      || el.detail.classList.contains('show')
+      || el.settings.classList.contains('open')
+      || el.picker.classList.contains('open')
+      || (el.feed && el.feed.classList.contains('open'))
+      || document.body.classList.contains('gated')
+      || document.body.classList.contains('hub');
+  }
+
+  var thoughtId = null;
+
+  function hideThought() {
+    thoughtId = null;
+    if (!el.thought) return;
+    el.thought.classList.remove('show');
+    el.thought.setAttribute('aria-hidden', 'true');
+  }
+
+  function showThought(memory, pos) {
+    if (!el.thought || !memory || !pos || overlaysOpen()) { hideThought(); return; }
+    if (thoughtId !== memory.id) {
+      thoughtId = memory.id;
+      el['thought-title'].textContent = memoryReminder(memory);
+      el['thought-who'].textContent = memoryCompany(memory);
+      if (el['thought-when']) el['thought-when'].textContent = memoryWhen(memory);
+    }
+    el.thought.style.left = Math.round(pos.x) + 'px';
+    el.thought.style.top = Math.round(pos.y) + 'px';
+    el.thought.classList.add('show');
+    el.thought.setAttribute('aria-hidden', 'false');
   }
 
   function buy(kind, item) {
@@ -2100,8 +2280,10 @@
     markOpenRow(true);
     el['detail-cat'].textContent = memory.category + ' · ' + (memory.mood && memory.mood.label || '');
     el['detail-title'].textContent = memory.title;
-    el['detail-date'].textContent = formatDate(memory.occurredOn || memory.createdAt);
+    el['detail-date'].textContent = withTime(
+      formatDate(memory.occurredOn || memory.createdAt), memory.createdAt);
     el['detail-text'].textContent = memory.text;
+    paintDetailPhoto(memory);
 
     el['detail-pills'].innerHTML = '';
     (memory.people || []).forEach(function (personId) {
@@ -2119,6 +2301,29 @@
     renderSwaps(memory);
     el.detail.classList.add('show');
     markCardOpen();
+  }
+
+  function paintDetailPhoto(memory) {
+    var has = !!(memory && memory.photo);
+    if (el['detail-photo']) el['detail-photo'].classList.toggle('has-photo', has);
+    if (el['detail-photo-img']) {
+      el['detail-photo-img'].src = has ? memory.photo : '';
+      el['detail-photo-img'].alt = has ? (memory.title || 'Memory photo') : '';
+    }
+    if (el['detail-photo-add']) el['detail-photo-add'].textContent = has ? 'Change photo' : 'Add photo';
+    if (el['detail-photo-remove']) el['detail-photo-remove'].hidden = !has;
+  }
+
+  function applyMemoryPhoto(memory, dataUrl) {
+    if (!memory) return;
+    var result = MI.app.setMemoryPhoto(memory.id, dataUrl);
+    if (!result.ok) {
+      photoFail({ message: result.reason });
+      return;
+    }
+    if (openMemory && openMemory.id === memory.id) openMemory = result.memory;
+    paintDetailPhoto(result.memory);
+    renderBook();
   }
 
   // The classifier picks the building, but you're never stuck with its call.
@@ -2230,6 +2435,8 @@
     if (busy) el['submit-btn'].textContent = isEditing() ? 'saving…' : 'planting…';
     else syncWriteMode(); // the label depends on whether this is a new entry or a rewrite
     if (el['mic-btn']) el['mic-btn'].disabled = busy;
+    if (el['photo-btn']) el['photo-btn'].disabled = busy;
+    if (el['photo-clear']) el['photo-clear'].disabled = busy;
   }
 
   // --- Speak a memory -------------------------------------------------------------------
@@ -2530,7 +2737,9 @@
   }
 
   function todayLabel() {
-    return new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    return withTime(new Date().toLocaleDateString(undefined, {
+      weekday: 'long', month: 'long', day: 'numeric'
+    }), new Date().toISOString());
   }
 
   // An edit is dated by the day the memory is about, not the day you fixed it.
@@ -2538,13 +2747,19 @@
     var when = memory.occurredOn || (memory.createdAt || '').slice(0, 10);
     var parsed = when ? new Date(when + 'T00:00:00') : null;
     if (!parsed || isNaN(parsed.getTime())) return todayLabel();
-    return parsed.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+    return withTime(parsed.toLocaleDateString(undefined, {
+      weekday: 'long', month: 'long', day: 'numeric'
+    }), memory.createdAt);
   }
 
   function startEditing(memory) {
     if (!memory) return;
     // Hold on to whatever was half-written, or opening an edit would eat it.
-    if (!isEditing()) draftBeforeEdit = { text: el['entry-input'].value, tags: tags, touched: touched };
+    if (!isEditing()) {
+      draftBeforeEdit = {
+        text: el['entry-input'].value, tags: tags, touched: touched, photo: draftPhoto
+      };
+    }
     editingId = memory.id;
 
     el['entry-input'].value = memory.text || '';
@@ -2560,6 +2775,7 @@
     // All marked touched: these are answers the writer already gave, and the keyword guess
     // must not quietly overwrite them as the sentence is retyped.
     touched = { people: true, mood: true, category: true, importance: true };
+    setDraftPhoto(memory.photo || null);
 
     hideDetail();
     refreshPersonList();
@@ -2582,11 +2798,13 @@
       el['entry-input'].value = draftBeforeEdit.text;
       tags = draftBeforeEdit.tags;
       touched = draftBeforeEdit.touched;
+      setDraftPhoto(draftBeforeEdit.photo || null);
       draftBeforeEdit = null;
     } else {
       el['entry-input'].value = '';
       tags = { people: [], mood: null, category: null, big: false };
       touched = {};
+      setDraftPhoto(null);
     }
     el['tag-person-input'].value = '';
     paintTagRow();
@@ -2625,7 +2843,7 @@
     setBusy(true);
     closeBook();
 
-    MI.app.updateEntry(id, text, { tags: entryTags }).then(function (result) {
+    MI.app.updateEntry(id, text, { tags: entryTags, photo: draftPhoto }).then(function (result) {
       setBusy(false);
       if (!result) { openBook(); return; } // nothing saved: leave the rewrite on screen
       stopEditing();
@@ -2655,7 +2873,7 @@
 
     // The memory's toast comes from the app's 'reward' event as it lands, and a growth toast
     // from 'grew' — this only has to handle the end of the whole thing.
-    MI.app.addEntry(text, { tags: entryTags }).then(function (memory) {
+    MI.app.addEntry(text, { tags: entryTags, photo: draftPhoto }).then(function (memory) {
       setBusy(false);
       if (!memory) {
         openBook();
@@ -2779,6 +2997,28 @@
     el['detail-edit'].addEventListener('click', function () {
       if (openMemory) startEditing(openMemory);
     });
+    el['photo-btn'].addEventListener('click', function () { el['photo-input'].click(); });
+    el['photo-input'].addEventListener('change', function () {
+      var file = el['photo-input'].files && el['photo-input'].files[0];
+      el['photo-input'].value = '';
+      if (file) pickPhotoIntoDraft(file);
+    });
+    el['photo-clear'].addEventListener('click', function () { setDraftPhoto(null); });
+    el['detail-photo-add'].addEventListener('click', function () {
+      if (openMemory) el['detail-photo-input'].click();
+    });
+    el['detail-photo-remove'].addEventListener('click', function () {
+      if (openMemory) applyMemoryPhoto(openMemory, null);
+    });
+    el['detail-photo-input'].addEventListener('change', function () {
+      var file = el['detail-photo-input'].files && el['detail-photo-input'].files[0];
+      el['detail-photo-input'].value = '';
+      if (!file || !openMemory) return;
+      var memory = openMemory;
+      compressPhoto(file).then(function (dataUrl) {
+        applyMemoryPhoto(memory, dataUrl);
+      }).catch(photoFail);
+    });
     el['edit-cancel'].addEventListener('click', function () {
       var memory = MI.store.get().memories.filter(function (m) { return m.id === editingId; })[0];
       stopEditing();
@@ -2823,6 +3063,10 @@
     el['ground-btn'].addEventListener('click', toggleGroundView);
     MI.world.onViewChange(syncGroundButton);
     MI.world.onGroundView(syncGroundButton);
+    MI.world.onLookMemory(function (memory, pos) {
+      if (memory && pos) showThought(memory, pos);
+      else hideThought();
+    });
     // Settings is where you change who you are: the picker is the same full-sheet grid you
     // would have seen the first time.
     el['character-btn'].addEventListener('click', function () {
@@ -2995,7 +3239,7 @@
       enterExisting(id);
     });
     MI.world.onGalaxyFrame(syncGalaxyLabels);
-    MI.world.onViewChange(hideHubTip);
+    MI.world.onViewChange(function () { hideHubTip(); hideThought(); });
     MI.world.onHubPick(showHubCard);
     MI.world.onHubChange(syncHubUi);
     el['hub-leave'].addEventListener('click', exitHub);

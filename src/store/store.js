@@ -217,13 +217,14 @@
   }
 
   function save() {
-    if (!world || !world.id) return;
-    write(journalKey(world.id), world);
+    if (!world || !world.id) return false;
+    var ok = write(journalKey(world.id), world);
     write(STORAGE_KEY, world);
     if (!library) library = emptyLibrary();
     library.currentId = world.id;
     upsertSummary(world);
     write(LIBRARY_KEY, library);
+    return ok;
   }
 
   function get() {
