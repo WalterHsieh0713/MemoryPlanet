@@ -56,7 +56,9 @@
       // Pets walk on the land, satellites orbit in the sky (src/game/economy.js). Separate
       // slots on purpose: a world can have one of each out at once.
       unlocks: { themes: ['meadow'], pets: [], satellites: [], skins: ['classic'] },
-      equipped: { theme: 'meadow', pet: null, satellite: null, skin: 'classic' }
+      equipped: { theme: 'meadow', pet: null, satellite: null, skin: 'classic' },
+      // Consumable treats bought for pets (src/game/economy.js). Counts, not unlocks.
+      pantry: {}
     };
   }
 
@@ -109,6 +111,7 @@
     if (!w.player) w.player = { character: null }; // worlds saved before the character
     if (w.house === undefined) w.house = null;
     if (w.hub === undefined) w.hub = null; // worlds saved before the village hall
+    if (!w.pantry) w.pantry = {};          // worlds saved before pet treats
     if (!w.planet) {
       // Every v2 world was built on the original 1002-tile grid (frequency 10).
       w.planet = { frequency: w.version >= 3 ? fresh.planet.frequency : 10 };

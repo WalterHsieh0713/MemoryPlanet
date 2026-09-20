@@ -560,6 +560,15 @@
     return true;
   }
 
+  // Spend one treat from the pantry on a pet you own. The overlay is the moment;
+  // this only takes the food. An unknown pet or an empty jar leaves the pantry alone.
+  function feedPet(foodId, petId) {
+    var who = petId || MI.store.get().equipped.pet;
+    if (!who || !MI.economy.owns('pets', who)) return { ok: false, reason: 'no-pet' };
+    if (!MI.economy.takeFood(foodId)) return { ok: false, reason: 'empty' };
+    return { ok: true, item: MI.economy.find('food', foodId), petId: who };
+  }
+
   // Replay a stored world onto the scene: swap the grid, cosmetics and character, then
   // restore everything that stands on it. Used after start-over and when opening a journal.
   function rebuildScene(opts) {
@@ -616,7 +625,7 @@
 
   MI.app = {
     addEntry: addEntry, updateEntry: updateEntry, restore: restore, growPlanet: growPlanet,
-    equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
+    equip: equip, feedPet: feedPet, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
     ensureHub: ensureHub,
     rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
     claimShip: claimShip, checkShips: checkShips

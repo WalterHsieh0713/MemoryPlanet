@@ -55,7 +55,11 @@
       'ship-count', 'ship-claim',
       'hub-ui', 'hub-leave', 'hub-card', 'hub-card-name', 'hub-card-sub',
       'hub-card-friend', 'hub-card-friend-meta', 'hub-card-titles',
-      'hub-card-swap', 'hub-card-close']
+      'hub-card-swap', 'hub-card-close',
+      'feed', 'feed-close', 'feed-treat-img', 'feed-treat-name', 'feed-treat-count',
+      'feed-pick-sub', 'feed-pets', 'feed-empty', 'feed-shop', 'feed-go',
+      'feed-stage', 'feed-hint', 'feed-viewport', 'feed-canvas', 'feed-hand',
+      'feed-chip', 'feed-chip-img', 'feed-back', 'feed-ghost', 'feed-ghost-img']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -980,6 +984,7 @@
   function openShop() {
     closeSettings();
     closeThemeTray();
+    if (el.feed && el.feed.classList.contains('open')) closeFeed();
     shopOpener = document.activeElement;
     renderShop();
     el.shop.classList.add('open');
@@ -1025,6 +1030,13 @@
             '<path d="M12.3 12.2c2.6 0 4.6 2 5 4.1.4 1.9-1 3.2-2.8 3.2-1.2 0-1.6-.5-2.5-.5s-1.3.5-2.5.5c-1.8 0-3.2-1.3-2.8-3.2.4-2.1 2.4-4.1 5.6-4.1Z"/>'
     },
     {
+      kind: 'food', label: 'Treats', help: 'Feed a snack to a pet you own.', empty: 'No treats yet.',
+      icon: '<circle cx="12" cy="13" r="6.2"/>' +
+            '<circle cx="10" cy="11.2" r="1" fill="currentColor" stroke="none"/>' +
+            '<circle cx="14.3" cy="12.8" r="1" fill="currentColor" stroke="none"/>' +
+            '<circle cx="11.2" cy="15.6" r="1" fill="currentColor" stroke="none"/>'
+    },
+    {
       kind: 'satellites', label: 'Satellites', help: 'Choose a companion to orbit above.', empty: 'No satellites yet.',
       icon: '<circle cx="12" cy="11.4" r="4.6"/>' +
             '<ellipse cx="12" cy="12" rx="9.4" ry="3.3" transform="rotate(-22 12 12)"/>'
@@ -1068,6 +1080,11 @@
   }
 
   function ownedCatalog(kind) {
+    if (kind === 'food') {
+      return MI.economy.CATALOG.food.filter(function (item) {
+        return MI.economy.stock(item.id) > 0;
+      });
+    }
     return MI.economy.CATALOG[kind].filter(function (item) {
       return MI.economy.owns(kind, item.id);
     });
@@ -1075,6 +1092,21 @@
 
   function fillTrayItems(container, kind) {
     container.innerHTML = '';
+    if (kind === 'food') {
+      ownedCatalog('food').forEach(function (item) {
+        var n = MI.economy.stock(item.id);
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.title = item.name + ' ×' + n;
+        btn.setAttribute('aria-label', item.name);
+        btn.dataset.trayKind = 'food';
+        btn.dataset.itemId = item.id;
+        btn.textContent = item.icon;
+        btn.addEventListener('click', function () { openFeed(item); });
+        container.appendChild(btn);
+      });
+      return;
+    }
     var equippedId = MI.economy.equipped(kind);
     ownedCatalog(kind).forEach(function (item) {
       var btn = document.createElement('button');
@@ -1167,11 +1199,12 @@
     }
   }
 
-  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'satellites' };
+  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'satellites', food: 'treats' };
   var SHOP_BLURBS = {
     themes: 'Whole-planet clothes. Swap a world on like a postcard.',
     pets: 'Little walkers for the paths. One can be out at a time.',
-    satellites: 'Orbiting company. They keep circling, even when the view folds.'
+    satellites: 'Orbiting company. They keep circling, even when the view folds.',
+    food: 'Snacks for the pantry. Buy as many as you like, then feed them from the circle.'
   };
   var POLAROID_TILT = ['r1', 'r2', 'r3', 'r4'];
 
@@ -1190,7 +1223,7 @@
     el['shop-items'].innerHTML = '';
     var listed = 0;
     MI.economy.CATALOG[kind].forEach(function (item) {
-      if (MI.economy.owns(kind, item.id)) return;
+      if (kind !== 'food' && MI.economy.owns(kind, item.id)) return;
       listed += 1;
       var canBuy = balance >= item.price;
       var card = document.createElement('button');
@@ -1205,6 +1238,11 @@
         planet.className = 'mini-planet';
         planet.style.background = themeFill(item.id);
         photo.appendChild(planet);
+      } else if (kind === 'food') {
+        var pic = document.createElement('img');
+        pic.src = 'assets/standalone/food/previews/' + item.id + '.png';
+        pic.alt = item.name;
+        photo.appendChild(pic);
       } else {
         var glyph = document.createElement('span');
         glyph.className = 'glyph';
@@ -1215,7 +1253,8 @@
 
       var caption = document.createElement('span');
       caption.className = 'caption';
-      caption.textContent = item.name;
+      var held = kind === 'food' ? MI.economy.stock(item.id) : 0;
+      caption.textContent = held ? item.name + ' · ' + held : item.name;
       card.appendChild(caption);
 
       var sticker = document.createElement('span');
@@ -1223,7 +1262,10 @@
       sticker.textContent = canBuy ? String(item.price) : ((item.price - balance) + ' short');
       card.appendChild(sticker);
 
-      if (canBuy) card.addEventListener('click', function () { buy(kind, item); });
+      if (canBuy) card.addEventListener('click', function () {
+        if (kind === 'food') buyTreat(item);
+        else buy(kind, item);
+      });
       el['shop-items'].appendChild(card);
     });
     if (!listed) {
@@ -1789,6 +1831,223 @@
     renderThemeTray();
     toast(item.icon, item.name + ' unlocked!',
       'Now on your planet. Change it below Settings.', 0, 2600);
+  }
+
+  function buyTreat(item) {
+    var result = MI.economy.buyFood(item.id);
+    if (!result.ok) return;
+    refreshWallet();
+    renderShop();
+    renderThemeTray();
+    toast(item.icon, item.name + ' in the pantry',
+      'Feed them from the circle under settings.', 0, 2600);
+  }
+
+  var feedItem = null;
+  var feedPetId = null;
+  var feedBusy = false;
+  var feedDragging = false;
+  var feedResize = null;
+  var feedTimer = null;
+
+  function treatPreview(id) {
+    return 'assets/standalone/food/previews/' + id + '.png';
+  }
+
+  function openFeed(item) {
+    if (!item) return;
+    closeShop();
+    closeThemeTray();
+    feedItem = item;
+    feedBusy = false;
+    var pets = MI.economy.petsForFeed();
+    feedPetId = pets[0] ? pets[0].id : null;
+    paintFeedPick();
+    el.feed.dataset.step = 'pick';
+    el.feed.classList.add('open');
+    el.feed.setAttribute('aria-hidden', 'false');
+    if (!el['feed-go'].hidden) el['feed-go'].focus();
+    else if (!el['feed-shop'].hidden) el['feed-shop'].focus();
+  }
+
+  function closeFeed() {
+    stopFeedDrag();
+    if (feedTimer) { clearTimeout(feedTimer); feedTimer = null; }
+    if (MI.world.feedStage) MI.world.feedStage.close();
+    el.feed.classList.remove('open', 'over-pet');
+    el.feed.setAttribute('aria-hidden', 'true');
+    el.feed.dataset.step = 'pick';
+    el['feed-stage'].classList.remove('yum');
+    el['feed-hand'].classList.remove('fed');
+    if (feedResize) {
+      window.removeEventListener('resize', feedResize);
+      feedResize = null;
+    }
+    feedItem = null;
+    feedPetId = null;
+    feedBusy = false;
+    renderThemeTray();
+    renderShop();
+  }
+
+  function paintFeedPick() {
+    var item = feedItem;
+    var n = item ? MI.economy.stock(item.id) : 0;
+    el['feed-treat-img'].src = item ? treatPreview(item.id) : '';
+    el['feed-treat-img'].alt = item ? item.name : '';
+    el['feed-treat-name'].textContent = item ? item.name : 'Treat';
+    el['feed-treat-count'].textContent = n === 1 ? 'One in the pantry' : n + ' in the pantry';
+    var pets = MI.economy.petsForFeed();
+    var out = MI.economy.equipped('pets');
+    el['feed-pets'].innerHTML = '';
+    pets.forEach(function (pet) {
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'card' + (pet.id === out ? ' out' : '');
+      card.setAttribute('role', 'radio');
+      card.setAttribute('aria-checked', String(pet.id === feedPetId));
+      card.innerHTML = (pet.id === out ? '<span class="badge">out</span>' : '') +
+        '<span class="icon"></span><span class="name"></span>';
+      card.querySelector('.icon').textContent = pet.icon;
+      card.querySelector('.name').textContent = pet.name;
+      card.addEventListener('click', function () {
+        feedPetId = pet.id;
+        paintFeedPick();
+      });
+      el['feed-pets'].appendChild(card);
+    });
+    var none = !pets.length;
+    el['feed-empty'].hidden = !none;
+    el['feed-shop'].hidden = !none;
+    el['feed-go'].hidden = none;
+    el['feed-go'].disabled = none || !feedPetId || n < 1;
+    el['feed-pick-sub'].hidden = none;
+  }
+
+  function enterFeedStage() {
+    if (!feedItem || !feedPetId || feedBusy) return;
+    if (MI.economy.stock(feedItem.id) < 1) return;
+    el.feed.dataset.step = 'stage';
+    el['feed-stage'].classList.remove('yum');
+    el['feed-hand'].classList.remove('fed');
+    el['feed-hint'].textContent = 'Drag the treat onto them';
+    el['feed-chip-img'].src = treatPreview(feedItem.id);
+    el['feed-chip-img'].alt = feedItem.name;
+    el['feed-ghost-img'].src = treatPreview(feedItem.id);
+    var pet = MI.economy.find('pets', feedPetId);
+    el['feed-chip'].setAttribute('aria-label',
+      'Drag the ' + feedItem.name + ' onto ' + (pet ? pet.name : 'the pet'));
+    var theme = MI.world.themes.get(MI.economy.equipped('themes') || 'meadow');
+    function hex(n) { return '#' + n.toString(16).padStart(6, '0'); }
+    el['feed-viewport'].style.background = 'linear-gradient(180deg, ' +
+      hex(theme.skyTop) + ' 0%, ' + hex(theme.skyBottom) + ' 58%, ' + hex(theme.land) + ' 100%)';
+    MI.world.feedStage.attach(el['feed-canvas']);
+    requestAnimationFrame(function () {
+      if (!el.feed.classList.contains('open') || el.feed.dataset.step !== 'stage') return;
+      MI.world.feedStage.show(feedPetId).then(function () {
+        MI.world.feedStage.resize();
+      });
+    });
+    if (!feedResize) {
+      feedResize = function () { if (MI.world.feedStage) MI.world.feedStage.resize(); };
+      window.addEventListener('resize', feedResize);
+    }
+  }
+
+  function leaveFeedStage() {
+    stopFeedDrag();
+    if (MI.world.feedStage) MI.world.feedStage.close();
+    el.feed.dataset.step = 'pick';
+    el['feed-stage'].classList.remove('yum');
+    el['feed-hand'].classList.remove('fed');
+    paintFeedPick();
+  }
+
+  function stopFeedDrag() {
+    feedDragging = false;
+    el.feed.classList.remove('over-pet');
+    el['feed-ghost'].classList.remove('show');
+    el['feed-chip'].classList.remove('held');
+  }
+
+  function moveFeedGhost(x, y) {
+    el['feed-ghost'].style.left = x + 'px';
+    el['feed-ghost'].style.top = y + 'px';
+    var over = MI.world.feedStage && MI.world.feedStage.hit(x, y);
+    el.feed.classList.toggle('over-pet', !!over);
+  }
+
+  function onFeedPointerDown(e) {
+    if (feedBusy || el.feed.dataset.step !== 'stage') return;
+    if (el['feed-hand'].classList.contains('fed')) return;
+    e.preventDefault();
+    feedDragging = true;
+    el['feed-chip'].classList.add('held');
+    el['feed-ghost'].classList.add('show');
+    moveFeedGhost(e.clientX, e.clientY);
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) {}
+  }
+
+  function onFeedPointerMove(e) {
+    if (!feedDragging) return;
+    moveFeedGhost(e.clientX, e.clientY);
+  }
+
+  function onFeedPointerUp(e) {
+    if (!feedDragging) return;
+    var over = MI.world.feedStage && MI.world.feedStage.hit(e.clientX, e.clientY);
+    stopFeedDrag();
+    if (over) dropFeed();
+  }
+
+  function puffHearts() {
+    var host = el['feed-viewport'];
+    Array.prototype.forEach.call(host.querySelectorAll('.puff'), function (n) { n.remove(); });
+    for (var i = 0; i < 9; i++) {
+      var s = document.createElement('span');
+      s.className = 'puff';
+      s.textContent = '❤';
+      s.style.setProperty('--dx', (Math.random() * 140 - 70) + 'px');
+      s.style.animationDelay = (i * 0.05) + 's';
+      s.style.left = (42 + Math.random() * 16) + '%';
+      host.appendChild(s);
+    }
+  }
+
+  function dropFeed() {
+    if (feedBusy || !feedItem || !feedPetId) return;
+    var pet = MI.economy.find('pets', feedPetId);
+    var fed = MI.app.feedPet(feedItem.id, feedPetId);
+    if (!fed.ok) {
+      toast(feedItem.icon,
+        fed.reason === 'no-pet' ? 'Nobody to feed' : 'None left',
+        fed.reason === 'no-pet' ? 'Pick a pet you own.' : 'Buy another treat first.',
+        0, 2400);
+      if (fed.reason === 'empty') closeFeed();
+      return;
+    }
+    feedBusy = true;
+    el['feed-hand'].classList.add('fed');
+    el['feed-stage'].classList.add('yum');
+    el['feed-hint'].textContent = (pet ? pet.name : 'They') + ' loved it';
+    if (MI.world.feedStage) MI.world.feedStage.celebrate();
+    puffHearts();
+    renderThemeTray();
+    renderShop();
+    if (feedTimer) clearTimeout(feedTimer);
+    feedTimer = setTimeout(function () {
+      feedTimer = null;
+      feedBusy = false;
+      var left = feedItem && MI.economy.stock(feedItem.id);
+      if (left > 0) {
+        el['feed-hand'].classList.remove('fed');
+        el['feed-stage'].classList.remove('yum');
+        el['feed-hint'].textContent = 'Another? Drag it on';
+        el['feed-treat-count'].textContent = left === 1 ? 'One in the pantry' : left + ' in the pantry';
+      } else {
+        closeFeed();
+      }
+    }, 1600);
   }
 
   function formatDate(iso) {
@@ -2559,7 +2818,21 @@
     el.shop.addEventListener('click', function (e) {
       if (e.target === el.shop) closeShop(); // a click on the backdrop, not the sheet
     });
-
+    el['feed-close'].addEventListener('click', closeFeed);
+    el.feed.addEventListener('click', function (e) {
+      if (e.target === el.feed) closeFeed();
+    });
+    el['feed-go'].addEventListener('click', enterFeedStage);
+    el['feed-back'].addEventListener('click', leaveFeedStage);
+    el['feed-shop'].addEventListener('click', function () {
+      closeFeed();
+      shopKind = 'pets';
+      openShop();
+    });
+    el['feed-chip'].addEventListener('pointerdown', onFeedPointerDown);
+    el['feed-chip'].addEventListener('pointermove', onFeedPointerMove);
+    el['feed-chip'].addEventListener('pointerup', onFeedPointerUp);
+    el['feed-chip'].addEventListener('pointercancel', stopFeedDrag);
     document.addEventListener('pointerdown', function (e) {
       if (!el['theme-rack'].classList.contains('open')) return;
       if (el['theme-rack'].contains(e.target)) return;
@@ -2600,6 +2873,7 @@
         return;
       }
       if (el.picker.classList.contains('open')) { closePicker(); return; }
+      if (el.feed && el.feed.classList.contains('open')) { closeFeed(); return; }
       if (el['hub-card'] && el['hub-card'].classList.contains('open')) { closeHubCard(); return; }
       if (MI.world.isHub && MI.world.isHub()) { exitHub(); return; }
       if (MI.world.isGroundView()) { leaveGroundView(); return; }

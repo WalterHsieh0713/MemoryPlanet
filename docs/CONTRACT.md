@@ -26,7 +26,8 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
            ships: [{ id, hull, name, goal, claimed }], // pirate fleet; position is not stored
            player: { character: id|null },           // who your character is
            unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
-           equipped: { theme: id, pet: id|null, satellite: id|null, skin: id } }
+           equipped: { theme: id, pet: id|null, satellite: id|null, skin: id },
+           pantry: { [foodId]: count } }          // consumable treats for pets; omitted counts are zero
 // A person can keep several journals. The shelf is memory-planet.journals.v1
 // `{ version: 1, currentId, journals: [{ id, name, character, memories, people, updatedAt }] }`;
 // each world's full save is memory-planet.journal.<id>. memory-planet.world.v4 is kept as an
@@ -78,11 +79,12 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 - `ctx.speed` is WORLD UNITS per second: the caller multiplies `TILES_PER_SECOND` by a tile's size in that view.
 
 ## MI.economy  (`src/game/economy.js`)
-- `CATALOG = { themes, pets, satellites, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
+- `CATALOG = { themes, pets, satellites, food, skins }` (each item `{ id, name, price, icon, blurb }`; food also has `file`), `REWARD` (all earning numbers)
 - `MI.world.walkers.makeAnimator(model, phase?) -> { update(dt, speedInModelUnits), dispose() } | null` — blends the model's built-in `walk`/`idle` clips; null when the GLB has none (pets, the procedural figure). `isShown(obj)` reports whether anything is drawing it.
 - **pets** walk on the land (GLB models, `src/world/walkers.js`); **satellites** orbit in the sky (procedural, `src/world/cosmetics.js`). Separate slots — a world can have one of each. Journal people also roam as residents using the walker models.
+- **food** is consumable Kenney Food Kit treats (`assets/standalone/food/`). Buying always stocks `world.pantry`. Feeding is a pantry overlay: pick a pet (the one out first), then drag the treat onto them on a hex tile. Not an unlock; buying another adds another. `node scripts/test-economy.js`.
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
-- `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`
+- `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }` (`buy('food', id)` is `buyFood`), `buyFood(id)`, `stock(id)`, `takeFood(id) -> bool`, `pantry()`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`, `petsForFeed() -> pet[]` (owned pets, equipped first)
 
 ## MI.ships  (`src/world/ships.js`, pure — `node scripts/test-ships.js`)
 - Who the pirate fleet is, what each ship asks for, and whether it has been claimed. No THREE, no DOM. Sailing lives in world.js (a walker whose walkable set is water); app.js watches for a goal being met.
@@ -93,7 +95,8 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 ## MI.world  (owners: A = scene/planet/controls, B = spawn/assets/characters)
 - `init(canvasEl, { frequency, theme, pet, satellite, character, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
 - `setPlanet(frequency, { animate }) -> Promise` — swap to that grid (planet group scaled by frequency/10, so tiles keep their world size); clears props, caller replays the remapped world. `loadGrid(f)`, `currentTiles()`, `planetInfo()`
-- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/walkers.js` (pets and residents).
+- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`, `feedPet(foodId) -> bool` (legacy nibble on the wandering pet; the pantry overlay uses `feedStage` instead). Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/walkers.js` (pets and residents).
+- `MI.world.feedStage` (`src/world/feed.js`): `attach(canvas)`, `show(petId) -> Promise`, `hit(x, y) -> bool`, `celebrate()`, `close()`, `resize()` — pet standing on a hex tile for the feed overlay.
   - A **satellite** lives in the scene, not on the planet: `animateSatellite` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
   - A **pet** stands on the tiles, so it is parented to the planet (sphere view) and to the island group (flat view), one wandering instance each. `updatePet` steps it tile to tile and is skipped mid-transition.
 - `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`, `spawnHouse(house, { animate })`, `spawnHub(hub, { animate })`
@@ -124,7 +127,7 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 - `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.
 - `restore() -> Promise` replays the stored world (landscape, memories, people, ships) without animation, then rebuilds roads.
 - `addEntry` also pays coins and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
-- `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
+- `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `feedPet(foodId, petId) -> { ok, item, petId } | { ok: false, reason: 'no-pet'|'empty' }` (spends pantry; `petId` must be owned, and falls back to the equipped pet), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
 - `enterJournal(id, { keepCamera }) -> Promise<bool>`, `createJournal({ name, character, keepCamera }) -> Promise<bool>`, `rebuildScene({ keepCamera }) -> Promise` — swap the live planet to the stored world (grid, cosmetics, character, restore). `keepCamera` is for the galaxy dive, so the zoom-in is not reset.
 - `ensureHome()`, `ensureHub()` — claim the house tile and the village-hall hub tile on a new world. Existing worlds keep theirs.
 - `claimShip(shipId) -> bool`, `checkShips()` — ships are won by writing; a toast points at one that is ready, claiming is the player's click.
