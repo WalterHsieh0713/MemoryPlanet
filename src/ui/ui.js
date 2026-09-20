@@ -282,40 +282,150 @@
     if (writing && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
   }
 
+  var bookOpenTimer = null;
+  var bookAnimTimers = [];
+
+  function clearBookAnim() {
+    clearTimeout(bookFocusTimer);
+    clearTimeout(bookOpenTimer);
+    bookOpenTimer = null;
+    for (var i = 0; i < bookAnimTimers.length; i++) clearTimeout(bookAnimTimers[i]);
+    bookAnimTimers = [];
+  }
+
+  function bookLater(ms, fn) {
+    var t = setTimeout(fn, ms);
+    bookAnimTimers.push(t);
+    return t;
+  }
+
+  function isBookBusy() {
+    return el.book.classList.contains('prep') || el.book.classList.contains('open');
+  }
+
   function openBook(event) {
-    if (isBookOpen()) return;
+    if (isBookBusy()) return;
     clearTimeout(toastTimer);
+    clearBookAnim();
     el.toast.classList.remove('show');
     bookOpener = event && event.currentTarget || document.activeElement;
-    var rect = el['book-btn'].querySelector('.mini-book').getBoundingClientRect();
-    el.book.style.setProperty('--book-from-x', (rect.left + rect.width / 2 - window.innerWidth / 2) + 'px');
-    el.book.style.setProperty('--book-from-y', (rect.top + rect.height / 2 - window.innerHeight / 2) + 'px');
-    el.book.style.setProperty('--book-from-scale', rect.width / el.book.querySelector('.spread').offsetWidth);
-    // Apply the miniature's measured starting pose before beginning the expansion.
-    void el.book.offsetWidth;
+
     refreshPersonList();
     renderBook();
     el['write-date'].textContent = new Date().toLocaleDateString(undefined,
       { weekday: 'long', month: 'long', day: 'numeric' });
     selectBookPage('write');
-    el.book.classList.add('open');
+
+    var mini = el['book-btn'].querySelector('.mini-book');
+    var stage = el.book.querySelector('.stage-3d');
+    el.book.classList.remove('from-pose', 'arriving', 'uncover', 'flipping', 'open');
+    el.book.classList.add('prep');
+    var dest = stage.getBoundingClientRect();
+    var mr = mini.getBoundingClientRect();
+    el.book.style.setProperty('--from-x', (mr.left + mr.width / 2 - (dest.left + dest.width / 2)) + 'px');
+    el.book.style.setProperty('--from-y', (mr.top + mr.height / 2 - (dest.top + dest.height / 2)) + 'px');
+    el.book.style.setProperty('--from-s', String(Math.max(0.08, mr.height / Math.max(dest.height, 1))));
+    el.book.classList.add('from-pose');
+    el['book-btn'].classList.add('hand-off');
     el['book-btn'].setAttribute('aria-expanded', 'true');
-    // Wait for the book to become visible before moving keyboard focus inside it.
+    unpeekMiniBook();
+    void stage.offsetWidth;
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.book.classList.add('arriving', 'uncover', 'flipping', 'open');
+      bookFocusTimer = setTimeout(function () {
+        if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
+      }, 40);
+      return;
+    }
+
+    requestAnimationFrame(function () {
+      el.book.classList.add('arriving');
+    });
+    // Closed book arrives, cover opens fully, then pages turn, then the journal.
+    bookLater(640, function () { el.book.classList.add('uncover'); });
+    bookLater(1380, function () { el.book.classList.add('flipping'); });
+    bookLater(2680, function () { el.book.classList.add('open'); });
+
     bookFocusTimer = setTimeout(function () {
       if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
-    }, 530);
+    }, 2900);
   }
 
   function closeBook() {
     stopListening({ silent: true });
-    clearTimeout(bookFocusTimer);
-    el.book.classList.remove('open');
+    clearBookAnim();
+    el.book.classList.remove('open', 'from-pose', 'arriving', 'uncover', 'flipping', 'prep');
+    el.book.style.removeProperty('--from-x');
+    el.book.style.removeProperty('--from-y');
+    el.book.style.removeProperty('--from-s');
     el['book-btn'].setAttribute('aria-expanded', 'false');
+    el['book-btn'].classList.remove('hand-off');
     if (bookOpener && bookOpener.isConnected) bookOpener.focus();
   }
 
   function isBookOpen() {
     return el.book.classList.contains('open');
+  }
+
+  // Hover faces the reader without throwing away the idle spin. The spin is paused
+  // at its current heading, a child turn eases the cover toward the camera, and
+  // unhovering unwinds that turn then continues the 14s spin from the same spot.
+  var miniResumeTimer = null;
+  var miniPeeking = false;
+  var MINI_FACE = -16;
+  var MINI_TURN_MS = 400;
+
+  function spinY(node) {
+    var t = getComputedStyle(node).transform;
+    if (!t || t === 'none') return 0;
+    var n = t.replace(/^matrix3d\(|^matrix\(|\)$/g, '').split(',');
+    if (n.length === 16) {
+      return Math.atan2(parseFloat(n[8]), parseFloat(n[0])) * 180 / Math.PI;
+    }
+    if (n.length === 6) {
+      return Math.atan2(parseFloat(n[1]), parseFloat(n[0])) * 180 / Math.PI;
+    }
+    return 0;
+  }
+
+  function shortestDeg(deg) {
+    deg = ((deg + 180) % 360 + 360) % 360 - 180;
+    return deg;
+  }
+
+  function pauseMiniSpin(spin) {
+    var anims = spin.getAnimations ? spin.getAnimations() : [];
+    if (anims[0]) anims[0].pause();
+    else spin.style.animationPlayState = 'paused';
+  }
+
+  function playMiniSpin(spin) {
+    var anims = spin.getAnimations ? spin.getAnimations() : [];
+    if (anims[0]) anims[0].play();
+    spin.style.animationPlayState = '';
+  }
+
+  function peekMiniBook() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (el['book-btn'].classList.contains('hand-off')) return;
+    clearTimeout(miniResumeTimer);
+    var spin = el['book-btn'].querySelector('.mini-spin');
+    var turn = el['book-btn'].querySelector('.mini-turn');
+    pauseMiniSpin(spin);
+    turn.style.transform = 'rotateY(' + shortestDeg(MINI_FACE - spinY(spin)) + 'deg)';
+    el['book-btn'].classList.add('peeking');
+    miniPeeking = true;
+  }
+
+  function unpeekMiniBook() {
+    if (!miniPeeking) return;
+    miniPeeking = false;
+    el['book-btn'].classList.remove('peeking');
+    var spin = el['book-btn'].querySelector('.mini-spin');
+    var turn = el['book-btn'].querySelector('.mini-turn');
+    turn.style.transform = 'rotateY(0deg)';
+    miniResumeTimer = setTimeout(function () { playMiniSpin(spin); }, MINI_TURN_MS);
   }
 
   // --- The book ---------------------------------------------------------------------------
@@ -1500,6 +1610,14 @@
     });
 
     el['book-btn'].addEventListener('click', openBook);
+    el['book-btn'].addEventListener('pointerenter', peekMiniBook);
+    el['book-btn'].addEventListener('pointerleave', function () {
+      if (document.activeElement !== el['book-btn']) unpeekMiniBook();
+    });
+    el['book-btn'].addEventListener('focus', peekMiniBook);
+    el['book-btn'].addEventListener('blur', function () {
+      if (!el['book-btn'].matches(':hover')) unpeekMiniBook();
+    });
     el['book-close'].addEventListener('click', closeBook);
     el['book-write-tab'].addEventListener('click', function () { selectBookPage('write'); });
     el['book-memories-tab'].addEventListener('click', function () { selectBookPage('memories'); });
@@ -1573,7 +1691,7 @@
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
       else if (el.settings.classList.contains('open')) closeSettings();
-      else if (isBookOpen()) closeBook();
+      else if (isBookBusy()) closeBook();
     });
 
     MI.world.onPick(function (slot) {

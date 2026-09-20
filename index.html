@@ -156,123 +156,321 @@
   #reset-btn:disabled { opacity: .45; cursor: default; }
   #reset-btn.confirming { background: #ffe3d6; color: #c2410c; border-color: #e8b198; }
 
-  /* --- the journal: a small scrapbook tab --- */
+  /* --- floating journal: item-drop book, bottom right --- */
   #book-btn {
-    position: fixed; left: 16px; top: 76px; z-index: 5;
-    display: flex; align-items: center; gap: 10px;
-    border: 1px solid #e3ba8e; cursor: pointer; font-family: inherit;
-    padding: 10px 16px 10px 10px; border-radius: 4px 10px 4px 8px;
-    background: linear-gradient(135deg, #fffdf8, #fff0dc);
-    box-shadow: 2px 3px 0 #e4d2b0, 0 8px 16px #70462c22;
-    color: var(--ink); font-size: 16px; font-weight: 400;
-    transform: rotate(-1.6deg);
-    transition: transform .3s var(--spring), box-shadow .25s ease;
+    position: fixed; right: 8px; bottom: 4px; z-index: 6;
+    width: 140px; height: 148px; padding: 0; border: none;
+    background: transparent; cursor: pointer; font-family: inherit;
+    color: var(--ink);
   }
-  #book-btn:hover { transform: translateY(-1px) rotate(-2deg); }
-  #book-btn:active { transform: scale(.97) rotate(-1.6deg); }
-  #book-btn .mini-stage { width: 40px; height: 48px; display: grid; place-items: center; perspective: 400px; flex-shrink: 0; }
+  #book-btn:focus-visible { outline: none; }
+  #book-btn:focus-visible .mini-stage { outline: 3px solid #2c5f6f; outline-offset: 4px; border-radius: 12px; }
+  #book-btn .mini-stage {
+    position: relative; width: 100%; height: 100%;
+    display: grid; place-items: center; perspective: 720px;
+    transform-style: preserve-3d;
+  }
+  #book-btn .mini-shadow {
+    position: absolute; left: 50%; bottom: 22px; width: 56px; height: 10px;
+    background: radial-gradient(ellipse, rgba(70, 42, 18, .36), transparent 70%);
+    transform: translateX(-50%);
+    animation: item-shadow 2.8s ease-in-out infinite;
+    pointer-events: none;
+  }
+  #book-btn .mini-drop {
+    display: block; transform-style: preserve-3d;
+    animation: item-bob 2.8s ease-in-out infinite;
+  }
+  #book-btn .mini-spin {
+    display: block; transform-style: preserve-3d;
+    animation: item-spin 14s linear infinite;
+  }
+  #book-btn .mini-turn {
+    display: block; transform-style: preserve-3d;
+    transition: transform .4s ease;
+  }
   #book-btn .mini-book {
-    display: block; position: relative; width: 30px; height: 40px;
-    transform-style: preserve-3d; animation: journal-turn 7s ease-in-out infinite;
-    transition: opacity .18s ease;
+    display: block; position: relative; width: 58px; height: 76px;
+    transform-style: preserve-3d;
+    transform: rotateX(18deg);
+    transition: transform .4s ease;
   }
-  #book-btn .mini-cover {
-    position: absolute; inset: 0; border-radius: 2px 4px 4px 2px;
-    background: linear-gradient(110deg, #b7794c, #e4ad76 18%, #d89b66);
+  #book-btn .mini-face, #book-btn .mini-leaf {
+    position: absolute; box-sizing: border-box;
+  }
+  #book-btn .mini-front, #book-btn .mini-back {
+    inset: 0; border-radius: 2px 4px 4px 2px;
+    background: linear-gradient(145deg, #c88854, #e4ad76 22%, #c17a48);
     box-shadow: inset 0 0 0 1px #f3cf9f, inset 0 0 0 3px #d69a65;
-    backface-visibility: hidden; transform: translateZ(4px);
   }
-  #book-btn .mini-cover::before { content: '✦'; display: grid; place-items: center; height: 100%; color: #fff0cc; font-size: 13px; }
-  #book-btn .mini-cover::after { content: ''; position: absolute; right: 4px; bottom: -4px; width: 5px; height: 11px; background: #61978e; clip-path: polygon(0 0,100% 0,100% 100%,50% 80%,0 100%); }
-  #book-btn .mini-cover.back { transform: rotateY(180deg) translateZ(4px); }
-  #book-btn .mini-cover.back::before, #book-btn .mini-cover.back::after { content: none; }
-  #book-btn .mini-pages, #book-btn .mini-spine {
-    position: absolute; left: 26px; top: 2px; width: 8px; height: 36px;
-    background: repeating-linear-gradient(90deg, #fff9e9 0 1px, #d6c3a7 1px 2px);
-    transform: rotateY(90deg);
+  #book-btn .mini-front {
+    transform-origin: left center;
+    transform: translateZ(8px);
+    transition: transform .4s ease;
+    z-index: 5;
   }
-  #book-btn .mini-spine { left: -3px; top: 0; height: 40px; background: linear-gradient(90deg, #a56840, #cc925f, #a56840); }
-  #book-btn .book-label { display: flex; flex-direction: column; gap: 1px; text-align: left; line-height: 1.2; }
-  #book-btn .book-caption { font-size: 13px; font-weight: 400; color: var(--ink-mid); }
-  #book-btn[aria-expanded="true"] .mini-book { animation-play-state: paused; opacity: 0; }
-  @keyframes journal-turn {
-    0%, 100% { transform: rotateX(8deg) rotateY(-28deg) rotateZ(-6deg); }
-    50% { transform: rotateX(8deg) rotateY(24deg) rotateZ(-3deg); }
+  #book-btn .mini-front::before {
+    content: '✦'; display: grid; place-items: center; height: 100%;
+    color: #fff0cc; font-size: 18px;
   }
-  #book-btn .count { font-size: 10px; font-weight: 700; color: var(--ink-soft); }
-  #book-btn.nudge { animation: book-nudge .6s var(--spring); }
+  #book-btn .mini-front::after {
+    content: ''; position: absolute; inset: 3px;
+    background: #fff6e8;
+    border-radius: 1px 3px 3px 1px;
+    transform: rotateY(180deg);
+    backface-visibility: hidden;
+  }
+  #book-btn .mini-back { transform: translateZ(-8px); }
+  #book-btn .mini-spine {
+    top: 0; left: 0; width: 16px; height: 76px; margin-left: -8px;
+    background: linear-gradient(90deg, #7a492c, #c48a55 45%, #8d5634);
+    transform: rotateY(-90deg);
+  }
+  #book-btn .mini-leaf {
+    top: 4px; left: 1px; right: 3px; height: 68px;
+    transform-origin: left center;
+    transform-style: preserve-3d;
+    background: linear-gradient(90deg, #efe3cc, #fffdf8);
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 0 1px #e4d3b4;
+  }
+  #book-btn .mini-leaf::after {
+    content: ''; position: absolute; inset: 0;
+    background: #f3e6d0;
+    transform: rotateY(180deg);
+    backface-visibility: hidden;
+    border-radius: inherit;
+  }
+  #book-btn .mini-leaf.l1 { transform: rotateY(-6deg); }
+  #book-btn .mini-leaf.l2 { transform: rotateY(-3deg); }
+  #book-btn .mini-leaf.l3 { transform: rotateY(-1deg); }
+
+  #book-btn:hover .mini-drop,
+  #book-btn:focus-visible .mini-drop,
+  #book-btn.peeking .mini-drop {
+    animation-play-state: paused;
+    transform: translateY(-8px);
+  }
+  #book-btn:hover .mini-shadow,
+  #book-btn:focus-visible .mini-shadow,
+  #book-btn.peeking .mini-shadow {
+    animation-play-state: paused;
+    transform: translateX(-50%) scale(.78);
+    opacity: .24;
+  }
+  #book-btn:hover .mini-book,
+  #book-btn:focus-visible .mini-book,
+  #book-btn.peeking .mini-book {
+    transform: rotateX(8deg);
+  }
+  #book-btn:hover .mini-front,
+  #book-btn:focus-visible .mini-front,
+  #book-btn.peeking .mini-front {
+    transform: translateZ(8px) rotateY(-52deg);
+  }
+  #book-btn:hover .mini-leaf.l1,
+  #book-btn:focus-visible .mini-leaf.l1,
+  #book-btn.peeking .mini-leaf.l1 { transform: rotateY(-18deg); }
+  #book-btn:hover .mini-leaf.l2,
+  #book-btn:focus-visible .mini-leaf.l2,
+  #book-btn.peeking .mini-leaf.l2 { transform: rotateY(-10deg); }
+  #book-btn:hover .mini-leaf.l3,
+  #book-btn:focus-visible .mini-leaf.l3,
+  #book-btn.peeking .mini-leaf.l3 { transform: rotateY(-4deg); }
+  #book-btn .mini-leaf { transition: transform .35s ease; }
+
+  #book-btn.hand-off { z-index: 5; pointer-events: none; }
+  #book-btn.hand-off .mini-drop { opacity: 0; transition: opacity .12s ease; }
+
+  @keyframes item-spin {
+    from { transform: rotateY(0deg); }
+    to { transform: rotateY(360deg); }
+  }
+  @keyframes item-bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-12px); }
+  }
+  @keyframes item-shadow {
+    0%, 100% { transform: translateX(-50%) scale(1); opacity: .4; }
+    50% { transform: translateX(-50%) scale(.72); opacity: .2; }
+  }
+  #book-count {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0);
+  }
+  #book-btn.nudge .mini-drop { animation: item-bob 2.8s ease-in-out infinite, book-nudge .6s var(--spring); }
   @keyframes book-nudge {
-    0% { transform: rotate(-1.6deg); } 35% { transform: translateY(-4px) rotate(-4deg); } 100% { transform: rotate(-1.6deg); }
+    0% { transform: translateY(0) scale(1); }
+    40% { transform: translateY(-18px) scale(1.06); }
+    100% { transform: translateY(0) scale(1); }
   }
 
   #book {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
     box-sizing: border-box;
-    background: rgba(44, 95, 111, .24); backdrop-filter: blur(3px);
-    opacity: 0; visibility: hidden; transition: opacity .28s ease, visibility .28s;
+    background: transparent;
+    opacity: 1; visibility: hidden; pointer-events: none;
   }
-  #book.open { opacity: 1; visibility: visible; }
-  /* The spread: two pages meeting in a white gutter, on a warm cover. */
+  #book::before {
+    content: ''; position: absolute; inset: 0; z-index: 0;
+    background: rgba(44, 95, 111, .24); backdrop-filter: blur(3px);
+    opacity: 0; transition: opacity .5s ease;
+  }
+  #book.prep, #book.open { visibility: visible; }
+  #book.open { pointer-events: auto; }
+  #book.prep::before, #book.open::before { opacity: 1; }
+  /* Journal chrome stays full-size. The 3D stage is a closed book that flies in, then opens. */
   #book .spread {
     position: relative; display: flex;
     box-sizing: border-box;
     width: min(940px, calc(100% - 48px)); height: min(600px, calc(100vh - 40px));
     padding: 14px 12px; border-radius: 20px;
     isolation: isolate; overflow: visible;
+    background: transparent;
+    box-shadow: none;
+    z-index: 1;
+    transform: none;
+    transition: background .35s ease, box-shadow .35s ease;
+  }
+  #book.open .spread {
     background: linear-gradient(90deg, #cb8956, #e7b17b 3%, #e7b17b 47%, #ad7045 50%, #e7b17b 53%, #d79760);
     box-shadow: 0 4px 0 #a96b42, 0 7px 0 #8e5939,
       0 26px 60px rgba(44, 65, 65, .28), inset 0 0 0 2px #f4c99d;
-    transform: translate(var(--book-from-x, 0px), var(--book-from-y, 24px)) scale(var(--book-from-scale, .12)) rotate(-6deg);
-    transform-origin: center;
-    opacity: 0; transition: transform .24s ease-in, opacity .2s ease;
   }
-  #book.open .spread {
-    transform: none; opacity: 1;
-    transition: transform .52s cubic-bezier(.2, .7, .2, 1), opacity .18s ease;
+  #book .stage-3d {
+    position: absolute; left: 50%; top: 4%;
+    width: 47%; height: 92%;
+    z-index: 8; pointer-events: none;
+    perspective: 900px; perspective-origin: left center;
+    transform-style: preserve-3d;
+    transform-origin: center center;
+    opacity: 1;
   }
-  /* A lightweight cover leaf folds away as the paper opens beneath it. */
-  #book .spread::before {
-    content: '✦'; position: absolute; inset: 8px 8px 8px 50%; z-index: 3;
-    display: grid; place-items: center; border-radius: 3px 14px 14px 3px;
-    background: linear-gradient(110deg, #bb7a4c, #e4ad76 14%, #d89b66);
-    color: #ffe3b7; font-size: 48px;
-    box-shadow: inset 0 0 0 2px #ebc297, inset 0 0 0 10px #d69a65,
-      inset 0 0 0 11px rgba(255, 232, 200, .45), 5px 2px 14px #70462c33;
-    transform-origin: left center; transform: perspective(1100px) rotateY(0deg);
-    pointer-events: none; backface-visibility: hidden;
-    transition: transform .2s ease, opacity .15s ease;
+  #book.from-pose .stage-3d {
+    transform: translate3d(var(--from-x, 0px), var(--from-y, 0px), 0) scale(var(--from-s, 1)) rotateY(-26deg) rotateX(16deg);
+    transition: none;
   }
-  #book.open .spread::before {
-    transform: perspective(1100px) rotateY(-170deg); opacity: 0;
-    transition: transform .42s ease-out .03s, opacity .12s ease .25s;
+  #book.arriving .stage-3d {
+    transform: rotateY(-12deg) rotateX(6deg);
+    transition: transform .7s cubic-bezier(.2, .72, .18, 1);
   }
+  #book.uncover .stage-3d,
+  #book.flipping .stage-3d {
+    transform: rotateX(10deg);
+    transition: transform .4s ease;
+  }
+  #book.open .stage-3d {
+    opacity: 0;
+    transform: none;
+    transition: opacity .4s ease;
+  }
+  #book .board {
+    position: absolute; inset: 0; border-radius: 4px 12px 12px 4px;
+    transform-origin: left center; transform-style: preserve-3d;
+    background: linear-gradient(145deg, #b7794c, #e4ad76 18%, #c17a48);
+    box-shadow: inset 0 0 0 2px #f3cf9f, inset 0 0 0 10px #d69a65;
+  }
+  #book .board.back { z-index: 1; }
+  #book .page-base {
+    position: absolute; left: 3%; top: 2.4%; right: 3%; bottom: 2.4%;
+    z-index: 2; border-radius: 0 6px 6px 0;
+    background: linear-gradient(90deg, #f0e2cc, #fffdf8);
+    box-shadow: 0 0 0 1px #e4d3b4;
+  }
+  #book .spine-3d {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 20px; margin-left: -10px;
+    z-index: 3;
+    background: linear-gradient(90deg, #7a492c, #c48a55 45%, #8d5634);
+    transform: rotateY(-90deg);
+  }
+  #book .board.front {
+    z-index: 10;
+    transform: translateZ(28px);
+    box-shadow: inset 0 0 0 2px #f3cf9f, inset 0 0 0 10px #d69a65,
+      3px 0 0 #f3ead6, 5px 0 0 #efe3cc, 7px 0 0 #e7d6b8, 8px 8px 18px rgba(80,40,10,.3);
+    transition: transform .72s cubic-bezier(.12, .72, .18, 1);
+  }
+  #book.uncover .board.front,
+  #book.flipping .board.front,
+  #book.open .board.front {
+    transform: translateZ(2px) rotateY(-178deg);
+    box-shadow: inset 0 0 0 2px #f3cf9f, inset 0 0 0 10px #d69a65;
+  }
+  #book.flipping .board.front { z-index: 3; }
+  #book .board.front .emblem {
+    display: grid; place-items: center; height: 100%;
+    color: #fff0cc; font-size: 64px;
+    backface-visibility: hidden;
+  }
+  #book .board.front .lining {
+    position: absolute; inset: 0; border-radius: inherit;
+    background: linear-gradient(90deg, #c88954, #f3d7ae);
+    transform: rotateY(180deg);
+    backface-visibility: hidden;
+  }
+  #book .sheet {
+    position: absolute; left: 2%; top: 2.4%; right: 3%; bottom: 2.4%;
+    transform-origin: left center; transform-style: preserve-3d;
+    z-index: 5; border-radius: 0 6px 6px 0;
+    --lift: 10px;
+  }
+  #book .sheet.s1 { z-index: 9; --lift: 18px; }
+  #book .sheet.s2 { z-index: 8; --lift: 14px; }
+  #book .sheet.s3 { z-index: 7; --lift: 10px; }
+  #book .sheet.s4 { z-index: 6; --lift: 6px; }
+  #book .sheet i, #book .sheet b {
+    position: absolute; inset: 0; border-radius: inherit;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+  }
+  #book .sheet i {
+    background: #fffdf8;
+    background-image: repeating-linear-gradient(to bottom, transparent 0 26px, rgba(140, 110, 70, .13) 26px 27px);
+    box-shadow: 0 0 0 1px #e4d3b4, 8px 0 18px rgba(60, 30, 8, .12);
+  }
+  #book .sheet b {
+    background: #f3e6d0;
+    background-image: repeating-linear-gradient(to bottom, transparent 0 26px, rgba(140, 110, 70, .1) 26px 27px);
+    transform: rotateY(180deg);
+  }
+  #book:not(.flipping) .sheet { transform: translateZ(var(--lift)) rotateY(0deg); animation: none; }
+  #book.flipping .sheet.s1 { animation: sheet-flip .62s ease-in-out forwards; }
+  #book.flipping .sheet.s2 { animation: sheet-flip .62s ease-in-out .2s forwards; }
+  #book.flipping .sheet.s3 { animation: sheet-flip .62s ease-in-out .4s forwards; }
+  #book.flipping .sheet.s4 { animation: sheet-flip .62s ease-in-out .6s forwards; }
+  @keyframes sheet-flip {
+    0% { transform: translateZ(var(--lift)) rotateY(0deg); }
+    100% { transform: translateZ(var(--lift)) rotateY(-180deg); }
+  }
+  #book:not(.open) .book-tabs,
+  #book:not(.open) .close,
+  #book:not(.open) .bookmark,
+  #book:not(.open) .spine,
+  #book:not(.open) .mobile-tabs { opacity: 0; }
+  #book .spread::before { content: none; }
   #book .page {
     position: relative; z-index: 1;
     flex: 1; min-width: 0; display: flex; flex-direction: column;
     padding: 22px 24px 18px; background: #f7f1e4;
     box-shadow: 0 2px 0 #e0d0b7, 0 3px 0 #fffaf0, 0 4px 0 #d6c3a7,
       0 5px 0 #fff8e8, 0 6px 0 #c9b394, 0 9px 9px #70462c26;
-    transition: transform .2s ease;
-    backface-visibility: hidden;
+    opacity: 0;
     background-image:
       linear-gradient(to right, transparent 26px, rgba(180, 40, 28, .2) 26px 27px, transparent 27px),
       repeating-linear-gradient(to bottom, transparent 0 27px, rgba(140, 110, 70, .14) 27px 28px);
     background-size: 100% 100%, 100% 28px;
     background-position: 0 0, 0 8px;
   }
+  #book.open .page { opacity: 1; transition: opacity .4s ease; }
   #book .page.left {
-    border-radius: 14px 0 0 14px; transform-origin: right center;
-    transform: perspective(900px) rotateY(55deg);
+    border-radius: 14px 0 0 14px;
     background-color: #f7f1e4;
     box-shadow: inset -10px 0 14px -12px rgba(120, 80, 40, .12);
   }
   #book .page.right {
-    border-radius: 0 14px 14px 0; transform-origin: left center;
-    transform: perspective(900px) rotateY(-55deg);
+    border-radius: 0 14px 14px 0;
     background-color: #f7f1e4;
     box-shadow: inset 10px 0 14px -12px rgba(120, 80, 40, .12);
   }
-  #book.open .page { transform: none; transition: transform .38s ease-out .08s; }
   #book .bookmark {
     position: absolute; right: 54px; bottom: -12px; width: 20px; height: 44px;
     z-index: 0; pointer-events: none;
@@ -586,6 +784,10 @@
       flex-direction: column; min-width: 0; width: 100%; max-width: 520px;
       height: min(740px, calc(100dvh - 24px)); padding: 10px;
     }
+    #book .stage-3d {
+      left: 18%; top: 16%;
+      width: 64%; height: 52%;
+    }
     #book .mobile-tabs {
       display: flex; gap: 8px; padding: 4px 52px 10px 4px;
       overflow-x: auto; max-width: 100%; flex-shrink: 0;
@@ -614,7 +816,7 @@
     #entry-input { min-height: 150px; }
     #tag-row { gap: 9px 12px; }
     #book .page-note { font-size: 11px; text-align: right; }
-    #view-btn { bottom: 70px; }
+    #view-btn { bottom: 86px; }
     #planet-card { width: 220px; }
     #journal { bottom: 118px; }
   }
@@ -626,13 +828,15 @@
 
   @media (prefers-reduced-motion: reduce) {
     #view-btn:hover { transform: translateX(-50%) rotate(-0.6deg); }
-    #book-btn.nudge { animation: none; }
+    #book-btn.nudge .mini-drop { animation: none; }
+    #book-btn .mini-drop, #book-btn .mini-spin, #book-btn .mini-shadow { animation: none; }
+    #book-btn .mini-spin { transform: rotateY(-22deg); }
+    #book-btn .mini-shadow { transform: translateX(-50%) scale(.85); opacity: .3; }
     #stats-chip.bump, #wallet.bump, #planet-card.grew { transform: none; }
     #book, #book .spread, #book .page, #book.open .spread, #book.open .page,
-    #book .spread::before, #book.open .spread::before {
-      transition-duration: .01ms; transition-delay: 0s;
+    #book .stage-3d, #book .board.front, #book .sheet {
+      transition-duration: .01ms; transition-delay: 0s; animation: none !important;
     }
-    #book .spread::before { display: none; }
     #mic-btn.listening, #mic-btn.done { animation: none; }
     #mic-btn.listening .mic-rings::before,
     #mic-btn.listening .mic-rings::after { animation: none; display: none; }
@@ -658,15 +862,15 @@
   }
   #toast-shards:empty { display: none; }
 
-  /* --- wallet + shop (bottom right) --- */
+  /* --- wallet + shop (top left, under the stats chip) --- */
   #wallet {
-    position: fixed; right: 16px; bottom: 16px; z-index: 6;
+    position: fixed; left: 16px; top: 76px; z-index: 6;
     display: flex; align-items: center; gap: 8px;
     padding: 8px 8px 8px 16px; border-radius: 4px 10px 4px 8px;
-    transform: rotate(1.2deg);
+    transform: rotate(-1.2deg);
     transition: transform .4s var(--spring);
   }
-  #wallet.bump { transform: rotate(1.2deg) scale(1.06); }
+  #wallet.bump { transform: rotate(-1.2deg) scale(1.06); }
   .shard { color: var(--shard); }
   #wallet-count { font-size: 18px; font-weight: 400; min-width: 2ch; font-variant-numeric: tabular-nums; }
   #shop-btn {
@@ -875,16 +1079,25 @@
 <canvas id="scene-canvas"></canvas>
 
 <div id="stats-chip" class="paper"><span id="stats-text">a quiet ocean</span></div>
-<button id="book-btn" aria-haspopup="dialog" aria-controls="book" aria-expanded="false">
+<button id="book-btn" type="button" aria-haspopup="dialog" aria-controls="book" aria-expanded="false" aria-label="Open the journal">
   <span class="mini-stage" aria-hidden="true">
-    <span class="mini-book">
-      <span class="mini-cover"></span><span class="mini-cover back"></span>
-      <span class="mini-pages"></span><span class="mini-spine"></span>
+    <span class="mini-shadow"></span>
+    <span class="mini-drop">
+      <span class="mini-spin">
+        <span class="mini-turn">
+        <span class="mini-book">
+          <span class="mini-face mini-back"></span>
+          <span class="mini-face mini-spine"></span>
+          <span class="mini-leaf l1"></span>
+          <span class="mini-leaf l2"></span>
+          <span class="mini-leaf l3"></span>
+          <span class="mini-face mini-front"></span>
+        </span>
+        </span>
+      </span>
     </span>
   </span>
-  <span class="book-label">Write a memory
-    <span class="book-caption">journal <span class="count" id="book-count"></span></span>
-  </span>
+  <span id="book-count"></span>
 </button>
 <button id="settings-btn" type="button" aria-haspopup="dialog" aria-controls="settings" aria-expanded="false" aria-label="Settings">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -920,6 +1133,16 @@
 
 <div id="book" role="dialog" aria-modal="true" aria-labelledby="book-heading" data-page="write">
   <div class="spread">
+    <div class="stage-3d" aria-hidden="true">
+      <div class="board back"></div>
+      <div class="page-base"></div>
+      <div class="spine-3d"></div>
+      <div class="sheet s1"><i></i><b></b></div>
+      <div class="sheet s2"><i></i><b></b></div>
+      <div class="sheet s3"><i></i><b></b></div>
+      <div class="sheet s4"><i></i><b></b></div>
+      <div class="board front"><span class="emblem">✦</span><span class="lining"></span></div>
+    </div>
     <div id="book-tabs-left" class="book-tabs left" role="tablist" aria-label="Journal sections"></div>
     <div id="book-tabs-right" class="book-tabs right" role="tablist" aria-label="People"></div>
     <span class="bookmark" aria-hidden="true"></span>
