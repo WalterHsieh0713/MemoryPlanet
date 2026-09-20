@@ -62,14 +62,26 @@
 
   // Terrain seeded around a memory, so a biome grows out of what you wrote. `grand` is
   // reserved for important entries — that's what finally makes `importance` visible.
+  //
+  // The world should read as GREEN. `other` is the keyword guess's catch-all and takes a
+  // large share of entries, so whatever it plants sets the tone of the whole island: it was
+  // dirt, and a planet of dirt is what you got. Keep the brown tiles for a memory that is
+  // actually about stone or sand.
+  //
+  // `grass-forest` is a whole copse on one tile and the character walks through, not around,
+  // so a forest on every other tile leaves the follow camera inside the branches. It is one
+  // feature among several rather than the only one, and FEATURE_CHANCE keeps features rare.
   var CATEGORY_TERRAIN = {
     achievement: { plain: ['stone.glb'], feature: ['stone-rocks.glb'], grand: ['stone-mountain.glb', 'stone-hill.glb'] },
     travel: { plain: ['sand.glb'], feature: ['sand-rocks.glb', 'sand-desert.glb'], grand: ['sand-desert.glb'] },
-    home: { plain: ['grass.glb'], feature: ['grass-forest.glb'], grand: ['grass-hill.glb'] },
-    everyday: { plain: ['grass.glb'], feature: ['grass-forest.glb'], grand: ['grass-hill.glb'] },
-    social: { plain: ['grass.glb'], feature: ['grass-forest.glb'], grand: ['grass-hill.glb'] },
-    other: { plain: ['dirt.glb'], feature: ['dirt-lumber.glb'], grand: ['stone-hill.glb'] }
+    home: { plain: ['grass.glb'], feature: ['grass-hill.glb', 'grass-forest.glb'], grand: ['grass-hill.glb'] },
+    everyday: { plain: ['grass.glb'], feature: ['grass-hill.glb', 'grass-forest.glb'], grand: ['grass-hill.glb'] },
+    social: { plain: ['grass.glb'], feature: ['grass-hill.glb', 'grass-forest.glb'], grand: ['grass-hill.glb'] },
+    other: { plain: ['grass.glb'], feature: ['grass-hill.glb', 'grass-forest.glb'], grand: ['grass-hill.glb'] }
   };
+
+  // How often a seeded tile is a feature (trees, rocks, dunes) rather than plain ground.
+  var FEATURE_CHANCE = 0.3;
 
   // The sphere can't place whole kit tiles on its irregular cells, so terrain shows up
   // there as the cell's own colour instead — each theme's `tint` table (themes.js).
@@ -333,7 +345,7 @@
     var table = CATEGORY_TERRAIN[category] || CATEGORY_TERRAIN.other;
     var bucket;
     if (index === 0 && importance >= 4) bucket = table.grand;
-    else bucket = hash(seed * 31 + index) < 0.45 ? table.feature : table.plain;
+    else bucket = hash(seed * 31 + index) < FEATURE_CHANCE ? table.feature : table.plain;
     return bucket[Math.floor(hash(seed * 17 + index * 7) * bucket.length) % bucket.length];
   }
 
@@ -702,6 +714,11 @@
   // from becoming a wall, and the caller caps it so the character always has room to stand.
   var MAX_FOOTPRINT = 0.36;   // of a tile's width
   var PLAYER_RADIUS = 0.1;    // world units
+
+  // Tiles whose model is a stand of trees: eight of them, spread right across the tile, with
+  // canopies from ankle height to well over the character. You may walk through (only
+  // buildings are solid), but the follow camera must not sit inside the leaves.
+  var CANOPY_TILES = { 'grass-forest.glb': true, 'dirt-lumber.glb': true };
   function footprintOf(parts) {
     var halfX = 0, halfZ = 0;
     parts.forEach(function (part) {
@@ -794,10 +811,12 @@
     // planet. Keyed off roadEdges rather than `roads` so the buildings a road runs through
     // stay in — see the note on roadSlots() for why dropping them strands every road tile.
     // blockers: a circle per building, filled in as its model loads — what the character
-    // cannot walk through (see footprintOf).
+    // cannot walk through (see footprintOf). canopy: the same for tiles of trees, which stop
+    // the camera but not the character.
     var blockers = [];
+    var canopy = [];
     state.island = { cells: cells, centres: centres, roadSlots: Object.keys(roadEdges).map(Number),
-      blockers: blockers };
+      blockers: blockers, canopy: canopy };
 
     // How far the island reaches from its middle, and how deep its rock hangs.
     var spread = 0;
@@ -838,6 +857,8 @@
         if (buildingSlots.has(Number(id))) {
           var reach = footprintOf(parts) * FLAT_MODEL_SCALE;
           if (reach > 0) blockers.push({ x: x, z: z, r: Math.min(reach, FLAT_SPACING * MAX_FOOTPRINT) });
+        } else if (CANOPY_TILES[assetBySlot[id]]) {
+          canopy.push({ x: x, z: z, r: FLAT_TILE_RADIUS * 0.9 });
         }
         obj.userData.restY = FLAT_BASE_Y;
         obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
@@ -2517,16 +2538,20 @@
     return MI.world.player.tangent(f, up) || anyTangent(up);
   }
 
-  // Is a world-space point inside an island building's footprint (with a margin), below its
+  // Is a world-space point inside a building or a stand of trees (with a margin), below its
   // roofline? Follow mode is island-only, so this is only ever asked there.
   var BUILDING_TOP = 1.5;
-  function eyeInsideBuilding(eye) {
-    var blockers = state.flatMode && state.island && state.island.blockers;
-    if (!blockers || !blockers.length) return false;
+  function eyeBlocked(eye) {
+    if (!state.flatMode || !state.island) return false;
     var local = state.flatGroup.worldToLocal(eye.clone());
     if (local.y > BUILDING_TOP) return false;
-    for (var i = 0; i < blockers.length; i++) {
-      var b = blockers[i], dx = local.x - b.x, dz = local.z - b.z, reach = b.r + 0.12;
+    return insideAny(local, state.island.blockers) || insideAny(local, state.island.canopy);
+  }
+
+  function insideAny(local, circles) {
+    if (!circles) return false;
+    for (var i = 0; i < circles.length; i++) {
+      var c = circles[i], dx = local.x - c.x, dz = local.z - c.z, reach = c.r + 0.12;
       if (dx * dx + dz * dz < reach * reach) return true;
     }
     return false;
@@ -2560,7 +2585,7 @@
       eye.copy(target)
         .addScaledVector(forward, -d * Math.cos(state.groundPitch))
         .addScaledVector(up, d * Math.sin(state.groundPitch));
-      if (!eyeInsideBuilding(eye)) break;
+      if (!eyeBlocked(eye)) break;
     }
     return { eye: eye, target: target, up: up };
   }
