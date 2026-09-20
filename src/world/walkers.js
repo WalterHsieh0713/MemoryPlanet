@@ -143,6 +143,29 @@
     return templateCache[id];
   }
 
+  // Object3D.clone() on a skinned model leaves every copy driving the ORIGINAL's bones, so
+  // the character is drawn where the template was loaded (near the world origin, at full
+  // size) instead of where you put the copy. Rebuild each copy's skeleton from its own bones
+  // — the same job as SkeletonUtils.clone, which the r128 build we vendor does not include.
+  function cloneModel(source) {
+    var clone = source.clone(true);
+    var sourceOf = new Map(), cloneOf = new Map();
+    (function pair(a, b) {
+      sourceOf.set(b, a);
+      cloneOf.set(a, b);
+      for (var i = 0; i < a.children.length; i++) pair(a.children[i], b.children[i]);
+    })(source, clone);
+    clone.traverse(function (node) {
+      if (!node.isSkinnedMesh) return;
+      var original = sourceOf.get(node);
+      node.skeleton = original.skeleton.clone();
+      node.skeleton.bones = original.skeleton.bones.map(function (bone) { return cloneOf.get(bone); });
+      node.bindMatrix.copy(original.bindMatrix);
+      node.bind(node.skeleton, node.bindMatrix);
+    });
+    return clone;
+  }
+
   // Pacing rides on the walker rather than on module constants, so the two kinds can idle at
   // completely different rhythms through the same FSM.
   function newWalker(spec) {
@@ -162,8 +185,8 @@
       if (!template && !fallback) return null;
       if (!template) template = fallback();
       var spec = KINDS[kind];
-      var sphere = newWalker(spec); sphere.group = template.clone(true);
-      var flat = newWalker(spec); flat.group = template.clone(true);
+      var sphere = newWalker(spec); sphere.group = cloneModel(template);
+      var flat = newWalker(spec); flat.group = cloneModel(template);
       return { kind: kind, sphere: sphere, flat: flat };
     });
   }
@@ -297,7 +320,7 @@
     isPet: isPet,
     isResident: isResident,
     residentModelFor: residentModelFor,
-    makeModel: function (id) { return loadTemplate(id).then(function (model) { return model && model.clone(true); }); },
+    makeModel: function (id) { return loadTemplate(id).then(function (model) { return model && cloneModel(model); }); },
     makeWalkerPair: makeWalkerPair,
     updateSphere: updateSphere,
     updateFlat: updateFlat

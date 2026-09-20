@@ -180,13 +180,49 @@
   }
 
   // Island step with sliding, in the XZ plane. `pos` and the result are { x, z }.
-  function moveFlat(pos, forward, right, input, distance, isLandAt) {
+  // `blockers` (optional) are solid circles { x, z, r }, `radius` the character's own.
+  function moveFlat(pos, forward, right, input, distance, isLandAt, blockers, radius) {
     var dirs = moveDirections(forward, right, input);
     if (!dirs.length) return null;
     var candidates = dirs.map(function (d) {
       return { x: pos.x + d.x * distance, z: pos.z + d.z * distance };
     });
-    return slide(candidates, isLandAt);
+    // Running at a building: keep the part of the move that runs along its wall, so you
+    // glide round the corner instead of stopping dead against it.
+    if (blockers && blockers.length) {
+      var d0 = dirs[0];
+      blockers.forEach(function (b) {
+        var nx = pos.x - b.x, nz = pos.z - b.z, len = Math.sqrt(nx * nx + nz * nz);
+        if (len < 1e-6 || len > b.r + (radius || 0) + distance * 3) return;
+        nx /= len; nz /= len;
+        var tx = d0.x - nx * (d0.x * nx + d0.z * nz), tz = d0.z - nz * (d0.x * nx + d0.z * nz);
+        var tl = Math.sqrt(tx * tx + tz * tz);
+        if (tl < 1e-6) { tx = -nz; tz = nx; tl = 1; } // straight at the middle: pick a side
+        candidates.push({ x: pos.x + tx / tl * distance, z: pos.z + tz / tl * distance });
+      });
+    }
+    return slide(candidates, function (p) {
+      return isLandAt(p) && !blockedStep(pos, p, blockers, radius);
+    });
+  }
+
+  // Solid props are circles on the island: { x, z, r }. A step INTO one is refused, so the
+  // slide logic above walks you around it. A character already inside (the building appeared
+  // under it, or it spawned close) is never trapped: it may only move outward.
+  // `radius` is the character's own, added to each circle.
+  function blockedStep(from, to, blockers, radius) {
+    if (!blockers) return false;
+    for (var i = 0; i < blockers.length; i++) {
+      var b = blockers[i], reach = b.r + (radius || 0);
+      var dxTo = to.x - b.x, dzTo = to.z - b.z;
+      var distTo = dxTo * dxTo + dzTo * dzTo;
+      if (distTo >= reach * reach) continue;
+      var dxFrom = from.x - b.x, dzFrom = from.z - b.z;
+      var distFrom = dxFrom * dxFrom + dzFrom * dzFrom;
+      if (distFrom < reach * reach && distTo > distFrom) continue; // already inside: may leave
+      return true;
+    }
+    return false;
   }
 
   // Ease the facing toward where the character is actually travelling, so a change of
@@ -244,7 +280,7 @@
     if (!player.group || !player.placed) return;
 
     var moved = moveFlat({ x: player.x, z: player.z }, ctx.forward, ctx.right, ctx.input,
-      ctx.speed * dt, ctx.isLandAt);
+      ctx.speed * dt, ctx.isLandAt, ctx.blockers, ctx.blockerRadius);
     player.moving = !!moved;
     if (moved) {
       var dx = moved.x - player.x, dz = moved.z - player.z;
@@ -296,6 +332,7 @@
     stepSphereSliding: stepSphereSliding,
     moveSphere: moveSphere,
     moveFlat: moveFlat,
+    blockedStep: blockedStep,
     inputDirection: inputDirection,
     TILES_PER_SECOND: TILES_PER_SECOND
   };

@@ -255,6 +255,40 @@ tiles.forEach(function (t) {
 });
 check('every tile centre resolves to its own tile', wrong === 0, wrong + ' tiles misresolved');
 
+// Solid buildings: circles the character cannot step into, glides round, and can leave.
+(function () {
+  var everywhere = function () { return true; };
+  var house = [{ x: 0, z: 2, r: 0.7 }];
+  var R = 0.1;
+  var f = V(0, 0, 1), r = V(1, 0, 0);
+
+  check('a step into a building is refused',
+    player.blockedStep({ x: 0, z: 0.5 }, { x: 0, z: 1.4 }, house, R) === true);
+  check('a step beside a building is allowed',
+    player.blockedStep({ x: 2, z: 0 }, { x: 2, z: 0.1 }, house, R) === false);
+  check('a character inside a footprint may move outward',
+    player.blockedStep({ x: 0, z: 1.5 }, { x: 0, z: 1.4 }, house, R) === false);
+  check('but not deeper in',
+    player.blockedStep({ x: 0, z: 1.5 }, { x: 0, z: 1.6 }, house, R) === true);
+
+  // Running at the wall off-centre glides along it instead of stopping.
+  var at = { x: 0.3, z: 1.24 };
+  var glide = player.moveFlat(at, f, r, { forward: 1, strafe: 0 }, 0.05, everywhere, house, R);
+  check('running at a wall off-centre slides along it', glide !== null &&
+    !player.blockedStep(at, glide, house, R) && Math.abs(glide.x - at.x) > 0.01,
+    JSON.stringify(glide));
+
+  // Walking a long way at it never gets inside.
+  var pos = { x: 0.2, z: 0 }, worst = Infinity;
+  for (var i = 0; i < 200; i++) {
+    var m = player.moveFlat(pos, f, r, { forward: 1, strafe: 0 }, 0.05, everywhere, house, R);
+    if (m) pos = m;
+    worst = Math.min(worst, Math.hypot(pos.x - house[0].x, pos.z - house[0].z));
+  }
+  check('never walks through the building', worst >= house[0].r + R - 1e-6, 'closest ' + worst.toFixed(3));
+  check('and carries on past it', pos.z > 2.5, 'ended at z=' + pos.z.toFixed(2));
+})();
+
 if (failures) {
   console.error('\n' + failures + ' check(s) failed');
   process.exit(1);

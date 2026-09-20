@@ -53,7 +53,7 @@
   // 0.42x the Cube Pets' raw size (mean height 0.72 against 1.71), so hitting a true 2x takes
   // roughly 4.7x the constant. Measured from the packs' own bounding boxes.
   var RESIDENT_SPHERE_SCALE = 0.33;
-  var RESIDENT_FLAT_SCALE = 0.43;
+  var RESIDENT_FLAT_SCALE = 0.27; // same as PLAYER_FLAT_SCALE: a person is about a third of a house
 
   var HEX_PACK = 'assets/kenney-hexagon-kit/';
   // The kit's tiles are 1.0 unit flat-to-flat; props are scaled to whatever the grid's real
@@ -696,6 +696,24 @@
     });
   }
 
+  // How far a building reaches from its tile's centre, in model units: the extent of every
+  // part that is not the hex base plate. Averaging the two axes keeps a long thin building
+  // from becoming a wall, and the caller caps it so the character always has room to stand.
+  var MAX_FOOTPRINT = 0.36;   // of a tile's width
+  var PLAYER_RADIUS = 0.1;    // world units
+  function footprintOf(parts) {
+    var halfX = 0, halfZ = 0;
+    parts.forEach(function (part) {
+      if (part.base) return;
+      var g = part.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      var box = g.boundingBox, at = part.home;
+      halfX = Math.max(halfX, Math.abs(at.x + box.min.x), Math.abs(at.x + box.max.x));
+      halfZ = Math.max(halfZ, Math.abs(at.z + box.min.z), Math.abs(at.z + box.max.z));
+    });
+    return (halfX + halfZ) / 2;
+  }
+
   // The island view: the planet's land coiled into a compact chunk (MI.island.layout),
   // floating on a rocky underside, with its roads re-routed across the island.
   function buildFlatView() {
@@ -774,7 +792,11 @@
     // roadSlots: the island's road route, the flat-view counterpart of roadSlots() on the
     // planet. Keyed off roadEdges rather than `roads` so the buildings a road runs through
     // stay in — see the note on roadSlots() for why dropping them strands every road tile.
-    state.island = { cells: cells, centres: centres, roadSlots: Object.keys(roadEdges).map(Number) };
+    // blockers: a circle per building, filled in as its model loads — what the character
+    // cannot walk through (see footprintOf).
+    var blockers = [];
+    state.island = { cells: cells, centres: centres, roadSlots: Object.keys(roadEdges).map(Number),
+      blockers: blockers };
 
     // How far the island reaches from its middle, and how deep its rock hangs.
     var spread = 0;
@@ -812,6 +834,10 @@
         obj.scale.setScalar(FLAT_MODEL_SCALE);
         obj.rotation.y = Math.PI / 3;
         obj.position.set(x, FLAT_BASE_Y, z);
+        if (buildingSlots.has(Number(id))) {
+          var reach = footprintOf(parts) * FLAT_MODEL_SCALE;
+          if (reach > 0) blockers.push({ x: x, z: z, r: Math.min(reach, FLAT_SPACING * MAX_FOOTPRINT) });
+        }
         obj.userData.restY = FLAT_BASE_Y;
         obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
         state.flatGroup.add(obj);
@@ -1239,20 +1265,27 @@
 
   // Planet <-> flat. Animated by default: the island's tiles lift off the sphere and settle
   // into the flat layout (or the reverse). `{ instant: true }` cuts straight there.
+  var viewListeners = [];
+  function onViewChange(cb) { viewListeners.push(cb); }
+  function notifyView() { viewListeners.forEach(function (cb) { cb(); }); }
+
   function setFlatView(on, options) {
     if (!state) return Promise.resolve();
     if (state.transition) return state.transition;
     var goingFlat = !!on;
     var animated = !(options && options.instant) && goingFlat !== !!state.flatMode;
-    if (!animated) return setFlatViewInstant(goingFlat);
+    if (!animated) return Promise.resolve(setFlatViewInstant(goingFlat)).then(function (r) { notifyView(); return r; });
 
     var run = goingFlat ? unfoldToFlat() : foldToPlanet();
     state.transition = run.then(function () {
       state.transition = null;
+      notifyView();
     }, function (err) {
       state.transition = null;
+      notifyView();
       throw err;
     });
+    notifyView(); // a fold has started: anything that only belongs to a settled view hides now
     return state.transition;
   }
 
@@ -2397,12 +2430,19 @@
   // Ground view is only a camera that rides along; orbit's own controls are suspended while
   // it is on and restored on the way out.
 
-  var PLAYER_SCALE = 0.55;        // matches spawnPerson, so you are the size of your friends
+  // A person is about a third of a house's height (the house is ~1.14 world units tall on the
+  // island; the planet's is oversized by HOUSE_SCALE), and residents are the same size.
+  var PLAYER_SPHERE_SCALE = 0.36;
+  var PLAYER_FLAT_SCALE = 0.27;
   var GROUND_EYE = 0.55;          // the camera looks this far above the character's feet, in
                                   // character-heights, so it frames the head not the shoes
-  var GROUND_DIST = 2.0, GROUND_DIST_MIN = 0.9, GROUND_DIST_MAX = 6.0;
-  var GROUND_PITCH_MIN = 0.08, GROUND_PITCH_MAX = 1.15;
-  var GROUND_LOOK_SPEED = 0.006;
+  // Follow camera: third person, over the right shoulder, at a fixed distance. Distance is in
+  // tiles, the shoulder offset in character-scales, so both hold at any planet size.
+  var FOLLOW_DIST = 1.15, FOLLOW_SHOULDER = 0.35, FOLLOW_PITCH = 0.32;
+  var GROUND_PITCH_MIN = 0.02, GROUND_PITCH_MAX = 0.95;
+  var GROUND_LOOK_SPEED = 0.006;  // middle-drag fallback, radians per pixel
+  var MOUSE_LOOK_SPEED = 0.0025;  // pointer lock, radians per pixel of movement
+  var CAM_TWEEN_MS = 850;
   var SPAWN_CLEARANCE = 0.34;     // of a tile, so the house is in front of you, not on you
 
   // The instance for whichever view is on screen. Each view keeps its own position, the way
@@ -2464,9 +2504,26 @@
     return MI.world.player.tangent(f, up) || anyTangent(up);
   }
 
-  function updateGroundCamera() {
+  // Is a world-space point inside an island building's footprint (with a margin), below its
+  // roofline? Follow mode is island-only, so this is only ever asked there.
+  var BUILDING_TOP = 1.5;
+  function eyeInsideBuilding(eye) {
+    var blockers = state.flatMode && state.island && state.island.blockers;
+    if (!blockers || !blockers.length) return false;
+    var local = state.flatGroup.worldToLocal(eye.clone());
+    if (local.y > BUILDING_TOP) return false;
+    for (var i = 0; i < blockers.length; i++) {
+      var b = blockers[i], dx = local.x - b.x, dz = local.z - b.z, reach = b.r + 0.12;
+      if (dx * dx + dz * dz < reach * reach) return true;
+    }
+    return false;
+  }
+
+  // Where the follow camera wants to be: eye, look-at and up, without touching the camera —
+  // the zoom-in tween and the per-frame follow both read it.
+  function groundPose() {
     var p = activePlayer();
-    if (!p || !p.group || !p.placed) return;
+    if (!p || !p.group || !p.placed) return null;
     var target = p.group.getWorldPosition(new THREE.Vector3());
     var centre = playerGroupFor().getWorldPosition(new THREE.Vector3());
     var up = state.flatMode
@@ -2478,12 +2535,57 @@
     target.addScaledVector(up, GROUND_EYE * p.group.getWorldScale(new THREE.Vector3()).x);
 
     var forward = groundForwardWorld(up);
-    var eye = target.clone()
-      .addScaledVector(forward, -state.groundDistance * Math.cos(state.groundPitch))
-      .addScaledVector(up, state.groundDistance * Math.sin(state.groundPitch));
-    state.camera.up.copy(up);
-    state.camera.position.copy(eye);
-    state.camera.lookAt(target);
+    // Over the shoulder: both the eye and the look-at slide right, so the character sits a
+    // little left of centre and the crosshair side of the screen is clear.
+    var shoulder = new THREE.Vector3().crossVectors(forward, up).normalize()
+      .multiplyScalar(FOLLOW_SHOULDER * p.group.getWorldScale(new THREE.Vector3()).x);
+    target.add(shoulder);
+    // Pull the camera in toward the character rather than let it sit inside a building.
+    var eye = new THREE.Vector3();
+    for (var pull = 1; pull >= 0.25; pull -= 0.125) {
+      var d = state.groundDistance * pull;
+      eye.copy(target)
+        .addScaledVector(forward, -d * Math.cos(state.groundPitch))
+        .addScaledVector(up, d * Math.sin(state.groundPitch));
+      if (!eyeInsideBuilding(eye)) break;
+    }
+    return { eye: eye, target: target, up: up };
+  }
+
+  function updateGroundCamera() {
+    var pose = groundPose();
+    if (!pose) return;
+    state.camera.up.copy(pose.up);
+    state.camera.position.copy(pose.eye);
+    state.camera.lookAt(pose.target);
+    state.lookTarget.copy(pose.target);
+  }
+
+  // The orbit camera's own pose for a stored { phi, theta, dist, target }.
+  function orbitPose(r) {
+    var eye = new THREE.Vector3(
+      r.dist * Math.sin(r.phi) * Math.sin(r.theta),
+      r.dist * Math.cos(r.phi),
+      r.dist * Math.sin(r.phi) * Math.cos(r.theta)
+    ).add(r.target);
+    return { eye: eye, target: r.target.clone(), up: new THREE.Vector3(0, 1, 0) };
+  }
+
+  // Glide the camera from wherever it is to a pose (re-read each frame, so it can follow a
+  // moving target). camMode is 'tween' meanwhile, which every input handler treats as locked.
+  function tweenCamera(getPose, ms, fromTarget, onDone) {
+    var fromEye = state.camera.position.clone();
+    var fromUp = state.camera.up.clone();
+    animate(ms, function (t) {
+      var pose = getPose();
+      if (!pose) { onDone(); return true; }
+      var k = easeInOut(t);
+      state.lookTarget.copy(fromTarget).lerp(pose.target, k);
+      state.camera.up.copy(fromUp).lerp(pose.up, k).normalize();
+      state.camera.position.copy(fromEye).lerp(pose.eye, k);
+      state.camera.lookAt(state.lookTarget);
+      if (t >= 1) { onDone(); return true; }
+    });
   }
 
   // Is the ground under this point land? The sphere grid's tiles are the Voronoi cells of
@@ -2540,11 +2642,21 @@
       if (!centres) return false;
       var c = centres[world.home] || centres[Object.keys(centres)[0]];
       if (!c) return false;
-      // Same reasoning: heading 0 faces +Z, so stepping back along -Z leaves the house
-      // ahead of the character and the camera behind it.
-      p.x = c.x;
-      p.z = c.z - FLAT_SPACING * SPAWN_CLEARANCE;
-      p.heading = 0;
+      // Stand beside the house, on the side of its nearest land neighbour so there is ground to
+      // walk on, facing it (heading 0 faces +Z). The house is nearly as wide as its
+      // tile, so the character has to start out by the rim, not at 'a third of a tile back'.
+      var away = { x: 0, z: -1 }, nearest = Infinity;
+      Object.keys(centres).forEach(function (id) {
+        var o = centres[id];
+        var dx = o.x - c.x, dz = o.z - c.z, d = Math.sqrt(dx * dx + dz * dz);
+        if (d > 0.01 && d < FLAT_SPACING * 1.2 && d < nearest) {
+          nearest = d; away = { x: dx / d, z: dz / d };
+        }
+      });
+      var out = nearest < Infinity ? FLAT_SPACING * 0.6 : FLAT_SPACING * 0.45;
+      p.x = c.x + away.x * out;
+      p.z = c.z + away.z * out;
+      p.heading = Math.atan2(-away.x, -away.z); // facing the house: the follow camera then sits outside it
     }
     p.placed = true;
     return true;
@@ -2564,11 +2676,18 @@
     // being land between one frame and the next. Put it back on the home tile if so.
     if (!isLandAt(standingOn) && !placePlayer(p, view)) return;
 
+    // Who can walk you: in follow mode the WASD keys, on the island otherwise the arrows,
+    // and on the planet nobody — there you only watch the character stand and wander.
+    var keys = null;
+    if (state.camMode === 'ground') keys = state.keys.wasd;
+    else if (state.camMode === 'orbit' && state.flatMode) keys = state.keys.arrows;
     var input = { forward: 0, strafe: 0 };
-    if (state.walkKeys.w) input.forward += 1;
-    if (state.walkKeys.s) input.forward -= 1;
-    if (state.walkKeys.d) input.strafe += 1;
-    if (state.walkKeys.a) input.strafe -= 1;
+    if (keys) {
+      if (keys.w) input.forward += 1;
+      if (keys.s) input.forward -= 1;
+      if (keys.d) input.strafe += 1;
+      if (keys.a) input.strafe -= 1;
+    }
 
     var up = playerUp(p);
     var axes = cameraAxes(p, up);
@@ -2576,8 +2695,10 @@
     if (state.flatMode) {
       MI.world.player.updateFlat(p, dt, {
         forward: axes.forward, right: axes.right, input: input, isLandAt: flatIsLand,
+        // Buildings are solid: a step into a footprint is refused and you glide round it.
+        blockers: state.island && state.island.blockers, blockerRadius: PLAYER_RADIUS,
         speed: MI.world.player.TILES_PER_SECOND * FLAT_SPACING,
-        baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * PLAYER_SCALE
+        baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE
       });
     } else {
       MI.world.player.updateSphere(p, dt, {
@@ -2585,7 +2706,7 @@
         // state.spacing is a tile's width on THIS planet, so a step covers the same share
         // of a hexagon whatever size the planet has grown to.
         speed: MI.world.player.TILES_PER_SECOND * state.spacing,
-        height: RADIUS + LAND_LIFT, radius: RADIUS, scale: state.spacing * PLAYER_SCALE
+        height: RADIUS + LAND_LIFT, radius: RADIUS, scale: state.spacing * PLAYER_SPHERE_SCALE
       });
       // Carry the ground camera along by the very rotation that moved the character. This
       // is what stops the camera swinging around you as you walk, and it is why the camera
@@ -2633,45 +2754,86 @@
     return !!state && state.camMode === 'ground';
   }
 
-  // Entering stashes the orbit camera, so leaving puts it back exactly where it was.
+  // Follow mode is the island's third-person camera. Entering glides the camera in from
+  // wherever the orbit view is and stashes it, so leaving glides back to exactly that.
+  // It is island-only: on the planet you just watch the character.
+  var groundListeners = [];
+  function onGroundView(cb) { groundListeners.push(cb); }
+  function notifyGround() { groundListeners.forEach(function (cb) { cb(); }); }
+
+  function clearKeys() {
+    state.keys = {
+      wasd: { w: false, a: false, s: false, d: false },
+      arrows: { w: false, a: false, s: false, d: false }
+    };
+  }
+
+  function releasePointer() {
+    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) { /* not locked */ }
+  }
+
   function setGroundView(on) {
-    if (!state || state.transition) return Promise.resolve(isGroundView());
+    if (!state || state.transition || state.camMode === 'tween') return Promise.resolve(isGroundView());
     var want = !!on;
     if (want === isGroundView()) return Promise.resolve(want);
 
     if (!want) {
-      state.camMode = 'orbit';
-      state.walkKeys = { w: false, a: false, s: false, d: false };
-      state.camera.up.set(0, 1, 0);
-      if (state.orbitRestore) {
-        state.camPhi = state.orbitRestore.phi;
-        state.camTheta = state.orbitRestore.theta;
-        state.camDistance = state.orbitRestore.dist;
-        state.camTarget.copy(state.orbitRestore.target);
-      }
-      state.updateCamera();
-      return Promise.resolve(false);
+      var restore = state.orbitRestore;
+      state.camMode = 'tween';
+      state.groundHadLock = false; // before releasing, so the lock change does not call us again
+      releasePointer();
+      clearKeys();
+      return new Promise(function (resolve) {
+        tweenCamera(function () { return restore ? orbitPose(restore) : null; },
+          CAM_TWEEN_MS * 0.85, state.lookTarget.clone(), function () {
+            if (restore) {
+              state.camPhi = restore.phi;
+              state.camTheta = restore.theta;
+              state.camDistance = restore.dist;
+              state.camTarget.copy(restore.target);
+            }
+            state.camera.up.set(0, 1, 0);
+            state.camMode = 'orbit';
+            state.updateCamera();
+            notifyGround();
+            resolve(false);
+          });
+      });
     }
 
+    if (!state.flatMode) return Promise.resolve(false); // island only
+    state.camMode = 'tween';
     var ready = state.characterId ? Promise.resolve() : setCharacter(MI.world.player.defaultId());
     return ready.then(function () {
-      var view = state.flatMode ? 'flat' : 'sphere';
-      var p = state.players[view];
-      if (!p.group) return false;
-      if (!p.placed && !placePlayer(p, view)) return false;
+      var p = state.players.flat;
+      if (!p.group || (!p.placed && !placePlayer(p, 'flat'))) {
+        state.camMode = 'orbit';
+        return false;
+      }
       state.orbitRestore = {
         phi: state.camPhi, theta: state.camTheta,
         dist: state.camDistance, target: state.camTarget.clone()
       };
-      state.camMode = 'ground';
       // Start behind the character, looking the way it faces.
-      state.groundForward = state.flatMode
-        ? new THREE.Vector3(Math.sin(p.heading), 0, Math.cos(p.heading))
-        : p.facing.clone();
-      state.groundPitch = 0.45;
-      state.groundDistance = GROUND_DIST * groundTileSize();
-      updateGroundCamera();
-      return true;
+      state.groundForward = new THREE.Vector3(Math.sin(p.heading), 0, Math.cos(p.heading));
+      state.groundPitch = FOLLOW_PITCH;
+      state.groundDistance = FOLLOW_DIST * groundTileSize();
+      clearKeys();
+      // Grabbing the mouse needs a user gesture, which the button click that got us here is.
+      // If the browser refuses, middle-drag still turns the camera.
+      try {
+        var asked = state.renderer.domElement.requestPointerLock();
+        if (asked && asked.catch) asked.catch(function () {});
+      } catch (e) { /* no pointer lock here */ }
+      return new Promise(function (resolve) {
+        tweenCamera(groundPose, CAM_TWEEN_MS, state.camTarget.clone(), function () {
+          state.camMode = 'ground';
+          state.groundHadLock = document.pointerLockElement === state.renderer.domElement;
+          updateGroundCamera();
+          notifyGround();
+          resolve(true);
+        });
+      });
     });
   }
 
@@ -2839,9 +3001,10 @@
       // rotation that moves the character rather than recomputed from a reference direction.
       camMode: 'orbit', characterId: null, playerGroup: playerGroup,
       players: { sphere: MI.world.player.newPlayer(), flat: MI.world.player.newPlayer() },
-      walkKeys: { w: false, a: false, s: false, d: false },
+      keys: { wasd: { w: false, a: false, s: false, d: false },
+              arrows: { w: false, a: false, s: false, d: false } },
       groundForward: new THREE.Vector3(1, 0, 0), groundPitch: 0.45, groundDistance: 2.6,
-      orbitRestore: null
+      orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false
     };
     state.stars = makeStars();
     scene.add(state.stars);
@@ -2866,6 +3029,7 @@
     var looking = false; // ground view: middle button held, turning the camera
     canvasEl.addEventListener('mousedown', function (e) {
       lastX = e.clientX; lastY = e.clientY;
+      if (state.camMode === 'tween') return;
       if (state.camMode === 'ground') {
         // Middle button only. Left is left alone so it stays free for clicking on things.
         if (e.button !== 1) return;
@@ -2904,7 +3068,7 @@
     });
     state.pollHover = function () {
       if (!hoverPending || dragging || state.transition) return;
-      if (state.camMode === 'ground') { hoverPending = null; return; }
+      if (state.camMode !== 'orbit') { hoverPending = null; return; }
       var event = hoverPending;
       hoverPending = null;
       // Always tell the listener, including about leaving a tile, so it can put its own
@@ -2914,19 +3078,27 @@
       hoverCursor = over ? 'pointer' : 'grab';
       canvasEl.style.cursor = hoverCursor;
     };
+    // Turn the held forward vector about the character's own up, rather than nudging an
+    // angle that something else also derives — the vector IS the camera's heading.
+    function steerCamera(dx, dy, speed) {
+      var who = activePlayer();
+      if (!who) return;
+      state.groundForward.applyAxisAngle(playerUp(who), -dx * speed);
+      state.groundPitch = Math.max(GROUND_PITCH_MIN,
+        Math.min(GROUND_PITCH_MAX, state.groundPitch + dy * speed));
+      updateGroundCamera();
+    }
+    state.steerCamera = steerCamera;
     window.addEventListener('mousemove', function (e) {
-      if (state.transition) return;
+      if (state.transition || state.camMode === 'tween') return;
+      // Follow mode with the mouse captured: moving the mouse turns you, no button needed.
+      if (state.camMode === 'ground' && document.pointerLockElement === canvasEl) {
+        steerCamera(e.movementX || 0, e.movementY || 0, MOUSE_LOOK_SPEED);
+        return;
+      }
       var dx = e.clientX - lastX, dy = e.clientY - lastY;
       if (looking) {
-        // Turn the held forward vector about the character's own up, rather than nudging an
-        // angle that something else also derives — the vector IS the camera's heading.
-        var lookAt = activePlayer();
-        if (lookAt) {
-          state.groundForward.applyAxisAngle(playerUp(lookAt), -dx * GROUND_LOOK_SPEED);
-          state.groundPitch = Math.max(GROUND_PITCH_MIN,
-            Math.min(GROUND_PITCH_MAX, state.groundPitch + dy * GROUND_LOOK_SPEED));
-          updateGroundCamera();
-        }
+        steerCamera(dx, dy, GROUND_LOOK_SPEED);
         lastX = e.clientX; lastY = e.clientY;
         return;
       }
@@ -2937,16 +3109,20 @@
       lastX = e.clientX; lastY = e.clientY;
       state.updateCamera();
     });
+    // The browser takes the mouse back on Esc and fires this instead of a keydown: that is
+    // the way out of follow mode when the mouse is captured.
+    document.addEventListener('pointerlockchange', function () {
+      if (document.pointerLockElement === canvasEl) return;
+      if (state.groundHadLock && state.camMode === 'ground') {
+        state.groundHadLock = false;
+        setGroundView(false);
+      }
+    });
+
     canvasEl.addEventListener('wheel', function (e) {
       e.preventDefault();
       if (state.transition) return;
-      if (state.camMode === 'ground') {
-        var tile = groundTileSize();
-        state.groundDistance = Math.max(GROUND_DIST_MIN * tile,
-          Math.min(GROUND_DIST_MAX * tile, state.groundDistance * (1 + e.deltaY * 0.001)));
-        updateGroundCamera();
-        return;
-      }
+      if (state.camMode !== 'orbit') return; // the follow camera keeps a fixed distance
       // The flat layout is much smaller than the planet, so it needs its own zoom range.
       var range = cameraRange();
       var min = state.flatMode ? 2.5 : range.min;
@@ -2956,8 +3132,13 @@
     }, { passive: false });
     canvasEl.style.cursor = 'grab';
 
-    var MOVE_KEYS = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd',
-      ArrowUp: 'w', ArrowLeft: 'a', ArrowDown: 's', ArrowRight: 'd' };
+    // WASD walks you in follow mode, the arrows on the island otherwise (updatePlayer decides
+    // which set counts), so both are tracked and neither steals the other's keys.
+    var MOVE_KEYS = {
+      KeyW: ['wasd', 'w'], KeyA: ['wasd', 'a'], KeyS: ['wasd', 's'], KeyD: ['wasd', 'd'],
+      ArrowUp: ['arrows', 'w'], ArrowLeft: ['arrows', 'a'],
+      ArrowDown: ['arrows', 's'], ArrowRight: ['arrows', 'd']
+    };
 
     function typingSomewhere() {
       var el = document.activeElement;
@@ -2972,21 +3153,19 @@
       if (typingSomewhere() || e.ctrlKey || e.metaKey || e.altKey) return;
       var key = MOVE_KEYS[e.code];
       if (!key) return;
-      e.preventDefault(); // arrows would otherwise scroll the page
-      state.walkKeys[key] = true;
+      if (key[0] === 'arrows') e.preventDefault(); // arrows would otherwise scroll the page
+      state.keys[key[0]][key[1]] = true;
     });
     window.addEventListener('keyup', function (e) {
       var key = MOVE_KEYS[e.code];
-      if (key) state.walkKeys[key] = false;
+      if (key) state.keys[key[0]][key[1]] = false;
     });
     // A lost focus (alt-tab mid-stride) would otherwise leave a key stuck down forever.
-    window.addEventListener('blur', function () {
-      state.walkKeys = { w: false, a: false, s: false, d: false };
-    });
+    window.addEventListener('blur', clearKeys);
 
     canvasEl.addEventListener('click', function (e) {
       if (dragMoved || state.transition) return; // a camera drag or mid-unfold, not a pick
-      if (state.camMode === 'ground') return;    // on the ground: nothing to pick yet
+      if (state.camMode !== 'orbit') return;     // following: nothing to pick yet
       var slot = pickSlot(e, canvasEl);
       pickListeners.forEach(function (cb) { cb(slot); });
     });
@@ -3283,6 +3462,7 @@
     };
   };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
+  MI.world.__steer = function (dx, dy) { state.steerCamera(dx, dy, MOUSE_LOOK_SPEED); };
   MI.world.__camera = function (phi) { state.camPhi = clampPhi(phi); state.updateCamera(); };
   MI.world.setPlanet = setPlanet;
   MI.world.loadGrid = loadGrid;
@@ -3293,6 +3473,8 @@
   MI.world.setPet = setPet;
   MI.world.setGroundView = setGroundView;
   MI.world.isGroundView = isGroundView;
+  MI.world.onGroundView = onGroundView;
+  MI.world.onViewChange = onViewChange;
   MI.world.setCharacter = setCharacter;
   MI.world.characters = function () { return MI.world.player.list(); };
   MI.world.currentCharacter = function () { return state && state.characterId; };

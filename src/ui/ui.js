@@ -33,7 +33,7 @@
       'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
-      'ground-btn', 'ground-label', 'ground-icon', 'picker', 'picker-grid', 'picker-play',
+      'ground-btn', 'picker', 'picker-grid', 'picker-play',
       'character-btn', 'skins-btn',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
@@ -59,8 +59,8 @@
         + (people ? ' · ' + plural(people, 'friend') : '');
 
     el['empty-hint'].classList.toggle('show', memories === 0);
-    // The view toggle means nothing on an empty planet. Ground view does: the house and
-    // your character are there from the start, so its button is never hidden.
+    // The view toggle means nothing on an empty planet. (The follow button belongs to the
+    // island view alone, and syncGroundButton decides it.)
     el['view-btn'].classList.toggle('show', memories > 0);
     if (el['reset-btn']) el['reset-btn'].disabled = memories === 0;
 
@@ -960,6 +960,7 @@
   }
 
   function toggleGroundView() {
+    if (!MI.world.isFlatView()) return Promise.resolve();
     return Promise.resolve(MI.world.setGroundView(!MI.world.isGroundView()))
       .then(syncGroundButton);
   }
@@ -968,10 +969,15 @@
     return Promise.resolve(MI.world.setGroundView(false)).then(syncGroundButton);
   }
 
+  // The follow button exists only on a settled island: hidden on the planet and for the whole
+  // of a fold, and lit while you are following.
   function syncGroundButton() {
     var onGround = MI.world.isGroundView();
-    el['ground-label'].textContent = onGround ? 'back up' : 'follow me';
-    el['ground-icon'].textContent = onGround ? '🔍' : '👣';
+    var available = MI.world.isFlatView() && !MI.world.isTransitioning();
+    el['ground-btn'].classList.toggle('show', available);
+    el['ground-btn'].classList.toggle('on', onGround);
+    el['ground-btn'].setAttribute('aria-pressed', onGround ? 'true' : 'false');
+    el['ground-btn'].tabIndex = available ? 0 : -1;
   }
 
   function buy(kind, item) {
@@ -1529,6 +1535,8 @@
 
     MI.app.onEvent(handleAppEvent);
     el['ground-btn'].addEventListener('click', toggleGroundView);
+    MI.world.onViewChange(syncGroundButton);
+    MI.world.onGroundView(syncGroundButton);
     // Settings is where you change who you are: the picker is the same full-sheet grid you
     // would have seen the first time, and skins go straight to their shop tab.
     el['character-btn'].addEventListener('click', function () {

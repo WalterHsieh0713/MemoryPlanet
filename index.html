@@ -77,22 +77,39 @@
   }
   #planet-hint { margin-top: 6px; font-size: 13px; font-weight: 400; color: var(--ink-mid); }
 
-  /* a second piece of tape, just right of the view toggle: drop to the ground and back.
-     Offset by half that toggle's width (240px) plus a gap, so the two read as one row.
-     Not bottom-right: the wallet is already there. */
+  /* follow: a round raised button, right side above the wallet. Island view only, so it is
+     hidden (and inert) until the island has settled. Footprints, no words. */
   #ground-btn {
-    position: fixed; left: calc(50% + 132px); bottom: 18px; z-index: 5;
-    display: flex; align-items: center; gap: 7px;
-    transform: rotate(0.7deg);
-    border: 1px solid #e6d4b6; cursor: pointer; font-family: inherit;
-    padding: 8px 16px; border-radius: 4px;
-    background: #fff6ea;
-    box-shadow: 2px 3px 0 #e4d2b0, 0 6px 16px rgba(112, 70, 44, .12);
-    color: var(--ink); font-size: 14px; font-weight: 400; letter-spacing: .04em;
-    transition: transform .25s var(--spring), background .2s ease;
+    position: fixed; right: 26px; bottom: 104px; z-index: 5;
+    width: 60px; height: 60px; padding: 0; border: 0; border-radius: 50%;
+    display: grid; place-items: center; cursor: pointer;
+    background: radial-gradient(circle at 34% 26%, #fffdf6 0 18%, #ffeed4 62%, #f7d9ac 100%);
+    color: #a5623d;
+    box-shadow:
+      inset 0 2px 1px rgba(255, 255, 255, .95),
+      inset 0 -3px 5px rgba(196, 128, 66, .28),
+      0 5px 0 #d9b98a,
+      0 9px 16px rgba(112, 70, 44, .28);
+    opacity: 0; pointer-events: none; transform: translateY(8px) scale(.9);
+    transition: opacity .3s ease, transform .25s var(--spring), box-shadow .15s ease;
   }
-  #ground-btn:hover { background: #fffdf8; transform: rotate(0.7deg) translateY(-1px); }
-  #ground-btn:active { transform: rotate(0.7deg) scale(.98); }
+  #ground-btn.show { opacity: 1; pointer-events: auto; transform: none; }
+  #ground-btn.show:hover { transform: translateY(-2px); }
+  #ground-btn.show:active, #ground-btn.on {
+    transform: translateY(4px);
+    box-shadow:
+      inset 0 2px 1px rgba(255, 255, 255, .7),
+      inset 0 -2px 4px rgba(196, 128, 66, .3),
+      0 1px 0 #d9b98a,
+      0 3px 8px rgba(112, 70, 44, .25);
+  }
+  #ground-btn.on {
+    background: radial-gradient(circle at 34% 26%, #ffd9bd 0 14%, var(--accent) 60%, var(--accent-deep) 100%);
+    color: #fff;
+  }
+  #ground-btn:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+  #ground-btn svg { width: 34px; height: 34px; filter: drop-shadow(0 1.5px 0 rgba(255, 255, 255, .7)); }
+  #ground-btn.on svg { filter: drop-shadow(0 1.5px 0 rgba(150, 60, 20, .35)); }
   /* thin scrapbook tape: island / planet, bottom center */
   #view-btn {
     position: fixed; left: 50%; bottom: 18px; z-index: 5;
@@ -909,8 +926,19 @@
   <span class="opt planet" id="view-planet-label">planet</span>
   <span class="opt island" id="view-island-label">island</span>
 </button>
-<button id="ground-btn" type="button" aria-label="Follow your character on the ground">
-  <span id="ground-icon" aria-hidden="true">👣</span><span id="ground-label">follow me</span>
+<button id="ground-btn" type="button" aria-label="Follow your character" aria-pressed="false" title="Follow your character">
+  <svg viewBox="0 0 32 32" aria-hidden="true" fill="currentColor">
+    <defs>
+      <g id="footprint">
+        <ellipse cx="0" cy="5.2" rx="3.4" ry="4.8"/>
+        <ellipse cx="0" cy="-3.6" rx="4" ry="3.7"/>
+        <circle cx="-3.7" cy="-8.9" r="1.35"/><circle cx="-1.3" cy="-10.5" r="1.35"/>
+        <circle cx="1.3" cy="-10.5" r="1.35"/><circle cx="3.7" cy="-8.9" r="1.35"/>
+      </g>
+    </defs>
+    <use href="#footprint" transform="translate(10.5 21.5) rotate(-10) scale(.8)"/>
+    <use href="#footprint" transform="translate(22 11) rotate(10) scale(.8)"/>
+  </svg>
 </button>
 <div id="wallet" class="paper">
   <span class="shard" aria-hidden="true">✦</span>
@@ -1013,7 +1041,7 @@
     <div class="sub">Who lives on your planet?</div>
     <div id="picker-grid" class="grid" role="radiogroup" aria-labelledby="picker-title"></div>
     <button id="picker-play" class="play">Play</button>
-    <div class="hint">WASD walks them in any view &middot; <b>follow me</b> to see from behind</div>
+    <div class="hint">Arrow keys walk them on the island &middot; the <b>footprints</b> button follows them, WASD moves and the mouse steers</div>
   </div>
 </div>
 
