@@ -1898,6 +1898,48 @@
     if (state.roadGroup) state.roadGroup.visible = visible;
   }
 
+  // --- Figures through a fold --------------------------------------------------------------
+  // Everything that stands on the world and is driven frame by frame: the pet, the residents
+  // and your character, in both of their per-view instances.
+  function eachFigure(fn) {
+    if (!state) return;
+    if (state.petWalkers) {
+      fn(state.petWalkers.sphere.group, 'pet', 'sphere');
+      fn(state.petWalkers.flat.group, 'pet', 'flat');
+    }
+    Object.keys(state.residentWalkers).forEach(function (id) {
+      fn(state.residentWalkers[id].sphere.group, 'resident', 'sphere');
+      fn(state.residentWalkers[id].flat.group, 'resident', 'flat');
+    });
+    if (state.players) {
+      fn(state.players.sphere.group, 'player', 'sphere');
+      fn(state.players.flat.group, 'player', 'flat');
+    }
+  }
+
+  // updateWalkers/updatePlayer are skipped for the length of a fold (see startLoop), so every
+  // figure holds whatever pose the view it is leaving left it in while the tiles fly past
+  // underneath it -- which reads as a pet and a character hanging in mid-air. It is worse the
+  // very first time the island is opened: a flat instance that has never been through
+  // updateFlat is still at the model's own scale and sitting at the group's origin, so the pet
+  // comes up the size of the island. Nothing here can be posed mid-fold either, since the
+  // island it would stand on does not exist yet. So hide every figure for the fold and show it
+  // again only once an update tick has put it back on the ground.
+  //
+  // Only the fold itself, not the camera turn that precedes it (turnToward): during the turn
+  // the planet is still whole and its figures are standing in the right places, so hiding them
+  // there would be a pet blinking out of a scene that is otherwise holding still.
+  function hideFigures() {
+    state.figuresHidden = true;
+    eachFigure(function (group) { if (group) group.visible = false; });
+  }
+
+  function showFigures() {
+    if (!state.figuresHidden) return;
+    state.figuresHidden = false;
+    eachFigure(function (group) { if (group) group.visible = true; });
+  }
+
   // The flat kit and the sphere have different ground, roads and water geometry.
   // Blend their coverage before exchanging visibility, rather than replacing a whole
   // island in the last frame. Complementary pixel masks retain depth testing and avoid
@@ -1986,6 +2028,12 @@
         var handoff = makeViewHandoff();
         handoff.pose(0);
         rig.pose(0);
+        // Hidden before flatGroup is shown, not merely on the next frame: state.folding is
+        // read by the loop, and this block runs from a promise callback that can land between
+        // the loop's frame and the next one -- which would put an unplaced flat figure at the
+        // model's own scale on screen for exactly one frame.
+        state.folding = true; // the figures go away here, not back at turnToward
+        hideFigures();
         state.flatGroup.visible = true;
         var from = cameraShot();
         var to = {
@@ -2001,7 +2049,7 @@
           var e = foldEase(t);
           blendCamera(from, to, e);
           applyViewLighting(e);
-        }).finally(function () { handoff.restore(); });
+        }).finally(function () { handoff.restore(); state.folding = false; });
       }).then(function () {
         state.planet.visible = false;
         state.planet.scale.setScalar(state.worldScale);
@@ -2030,6 +2078,8 @@
     orbitAround(new THREE.Vector3());
     var from = cameraShot();
     var to = shotFacing(rig.home, new THREE.Vector3(), cameraRange().rest);
+    state.folding = true;
+    hideFigures();
 
     return animateP(FOLD_MS, function (t) {
       state.planet.scale.setScalar(planetScaleAt(1 - t) * state.worldScale);
@@ -2048,7 +2098,7 @@
       applyViewLighting(0);
       orbitAround(new THREE.Vector3());
       state.updateCamera();
-    }).finally(function () { handoff.restore(); });
+    }).finally(function () { handoff.restore(); state.folding = false; });
   }
 
   function setFlatViewInstant(on) {
@@ -3774,6 +3824,10 @@
       loaders: {}, glbCache: {}, partsCache: {}, spinners: [],
       camTheta: 0.7, camPhi: 1.1, camDistance: 13, camTarget: new THREE.Vector3(),
       flatMode: false, flatRadius: 3, transition: null,
+      // folding: the tiles are actually in flight (not the camera turn before it), so every
+      // figure is hidden. figuresHidden: they are, and are waiting on an update tick to place
+      // them before they come back. See hideFigures/showFigures.
+      folding: false, figuresHidden: false,
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
       frequency: null, worldScale: 1, unit: 1, gridCache: {},
       island: null, islandFocus: new THREE.Vector3(), sky: null, skyCache: {},
@@ -5040,11 +5094,20 @@
       }
       animateWater(now / 1000);
       animateSatellite(now / 1000);
-      if (!state.transition && !(state.hub && state.hub.on)) updateWalkers(dt);
+      // A figure can only be driven when it has ground to stand on: not mid-fold, and not
+      // while the hub has taken the planet off screen.
+      var figuresLive = !state.transition && !(state.hub && state.hub.on);
+      if (figuresLive) updateWalkers(dt);
       updateHubMarker(now);
       updateShips(dt); // hides itself mid-fold rather than freezing, so a ship never lands ashore
-      if (!state.transition && !(state.hub && state.hub.on)) updatePlayer(dt);
+      if (figuresLive) updatePlayer(dt);
       if (!state.transition && state.hub && state.hub.on) updateHub(dt);
+      // Hidden for as long as the tiles are in flight, and shown again only below an update
+      // tick that has already put them back on the ground -- never in the same frame they
+      // were still frozen in. Re-applied every frame, so a resident who spawns mid-fold is
+      // caught too.
+      if (state.folding) hideFigures();
+      else if (figuresLive) showFigures();
       pollHubApproach();
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
@@ -5645,7 +5708,11 @@
       var p = group.getWorldPosition(new THREE.Vector3());
       out[view] = {
         x: p.x, y: p.y, z: p.z, scale: group.scale.x,
-        visible: group.visible && !!group.parent, tile: state.petWalkers[view].tileId
+        visible: group.visible && !!group.parent, tile: state.petWalkers[view].tileId,
+        // Its own flag says nothing on its own: the flat instance sits inside flatGroup,
+        // which is hidden for the whole of the planet view. `shown` is whether it is
+        // actually being drawn -- the only form of the question a fold check can use.
+        shown: MI.world.walkers.isShown(group)
       };
     });
     return out;
@@ -5673,10 +5740,26 @@
       slot: state.flatMode ? null : MI.world.sphere.nearestSlot(p.dir),
       onLand: state.flatMode ? flatIsLand({ x: p.x, z: p.z }) : sphereIsLand(p.dir),
       character: state.characterId, mode: state.camMode, visible: p.group.visible,
+      shown: MI.world.walkers.isShown(p.group),
       ground: p.groundY, island: state.flatMode ? { x: p.x, z: p.z } : null,
       cam: { pitch: state.groundPitch, dist: state.groundDistance,
         forward: state.groundForward.toArray() }
     };
+  };
+  // Every figure on the world at once, off the same list hideFigures/showFigures work from,
+  // so a check cannot go stale against them. `shown` is whether it is really being drawn
+  // (ancestors included) -- a figure left standing through a fold shows up here as shown at
+  // the model's own scale, which is the bug this exists to catch.
+  MI.world.__figures = function () {
+    if (!state) return null;
+    var out = [];
+    eachFigure(function (group, kind, view) {
+      if (!group) return;
+      out.push({ kind: kind, view: view, scale: +group.scale.x.toFixed(4),
+        own: group.visible, shown: MI.world.walkers.isShown(group) });
+    });
+    return { folding: !!state.folding, transition: !!state.transition,
+      flatMode: !!state.flatMode, hidden: !!state.figuresHidden, figures: out };
   };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
   MI.world.__steer = function (dx, dy) { state.steerCamera(dx, dy, MOUSE_LOOK_SPEED); };

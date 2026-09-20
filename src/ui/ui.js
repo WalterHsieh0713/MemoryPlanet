@@ -2118,6 +2118,7 @@
 
     renderSwaps(memory);
     el.detail.classList.add('show');
+    markCardOpen();
   }
 
   // The classifier picks the building, but you're never stuck with its call.
@@ -2160,9 +2161,21 @@
     markOpenRow(false);
   }
 
+  // The shelf rail under the settings gear shares this corner with the cards and is drawn
+  // above them, so it steps aside for as long as one is up (index.html); this is what tells
+  // it. A drawer left open is closed on the way rather than hidden mid-open, so the rail
+  // comes back tidy and no keyboard focus is stranded inside something nobody can see.
+  function markCardOpen() {
+    var open = el.detail.classList.contains('show')
+      || (el['ship-card'] && el['ship-card'].classList.contains('show'));
+    if (open && trayOpenKind) closeThemeTray();
+    document.body.classList.toggle('card-open', open);
+  }
+
   function hideDetail() {
     saveTitle(); // a rename in progress counts, even if they click away
     el.detail.classList.remove('show');
+    markCardOpen();
     openSlot = null;
     openMemory = null;
     MI.world.clearHighlight();
@@ -2197,11 +2210,13 @@
     el['ship-fill'].style.width = Math.round((progress.done / progress.target) * 100) + '%';
     el['ship-claim'].hidden = !!ship.claimed || !progress.complete;
     el['ship-card'].classList.add('show');
+    markCardOpen();
   }
 
   function hideShip() {
     openShipId = null;
     el['ship-card'].classList.remove('show');
+    markCardOpen();
   }
 
   function claimOpenShip() {

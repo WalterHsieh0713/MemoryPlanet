@@ -1903,6 +1903,17 @@
   #detail .edit svg { width: 15px; height: 15px; display: block; }
   #detail .edit:hover { background: #e2ecef; color: var(--ink); transform: rotate(-12deg); }
 
+  /* The shelf rail and these cards share the top-right corner, and the rail is drawn above
+     them (z-index 7), so an open card had its category, title and date covered by
+     Themes/Pets/Treats/Satellites. The card is the one you opened on purpose and the one you
+     are reading, so it keeps the corner and the rail steps aside for as long as it is up --
+     the shelves are a click away again the moment you close it. visibility, not just
+     pointer-events: the container already lets clicks through, but its shelves do not. */
+  body.card-open #theme-rack {
+    opacity: 0; visibility: hidden; transform: translateX(12px);
+    transition: opacity .2s ease, visibility .2s, transform .3s var(--spring);
+  }
+
   #loading {
     position: fixed; inset: 0; display: grid; place-items: center; z-index: 30;
     overflow: hidden; background: #dff1f7; font-size: 17px; font-weight: 700;
