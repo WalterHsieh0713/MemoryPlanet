@@ -17,7 +17,7 @@ Memory = {
 Person = { id, name, relationship, memoryIds: [], firstMemoryId,
            appearance: { color }, placement: { slot, dir, rotY } }
 Landscape = { slot, asset, fromMemoryId }   // plain terrain tiles around memories
-World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent vec|null, seed,
+World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: tangent vec|null, seed,
            memories: [], people: [], landscape: [],
            planet: { frequency },                       // on MI.growth.LADDER; every slot indexes this grid
            wallet: { shards, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
@@ -25,10 +25,14 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
            player: { character: id|null },           // who your character is
            unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
            equipped: { theme: id, pet: id|null, satellite: id|null, skin: id } }
-// localStorage key memory-planet.world.v4. Older saves are migrated on load and their own keys
-// left untouched: a v3 save's 'pets' held both kinds under one equipped slot, so it is split
-// into pets (land) and satellites (sky); a v2 save is additionally read as frequency 10 (the
-// original 1002-tile grid). Landscape entries created when the
+// A person can keep several journals. The shelf is memory-planet.journals.v1
+// `{ version: 1, currentId, journals: [{ id, name, character, memories, people, updatedAt }] }`;
+// each world's full save is memory-planet.journal.<id>. memory-planet.world.v4 is kept as an
+// alias of the journal last opened, so an older build still finds it. Older single-world
+// saves are migrated on boot and their own keys left untouched: a v3 save's 'pets' held both
+// kinds under one equipped slot, so it is split into pets (land) and satellites (sky); a v2
+// save is additionally read as frequency 10 (the original 1002-tile grid). A migrated world
+// with no name is filed as "My journal". Landscape entries created when the
 // planet grows carry source: 'growth' and fromMemoryId: null.
 ```
 
@@ -37,9 +41,11 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
   Never rejects: on network/API failure resolves with the keyword-heuristic result.
 
 ## MI.store  (owner: C)
-- `load() -> World` (localStorage key `memory-planet.world.v4`, migrating a v3 or v2 save, else an empty world on the smallest planet), `get()`, `save()`, `reset()` (wipes shards and unlocks too), `newId(prefix)`
+- `boot() -> World` / `load() -> World` — migrate a lone v4/v3/v2 save onto the journal shelf, then return an unsaved empty ocean (no `id`) so the first-screen picker can sit over a quiet planet. `save()` no-ops until a journal has been created or opened.
+- `get()`, `save()`, `reset()` (wipes this journal's shards and unlocks, keeps its id/name/character), `newId(prefix)`
+- `listJournals() -> [{ id, name, character, memories, people, theme, frequency, updatedAt }]`, `lastJournalId()`, `currentId()`, `createJournal({ name, character }) -> World`, `openJournal(id) -> World|null`, `deleteJournal(id) -> { ok, wasCurrent }`
 - `addMemory(m)`, `addPerson(p)`, `addLandscape(entry)`, `findPerson(name) -> Person|null` (case-insensitive), `findMemoryBySlot(slot)`, `takenSlots()`, `occupiedSlots()`
-- `exportJSON() -> string`, `importJSON(str)` (normalized to v3)
+- `exportJSON() -> string`, `importJSON(str)` (normalized to v4)
 - **Planned:** `findSimilarPeople(name) -> Person[]` (ranked).
 
 ## MI.growth  (`src/world/growth.js`, pure — runs under Node: `node scripts/test-growth.js`)
@@ -84,6 +90,7 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - `highlightSlot(slot, { soft })` / `clearHighlight()` / `highlightedSlot()` — marks one tile: a vertex tint on the planet, a gold rim and a lift on the island. Survives theme changes and the fold.
 - `onHover(cb(slot | null) -> bool)` — one raycast per frame; return true for tiles that open something and the cursor becomes a pointer.
+- `enterGalaxy(journals, { currentId, instant }) -> Promise`, `leaveGalaxy({ instant, dist, fit }) -> Promise`, `focusGalaxyPlanet(id) -> Promise`, `selectGalaxyPlanet(id) -> Promise`, `isGalaxy()`, `onGalaxyHover(cb)`, `onGalaxyPick(cb)`, `onGalaxyFrame(cb)` — space shelf of journal planets. Switching journals zooms the live planet out into a starfield and floats the others around it. Opening one flies up to it, then dives from space back into day.
 - **Planned:** person-linked roads and clicking a resident to show who
   they are and the memories they appear in.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
@@ -97,7 +104,8 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.
 - `restore() -> Promise` replays the stored world (landscape, memories, people) without animation, then rebuilds roads.
 - `addEntry` also pays shards and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
-- `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset to the smallest planet).
+- `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
+- `enterJournal(id, { keepCamera }) -> Promise<bool>`, `createJournal({ name, character, keepCamera }) -> Promise<bool>`, `rebuildScene({ keepCamera }) -> Promise` — swap the live planet to the stored world (grid, cosmetics, character, restore). `keepCamera` is for the galaxy dive, so the zoom-in is not reset.
 - `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`.
 - `opts.tags = { people: [{ name, personId? }], category, mood, importance }` from the tag row; each field falls back to `MI.ai.guess`. A `personId` is reused directly, so there is no name matching and no "same person?" prompt.
 

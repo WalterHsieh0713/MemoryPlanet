@@ -316,24 +316,55 @@
     return true;
   }
 
-  // Wipe everything — memories, shards, unlocks — back to the smallest planet.
-  function startOver() {
-    MI.store.reset();
+  // Replay a stored world onto the scene: swap the grid, cosmetics and character, then
+  // restore everything that stands on it. Used after start-over and when opening a journal.
+  function rebuildScene(opts) {
+    opts = opts || {};
     var world = MI.store.get();
-    // Nothing left to lay out flat, and nothing worth animating on the way out.
-    var ready = MI.world.isFlatView() ? MI.world.setFlatView(false, { instant: true }) : Promise.resolve();
+    var ready = Promise.resolve();
+    if (MI.world.isGroundView()) ready = Promise.resolve(MI.world.setGroundView(false));
     return ready.then(function () {
-      return MI.world.setPlanet(world.planet.frequency, { animate: false });
+      return MI.world.isFlatView() ? MI.world.setFlatView(false, { instant: true }) : Promise.resolve();
+    }).then(function () {
+      return MI.world.setPlanet(world.planet.frequency, {
+        animate: false,
+        keepCamera: !!opts.keepCamera
+      });
     }).then(function () {
       MI.world.setTheme(world.equipped.theme);
       MI.world.setPet(world.equipped.pet);
       MI.world.setSatellite(world.equipped.satellite);
       MI.world.setSkin(world.equipped.skin);
+      return MI.world.setCharacter(world.player && world.player.character);
+    }).then(restore).then(function () {
+      if (opts.keepCamera) return;
+      if (world.home !== null && world.home !== undefined) {
+        MI.world.focus(world.home, { instant: true });
+      }
     });
+  }
+
+  function enterJournal(id, opts) {
+    if (!MI.store.openJournal(id)) return Promise.resolve(false);
+    return rebuildScene(opts).then(function () { return true; });
+  }
+
+  function createJournal(opts) {
+    opts = opts || {};
+    MI.store.createJournal(opts);
+    return rebuildScene({ keepCamera: !!opts.keepCamera }).then(function () { return true; });
+  }
+
+  // Wipe this journal's memories, shards and unlocks — back to the smallest planet.
+  // The journal's name and character stay; it is still the same book.
+  function startOver() {
+    MI.store.reset();
+    return rebuildScene();
   }
 
   MI.app = {
     addEntry: addEntry, restore: restore, growPlanet: growPlanet,
-    equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome
+    equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
+    rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal
   };
 })();

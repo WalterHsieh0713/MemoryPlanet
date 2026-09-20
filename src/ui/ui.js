@@ -35,14 +35,21 @@
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'shop-blurb',
       'ground-btn', 'ground-label', 'ground-icon', 'picker', 'picker-grid', 'picker-play',
-      'character-btn', 'skins-btn', 'theme-btn', 'theme-tray', 'theme-rack',
+      'character-btn', 'theme-btn', 'theme-tray', 'theme-rack',
       'tray-themes', 'tray-theme-items',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
       'tag-mood', 'tag-cat', 'tag-big', 'mic-btn', 'settings-btn', 'settings',
       'book-tabs-left', 'book-tabs-right', 'book-write-panel', 'book-right-body',
-      'book-heading', 'book-mobile-tabs']
+      'book-heading', 'book-mobile-tabs',
+      'world-title', 'world-title-text', 'journals-btn',
+      'gate', 'gate-shelf', 'gate-create', 'gate-journals', 'gate-empty', 'gate-blurb',
+      'gate-new', 'gate-back', 'gate-name', 'gate-avatars', 'gate-create-btn',
+      'gate-create-kicker', 'gate-create-title', 'gate-create-blurb',
+      'galaxy-ui', 'galaxy-count', 'galaxy-count-text', 'galaxy-hint', 'galaxy-labels',
+      'galaxy-card', 'galaxy-card-name', 'galaxy-card-meta', 'galaxy-open', 'galaxy-delete',
+      'galaxy-new']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -72,6 +79,19 @@
     refreshPlanet();
     renderBook();
     refreshPersonList();
+    refreshWorldTitle();
+  }
+
+  function refreshWorldTitle() {
+    var name = MI.store.get().name;
+    if (!name) {
+      el['world-title'].hidden = true;
+      document.title = 'Memory Planet';
+      return;
+    }
+    el['world-title'].hidden = false;
+    el['world-title-text'].textContent = name;
+    document.title = name + ' · Memory Planet';
   }
 
   // --- The tag row ------------------------------------------------------------------------
@@ -962,11 +982,10 @@
   }
 
   var TRAY_SECTIONS = [
-    { kind: 'skins', label: 'costumes', icon: '👗' },
     { kind: 'pets', label: 'pets', icon: '🐾' },
     { kind: 'satellites', label: 'sky', icon: '🌙' }
   ];
-  var trayOpenKinds = { themes: true, skins: false, pets: false, satellites: false };
+  var trayOpenKinds = { themes: true, pets: false, satellites: false };
 
   function closeThemeTray() {
     el['theme-rack'].classList.remove('open');
@@ -1031,7 +1050,7 @@
     el['theme-tray'].innerHTML = '';
     TRAY_SECTIONS.forEach(function (section) {
       var owned = ownedCatalog(section.kind);
-      if (!owned.length && section.kind !== 'skins') return;
+      if (!owned.length) return;
       var wrap = document.createElement('div');
       wrap.className = 'tray-kind ' + section.kind + (trayOpenKinds[section.kind] ? ' expanded' : '');
       wrap.dataset.kind = section.kind;
@@ -1059,16 +1078,16 @@
     });
   }
 
-  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'sky', skins: 'skins' };
+  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'sky' };
   var SHOP_BLURBS = {
     themes: 'Whole-planet clothes. Swap a world on like a postcard.',
     pets: 'Little walkers for the paths. One can be out at a time.',
-    satellites: 'Sky company. They keep orbiting, even when the view folds.',
-    skins: 'Hats and knits for everyone who lives on the island.'
+    satellites: 'Sky company. They keep orbiting, even when the view folds.'
   };
   var POLAROID_TILT = ['r1', 'r2', 'r3', 'r4'];
 
   function renderShop() {
+    if (!SHOP_TITLES[shopKind]) shopKind = 'themes';
     var kind = shopKind;
     var balance = MI.economy.balance();
     el['shop-balance'].textContent = balance;
@@ -1133,6 +1152,31 @@
 
   var pickerChoice = null;
   var pickerOpener = null;
+  var gateAvatar = null;
+  var gateBusy = false;
+  var hoveredGalaxy = null;
+  var galaxyDeleteArmed = null;
+
+  function fillAvatarGrid(container, selectedId, onPick) {
+    var characters = MI.world.characters();
+    var chosen = selectedId || (characters[0] && characters[0].id);
+    container.innerHTML = '';
+    characters.forEach(function (character) {
+      var card = document.createElement('button');
+      card.className = 'card';
+      card.type = 'button';
+      card.setAttribute('role', 'radio');
+      card.setAttribute('aria-checked', String(character.id === chosen));
+      var tint = '#' + ('000000' + character.color.toString(16)).slice(-6);
+      card.innerHTML = '<span class="figure" style="--tint: ' + tint + '">' +
+        '<span class="head"></span><span class="body"></span><span class="legs"></span></span>' +
+        '<span class="name"></span>';
+      card.querySelector('.name').textContent = character.name;
+      card.addEventListener('click', function () { onPick(character.id); });
+      container.appendChild(card);
+    });
+    return chosen;
+  }
 
   function openPicker() {
     pickerOpener = document.activeElement;
@@ -1150,26 +1194,291 @@
   }
 
   function renderPicker() {
-    var characters = MI.world.characters();
-    if (!pickerChoice) pickerChoice = characters[0] && characters[0].id;
-    el['picker-grid'].innerHTML = '';
-    characters.forEach(function (character) {
-      var card = document.createElement('button');
-      card.className = 'card';
-      card.type = 'button';
-      card.setAttribute('role', 'radio');
-      card.setAttribute('aria-checked', String(character.id === pickerChoice));
-      var tint = '#' + ('000000' + character.color.toString(16)).slice(-6);
-      card.innerHTML = '<span class="figure" style="--tint: ' + tint + '">' +
-        '<span class="head"></span><span class="body"></span><span class="legs"></span></span>' +
-        '<span class="name"></span>';
-      card.querySelector('.name').textContent = character.name;
-      card.addEventListener('click', function () {
-        pickerChoice = character.id;
-        renderPicker();
-      });
-      el['picker-grid'].appendChild(card);
+    pickerChoice = fillAvatarGrid(el['picker-grid'], pickerChoice, function (id) {
+      pickerChoice = id;
+      renderPicker();
     });
+  }
+
+  function characterName(id) {
+    var list = MI.world.characters();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i].name;
+    }
+    return list[0] ? list[0].name : '';
+  }
+
+  function showGate(screen) {
+    document.body.classList.add('gated');
+    var empty = !MI.store.listJournals().length;
+    if (screen === 'create' || empty) {
+      el.gate.classList.add('open');
+      showGateScreen('create', { first: empty });
+      if (empty && MI.world.isGalaxy()) {
+        hideGalaxyHud();
+        MI.world.leaveGalaxy({ instant: true });
+      }
+      return;
+    }
+    el.gate.classList.remove('open');
+    showGalaxyHud();
+    MI.world.enterGalaxy(MI.store.listJournals(), {
+      currentId: MI.store.currentId(),
+      instant: !MI.store.currentId()
+    });
+  }
+
+  function hideGate() {
+    el.gate.classList.remove('open', 'busy');
+    hideGalaxyHud();
+    document.body.classList.remove('gated');
+    gateBusy = false;
+  }
+
+  function showGateScreen(screen, opts) {
+    var creating = screen === 'create';
+    var first = !!(opts && opts.first) || !MI.store.listJournals().length;
+    el['gate-shelf'].hidden = true;
+    el['gate-create'].hidden = !creating;
+    if (creating) {
+      setGateCreateCopy(first);
+      gateAvatar = fillAvatarGrid(el['gate-avatars'], gateAvatar, pickGateAvatar);
+      syncGateCreate();
+      setTimeout(function () { el['gate-name'].focus(); }, 40);
+    }
+  }
+
+  function setGateCreateCopy(first) {
+    el.gate.classList.toggle('first', !!first);
+    el['gate-back'].hidden = !!first;
+    if (el['gate-create-kicker']) {
+      el['gate-create-kicker'].textContent = first ? 'welcome' : 'new journal';
+    }
+    if (el['gate-create-title']) {
+      el['gate-create-title'].textContent = first ? 'Start your journal' : 'Name your world';
+    }
+    if (el['gate-create-blurb']) {
+      el['gate-create-blurb'].textContent = first
+        ? 'This is your first world. Give it a name and pick who you are — you can keep more journals later.'
+        : 'This title sits at the top of your planet, on the journal you are keeping.';
+    }
+    if (!gateBusy) {
+      el['gate-create-btn'].textContent = first ? 'Begin' : 'Create this world';
+    }
+  }
+
+  function pickGateAvatar(id) {
+    gateAvatar = id;
+    fillAvatarGrid(el['gate-avatars'], gateAvatar, pickGateAvatar);
+  }
+
+  function journalById(id) {
+    var list = MI.store.listJournals();
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === id) return list[i];
+    }
+    return null;
+  }
+
+  function showGalaxyHud() {
+    el['galaxy-ui'].classList.add('open');
+    refreshGalaxyCount();
+  }
+
+  function hideGalaxyHud() {
+    el['galaxy-ui'].classList.remove('open');
+    el['galaxy-card'].hidden = true;
+    hoveredGalaxy = null;
+    disarmGalaxyDelete();
+  }
+
+  function refreshGalaxyCount() {
+    var n = MI.store.listJournals().length;
+    el['galaxy-count-text'].textContent = n === 1 ? '1 planet' : n + ' planets';
+    el['galaxy-hint'].textContent = n
+      ? 'hover a world · click to open'
+      : 'no worlds yet — start a new journal';
+  }
+
+  function updateGalaxyCard(id) {
+    if (id === hoveredGalaxy) return;
+    hoveredGalaxy = id;
+    disarmGalaxyDelete();
+    if (!id) {
+      el['galaxy-card'].hidden = true;
+      return;
+    }
+    var journal = journalById(id);
+    if (!journal) {
+      el['galaxy-card'].hidden = true;
+      return;
+    }
+    el['galaxy-card-name'].textContent = journal.name;
+    var bits = [plural(journal.memories, 'memory').replace('memorys', 'memories')];
+    if (journal.people) bits.push(plural(journal.people, 'friend'));
+    if (journal.character) bits.push(characterName(journal.character));
+    el['galaxy-card-meta'].textContent = bits.join(' · ');
+    el['galaxy-card'].hidden = false;
+  }
+
+  function syncGalaxyLabels(screens) {
+    var wrap = el['galaxy-labels'];
+    var seen = {};
+    screens.forEach(function (s) {
+      if (s.behind) return;
+      seen[s.id] = true;
+      var node = wrap.querySelector('[data-id="' + s.id + '"]');
+      if (!node) {
+        node = document.createElement('div');
+        node.className = 'label';
+        node.setAttribute('data-id', s.id);
+        wrap.appendChild(node);
+      }
+      var journal = s.journal || journalById(s.id);
+      node.textContent = journal ? journal.name : '';
+      node.style.left = s.x + 'px';
+      node.style.top = s.y + 'px';
+      node.classList.toggle('hover', !!s.hover);
+    });
+    Array.prototype.forEach.call(wrap.querySelectorAll('.label'), function (node) {
+      if (!seen[node.getAttribute('data-id')]) node.parentNode.removeChild(node);
+    });
+    if (hoveredGalaxy && !el['galaxy-card'].hidden) {
+      var hit = null;
+      screens.forEach(function (s) { if (s.id === hoveredGalaxy) hit = s; });
+      if (hit && !hit.behind) {
+        el['galaxy-card'].style.left = hit.x + 'px';
+        el['galaxy-card'].style.top = Math.max(96, hit.y - 12) + 'px';
+      }
+    }
+  }
+
+  function refreshGalaxy() {
+    MI.world.enterGalaxy(MI.store.listJournals(), { currentId: MI.store.currentId() });
+    refreshGalaxyCount();
+    updateGalaxyCard(hoveredGalaxy);
+  }
+
+  function disarmGalaxyDelete() {
+    clearTimeout(galaxyDeleteArmed);
+    galaxyDeleteArmed = null;
+    if (el['galaxy-delete']) {
+      el['galaxy-delete'].textContent = 'delete';
+      el['galaxy-delete'].classList.remove('confirming');
+    }
+  }
+
+  function handleGalaxyDelete() {
+    if (gateBusy || !hoveredGalaxy) return;
+    if (!galaxyDeleteArmed) {
+      el['galaxy-delete'].textContent = 'sure? gone for good';
+      el['galaxy-delete'].classList.add('confirming');
+      galaxyDeleteArmed = setTimeout(disarmGalaxyDelete, 4000);
+      return;
+    }
+    var id = hoveredGalaxy;
+    disarmGalaxyDelete();
+    var result = MI.store.deleteJournal(id);
+    if (!result.ok) return;
+    hoveredGalaxy = null;
+    el['galaxy-card'].hidden = true;
+    if (!MI.store.listJournals().length) {
+      hideGalaxyHud();
+      MI.world.leaveGalaxy({ instant: true }).then(function () {
+        showGate('create');
+      });
+      return;
+    }
+    refreshGalaxy();
+  }
+
+  function syncGateCreate() {
+    el['gate-create-btn'].disabled = gateBusy || !el['gate-name'].value.trim();
+  }
+
+  function setGateBusy(busy) {
+    gateBusy = !!busy;
+    el.gate.classList.toggle('busy', gateBusy);
+    el['galaxy-ui'].classList.toggle('busy', gateBusy);
+    el['gate-create-btn'].disabled = gateBusy || !el['gate-name'].value.trim();
+    el['gate-create-btn'].textContent = gateBusy
+      ? 'opening…'
+      : (el.gate.classList.contains('first') ? 'Begin' : 'Create this world');
+    el['galaxy-new'].disabled = gateBusy;
+    el['galaxy-open'].disabled = gateBusy;
+    el['galaxy-delete'].disabled = gateBusy;
+  }
+
+  function finishEnter() {
+    hideGate();
+    refreshStats();
+    renderThemeTray();
+    syncViewButton();
+    syncGroundButton();
+  }
+
+  function afterEntered() {
+    finishEnter();
+  }
+
+  function enterExisting(id) {
+    if (gateBusy || !id) return;
+    setGateBusy(true);
+    hideGalaxyHud();
+    var same = MI.store.currentId() === id;
+    MI.world.selectGalaxyPlanet(id).then(function () {
+      if (same) return true;
+      return MI.app.enterJournal(id, { keepCamera: true });
+    }).then(function (ok) {
+      if (!ok) {
+        setGateBusy(false);
+        showGalaxyHud();
+        refreshGalaxy();
+        return;
+      }
+      return MI.world.leaveGalaxy({ fit: !same }).then(function () {
+        setGateBusy(false);
+        finishEnter();
+      });
+    }).catch(function () {
+      setGateBusy(false);
+      showGalaxyHud();
+      refreshGalaxy();
+    });
+  }
+
+  function submitNewJournal() {
+    if (gateBusy) return;
+    var name = el['gate-name'].value.trim();
+    if (!name) {
+      el['gate-name'].focus();
+      return;
+    }
+    setGateBusy(true);
+    el.gate.classList.remove('open');
+    hideGalaxyHud();
+    var fromGalaxy = MI.world.isGalaxy();
+    MI.app.createJournal({
+      name: name,
+      character: gateAvatar,
+      keepCamera: fromGalaxy
+    }).then(function () {
+      return fromGalaxy ? MI.world.leaveGalaxy({ fit: true }) : Promise.resolve();
+    }).then(function () {
+      el['gate-name'].value = '';
+      setGateBusy(false);
+      finishEnter();
+    }).catch(function () { setGateBusy(false); });
+  }
+
+  function returnToShelf() {
+    closeSettings();
+    closeShop();
+    closePicker();
+    hideDetail();
+    if (isBookBusy()) closeBook();
+    var ready = MI.world.isGroundView() ? leaveGroundView() : Promise.resolve();
+    ready.then(function () { showGate('shelf'); });
   }
 
   function chooseCharacter() {
@@ -1763,15 +2072,29 @@
     MI.app.onEvent(handleAppEvent);
     el['ground-btn'].addEventListener('click', toggleGroundView);
     // Settings is where you change who you are: the picker is the same full-sheet grid you
-    // would have seen the first time, and skins go straight to their shop tab.
+    // would have seen the first time.
     el['character-btn'].addEventListener('click', function () {
       closeSettings();
       openPicker();
     });
-    el['skins-btn'].addEventListener('click', function () {
-      closeSettings();
-      shopKind = 'skins';
-      openShop();
+    el['journals-btn'].addEventListener('click', returnToShelf);
+    el['galaxy-new'].addEventListener('click', function () {
+      updateGalaxyCard(null);
+      showGate('create');
+    });
+    el['galaxy-open'].addEventListener('click', function () {
+      if (hoveredGalaxy) enterExisting(hoveredGalaxy);
+    });
+    el['galaxy-delete'].addEventListener('click', handleGalaxyDelete);
+    el['gate-new'].addEventListener('click', function () { showGate('create'); });
+    el['gate-back'].addEventListener('click', function () {
+      if (!MI.store.listJournals().length) return;
+      el.gate.classList.remove('open');
+    });
+    el['gate-create-btn'].addEventListener('click', submitNewJournal);
+    el['gate-name'].addEventListener('input', syncGateCreate);
+    el['gate-name'].addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submitNewJournal(); }
     });
     el['picker-play'].addEventListener('click', chooseCharacter);
     el.picker.addEventListener('click', function (e) {
@@ -1808,6 +2131,21 @@
         }
       }
       if (e.key !== 'Escape') return;
+      if (gateBusy) return;
+      if (el.gate.classList.contains('open')) {
+        if (MI.store.listJournals().length) el.gate.classList.remove('open');
+        return;
+      }
+      if (MI.world.isGalaxy()) {
+        if (MI.store.currentId()) {
+          setGateBusy(true);
+          MI.world.leaveGalaxy().then(function () {
+            setGateBusy(false);
+            afterEntered();
+          }).catch(function () { setGateBusy(false); });
+        }
+        return;
+      }
       if (el.picker.classList.contains('open')) { closePicker(); return; }
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
@@ -1817,6 +2155,7 @@
     });
 
     MI.world.onPick(function (slot) {
+      if (document.body.classList.contains('gated')) return;
       if (slot === null || slot === undefined) { hideDetail(); return; }
       var memory = MI.store.findMemoryBySlot(slot);
       if (memory) {
@@ -1830,12 +2169,27 @@
     // Pointer cursor only over tiles that open something, and a light mark under it. When
     // the pointer leaves, the open entry's own mark comes back.
     MI.world.onHover(function (slot) {
+      if (document.body.classList.contains('gated')) return false;
       var memory = slot === null || slot === undefined ? null : MI.store.findMemoryBySlot(slot);
       if (memory) MI.world.highlightSlot(slot, { soft: true });
       else if (openSlot === null) MI.world.clearHighlight();
       else MI.world.highlightSlot(openSlot);
       return !!memory;
     });
+
+    MI.world.onGalaxyHover(function (id) {
+      if (gateBusy) return;
+      updateGalaxyCard(id);
+    });
+    MI.world.onGalaxyPick(function (id) {
+      if (gateBusy) return;
+      if (!id) {
+        updateGalaxyCard(null);
+        return;
+      }
+      enterExisting(id);
+    });
+    MI.world.onGalaxyFrame(syncGalaxyLabels);
 
     refreshStats();
   }
@@ -1846,6 +2200,7 @@
 
   MI.ui = {
     init: init, refreshStats: refreshStats, hideLoading: hideLoading,
+    showGate: showGate,
     // The settings menu opens this; it is the only way to change who you are.
     openCharacterPicker: openPicker
   };
