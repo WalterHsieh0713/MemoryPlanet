@@ -1,27 +1,21 @@
-// Boot sequence: load the saved world, build the scene, replay what's already there.
+// Boot sequence: quiet ocean first, then the journal shelf. A world is only replayed
+// once someone opens a journal they already keep, or names a new one.
 (function () {
   var canvas = document.getElementById('scene-canvas');
 
-  var saved = MI.store.load();
+  MI.store.boot();
   MI.world.init(canvas, {
-    frequency: saved.planet.frequency,
-    theme: saved.equipped.theme,
-    pet: saved.equipped.pet,
-    satellite: saved.equipped.satellite,
-    character: saved.player && saved.player.character,
-    skin: saved.equipped.skin
+    frequency: MI.growth.LADDER[0],
+    theme: 'meadow',
+    pet: null,
+    satellite: null,
+    character: null,
+    skin: 'classic'
   })
     .then(function () {
       MI.ui.init();
-      return MI.app.restore();
-    })
-    .then(function () {
-      var world = MI.store.get();
-      if (world.home !== null && world.home !== undefined) {
-        MI.world.focus(world.home, { instant: true });
-      }
-      MI.ui.refreshStats();
       MI.ui.hideLoading();
+      MI.ui.showGate();
     })
     .catch(function (err) {
       console.error('[main] failed to start', err);

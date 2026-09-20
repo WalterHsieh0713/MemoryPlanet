@@ -71,11 +71,16 @@ Skinned models and walk animation (2026-09-20): Mini Characters are skinned mesh
 
 ## Where we are (2026-09-20)
 
-Merged with `origin/main` at `faa485c`, which brought the team's UI work: the scrapbook shop
+Merged with `origin/main` at `5dab816`. That brought the team's UI work — the scrapbook shop
 of ring-bound polaroids, cosmetics moved under settings, the journal as a 3D book that opens
-and flips, and a larger HUD. That UI stands as they wrote it. The only thing kept from this
-side is the **footprints follow button**, which moved to the right edge because the journal
-book now owns the bottom-right corner.
+and flips, a larger HUD — and then **several journals, each its own planet, switched between
+in space** (`MI.store` library, `MI.app.rebuildScene/enterJournal/createJournal`,
+`state.galaxy` in world.js, `node scripts/test-journals.js`). All of that stands as they
+wrote it. The only thing kept from this side is the **footprints follow button**, which moved
+to the right edge because the journal book now owns the bottom-right corner. Where the two
+sides met: the follow camera keeps its fixed distance, so the wheel is the galaxy's alone;
+clicks go to the galaxy first and only then to tiles; and `rebuildScene` claims the home tile
+(`ensureHome`) so a started-over or brand-new journal has its house and somewhere to stand.
 
 Built since: compact placement (the land grows as a blob, buildings never adjacent),
 island-only follow mode with a third-person camera and mouse steering, characters played

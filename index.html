@@ -214,7 +214,6 @@
   }
   #theme-rack:not(.open) .tray-items { visibility: hidden; }
   #theme-rack.open .tray-kind.themes.expanded { background: #8ebdd4; }
-  .tray-kind.skins { background: #e4b0c4; }
   .tray-kind.pets { background: #7eb8a8; }
   .tray-kind.satellites { background: #e8b36a; }
   .tray-head {
@@ -293,14 +292,14 @@
   #settings h2 {
     margin: 0 0 10px; font-size: 22px; font-weight: 400;
   }
-  #reset-btn, #character-btn, #skins-btn {
+  #reset-btn, #character-btn, #journals-btn {
     width: 100%; border: 1px dashed #d7b58a; cursor: pointer; font-family: inherit;
     padding: 8px 12px; border-radius: 4px;
     background: #fff8ec; color: var(--ink-mid); font-size: 12px; font-weight: 700;
     transition: color .2s ease, background .2s ease;
   }
-  #character-btn, #skins-btn { margin-bottom: 8px; }
-  #reset-btn:hover, #character-btn:hover, #skins-btn:hover { color: var(--ink); background: #fff; }
+  #character-btn, #journals-btn { margin-bottom: 8px; }
+  #reset-btn:hover, #character-btn:hover, #journals-btn:hover { color: var(--ink); background: #fff; }
   #reset-btn:disabled { opacity: .45; cursor: default; }
   #reset-btn.confirming { background: #ffe3d6; color: #c2410c; border-color: #e8b198; }
 
@@ -966,6 +965,20 @@
     #book .page-note { font-size: 11px; text-align: right; }
     #view-btn { bottom: 86px; }
     #planet-card { width: 260px; }
+    #world-title {
+      top: 12px; padding: 6px 12px 7px;
+      max-width: calc(100vw - 200px);
+    }
+    #world-title .kicker { display: none; }
+    #world-title .name { font-size: 16px; }
+    #galaxy-count { top: 12px; padding: 6px 14px 7px; }
+    #galaxy-count-text { font-size: 16px; }
+    #galaxy-hint { top: 64px; font-size: 12px; }
+    #galaxy-new { bottom: 18px; }
+    #gate { padding: 10px; }
+    #gate h1 { font-size: 28px; }
+    #gate .pages { padding: 20px 16px 16px; }
+    #gate .grid { grid-template-columns: repeat(3, 1fr); gap: 6px; }
     #journal { bottom: 118px; }
     #shop .book { flex-direction: column; width: 100%; transform: none; }
     #shop.open .book { transform: none; }
@@ -1070,6 +1083,200 @@
   }
 
   /* --- shop --- */
+  /* World name, top middle, once a journal has been titled. */
+  #world-title {
+    position: fixed; left: 50%; top: 16px; z-index: 6;
+    transform: translateX(-50%) rotate(-0.7deg);
+    min-width: 160px; max-width: min(360px, calc(100vw - 320px));
+    padding: 8px 22px 10px; border-radius: 3px 10px 4px 8px;
+    text-align: center; pointer-events: none;
+  }
+  #world-title::before {
+    content: ''; position: absolute; left: 50%; top: -6px; width: 38px; height: 12px;
+    margin-left: -19px;
+    background: repeating-linear-gradient(-28deg, var(--tape) 0 6px, #ffe8d6 6px 10px);
+    opacity: .9; transform: rotate(-6deg);
+  }
+  #world-title .kicker {
+    display: block; font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-mid);
+  }
+  #world-title .name {
+    display: block; font-size: 22px; line-height: 1.15;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* First screen: open a journal you already keep, or start a new world. */
+  #gate {
+    position: fixed; inset: 0; z-index: 12; display: grid; place-items: center; padding: 16px;
+    background: rgba(223, 241, 247, .55); backdrop-filter: blur(4px);
+    opacity: 0; visibility: hidden; transition: opacity .35s ease, visibility .35s;
+  }
+  #gate.open { opacity: 1; visibility: visible; }
+  #gate .cover {
+    width: min(520px, 100%);
+    padding: 14px 12px 16px;
+    border-radius: 18px 8px 12px 16px;
+    background: linear-gradient(145deg, #cb8956, #e7b17b 18%, #d79760);
+    box-shadow: 0 4px 0 #a96b42, 0 18px 40px rgba(44, 65, 65, .28);
+    transform: rotate(-0.6deg) translateY(10px);
+    transition: transform .45s var(--spring);
+  }
+  #gate.open .cover { transform: rotate(0.4deg); }
+  #gate .pages {
+    background-color: #fbf6ea;
+    background-image:
+      linear-gradient(#efe6d4 1px, transparent 1px),
+      linear-gradient(90deg, #efe6d4 1px, transparent 1px);
+    background-size: 18px 18px;
+    border-radius: 4px;
+    padding: 28px 26px 22px;
+    box-shadow: inset 0 0 0 1px #f4e6c8;
+    max-height: calc(100vh - 48px); overflow-y: auto;
+  }
+  #gate .kicker {
+    margin: 0 0 4px; font-size: 13px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-mid); transform: rotate(-1.4deg);
+  }
+  #gate h1, #gate h2 {
+    margin: 0 0 8px; font-size: 36px; font-weight: 400; line-height: 1.05;
+    letter-spacing: .03em; color: var(--ink);
+  }
+  #gate h2 { font-size: 28px; }
+  #gate h2.who { margin-top: 18px; font-size: 22px; }
+  #gate .blurb {
+    margin: 0 0 18px; max-width: 34ch;
+    font-size: 16px; line-height: 1.4; color: var(--ink);
+  }
+  #gate .journals { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+  #gate .journal {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    width: 100%; text-align: left; cursor: pointer; font-family: inherit; color: inherit;
+    padding: 12px 14px; border: 1px solid #e6d4b6; border-radius: 4px 10px 4px 8px;
+    background: #fffdf6; box-shadow: 2px 3px 0 #e4d2b0;
+    transform: rotate(-0.4deg);
+    transition: transform .2s var(--spring), background .2s ease;
+  }
+  #gate .journal:nth-child(2n) { transform: rotate(0.5deg); }
+  #gate .journal:hover { background: #fff; transform: rotate(0deg) translateY(-1px); }
+  #gate .journal .journal-name { font-size: 20px; }
+  #gate .journal .journal-meta { font-size: 13px; color: var(--ink-mid); }
+  #gate .journal.last { box-shadow: 2px 3px 0 #e4d2b0, inset 0 0 0 2px #e7b17b; }
+  #gate .empty-shelf { margin: 0 0 16px; font-size: 15px; color: var(--ink-mid); }
+  #gate .new, #gate .play {
+    width: 100%; padding: 12px 16px; border: 0; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 17px; color: #fff;
+    background: var(--accent-deep); box-shadow: 0 6px 16px rgba(244, 128, 74, .28);
+    transition: transform .2s var(--spring), filter .2s ease;
+  }
+  #gate .new:hover, #gate .play:hover { filter: brightness(1.05); transform: translateY(-1px); }
+  #gate .new { background: var(--ink); box-shadow: 0 6px 16px rgba(44, 95, 111, .22); }
+  #gate .play:disabled { opacity: .45; cursor: default; transform: none; filter: none; }
+  #gate .back {
+    border: 0; background: none; padding: 0; margin: 0 0 12px; cursor: pointer;
+    font-family: inherit; font-size: 14px; color: var(--ink-mid);
+  }
+  #gate .back[hidden] { display: none; }
+  #gate.first .back { display: none; }
+  #gate .back:hover { color: var(--ink); }
+  #gate .name-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 4px; }
+  #gate .name-field span { font-size: 13px; color: var(--ink-mid); letter-spacing: .06em; }
+  #gate .name-field input {
+    width: 100%; box-sizing: border-box;
+    border: 0; border-bottom: 2px solid #e4d3b4; border-radius: 0;
+    background: transparent; padding: 8px 2px; font: inherit; font-size: 22px; color: var(--ink);
+    outline: none;
+  }
+  #gate .name-field input:focus { border-bottom-color: var(--ink); }
+  #gate .busy .journal, #gate .busy .new, #gate .busy .play, #gate .busy .back { pointer-events: none; }
+
+  body.gated #hud-left,
+  body.gated #book-btn,
+  body.gated #settings-btn,
+  body.gated #theme-rack,
+  body.gated #settings,
+  body.gated #planet-card,
+  body.gated #view-btn,
+  body.gated #ground-btn,
+  body.gated #world-title,
+  body.gated #journal,
+  body.gated #shop,
+  body.gated #picker,
+  body.gated #book,
+  body.gated #detail {
+    opacity: 0 !important; pointer-events: none !important; visibility: hidden !important;
+  }
+
+  /* Space shelf: the 3D planets are the picker. This HUD sits on top and lets clicks through. */
+  #galaxy-ui {
+    position: fixed; inset: 0; z-index: 11; pointer-events: none;
+    opacity: 0; visibility: hidden; transition: opacity .4s ease, visibility .4s;
+  }
+  #galaxy-ui.open { opacity: 1; visibility: visible; }
+  #galaxy-ui.open ~ #gate { background: rgba(7, 10, 28, .42); }
+  #galaxy-ui .hit { pointer-events: auto; }
+  #galaxy-ui.busy .hit { pointer-events: none; }
+  #galaxy-count {
+    position: absolute; left: 50%; top: 22px;
+    transform: translateX(-50%) rotate(-0.6deg);
+    min-width: 150px; padding: 8px 20px 10px; border-radius: 3px 10px 4px 8px;
+    text-align: center;
+  }
+  #galaxy-count::before {
+    content: ''; position: absolute; left: 50%; top: -6px; width: 36px; height: 12px;
+    margin-left: -18px;
+    background: repeating-linear-gradient(-28deg, var(--tape) 0 6px, #ffe8d6 6px 10px);
+    opacity: .9; transform: rotate(-7deg);
+  }
+  #galaxy-count .kicker {
+    display: block; font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-mid);
+  }
+  #galaxy-count-text { display: block; font-size: 22px; line-height: 1.15; }
+  #galaxy-hint {
+    position: absolute; left: 50%; top: 86px; transform: translateX(-50%);
+    font-size: 14px; color: #d7def6; text-shadow: 0 1px 6px #070a1c;
+    letter-spacing: .04em; white-space: nowrap;
+  }
+  #galaxy-new {
+    position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
+    padding: 12px 22px; border: 0; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 16px; color: #fff;
+    background: var(--accent-deep); box-shadow: 0 8px 22px rgba(0, 0, 0, .35);
+  }
+  #galaxy-new:hover { filter: brightness(1.06); }
+  #galaxy-labels { position: absolute; inset: 0; pointer-events: none; }
+  #galaxy-labels .label {
+    position: absolute; transform: translate(-50%, 22px);
+    font-size: 15px; color: #f4f7ff; white-space: nowrap;
+    text-shadow: 0 1px 8px #070a1c;
+    transition: transform .2s var(--spring), font-size .2s ease, opacity .2s ease;
+    opacity: .8;
+  }
+  #galaxy-labels .label.hover {
+    opacity: 1; font-size: 18px; transform: translate(-50%, 28px);
+  }
+  #galaxy-card {
+    position: absolute; width: 230px; padding: 12px 14px 12px;
+    border-radius: 3px 10px 4px 8px;
+    transform: translate(-50%, calc(-100% - 18px)) rotate(-0.5deg);
+    text-align: center;
+  }
+  #galaxy-card .name { font-size: 20px; line-height: 1.15; }
+  #galaxy-card .meta { margin-top: 2px; font-size: 13px; color: var(--ink-mid); }
+  #galaxy-open, #galaxy-delete {
+    margin-top: 10px; width: 100%; border: 0; border-radius: 4px; cursor: pointer;
+    font-family: inherit; font-size: 14px; padding: 8px 10px;
+  }
+  #galaxy-open { background: var(--ink); color: #fff; }
+  #galaxy-open:hover { filter: brightness(1.08); }
+  #galaxy-delete {
+    margin-top: 6px; background: #fff8ec; color: var(--ink-mid);
+    border: 1px dashed #d7b58a;
+  }
+  #galaxy-delete:hover { color: var(--ink); background: #fff; }
+  #galaxy-delete.confirming { background: #ffe3d6; color: #c2410c; border-color: #e8b198; }
+
   /* Character picker. A grid of cards, name under each, one selected, then Play. */
   #picker {
     position: fixed; inset: 0; z-index: 22; display: grid; place-items: center; padding: 16px;
@@ -1086,31 +1293,31 @@
   #picker.open .sheet { transform: none; }
   #picker h2 { margin: 0; font-size: 21px; font-weight: 700; }
   #picker .sub { margin-top: 3px; font-size: 14px; font-weight: 600; color: var(--ink-mid); }
-  #picker .grid {
+  #picker .grid, #gate .grid {
     display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0 16px;
   }
-  #picker .card {
+  #picker .card, #gate .card {
     display: flex; flex-direction: column; align-items: center; gap: 8px;
     padding: 14px 6px 10px; border: 2px solid transparent; border-radius: 20px;
     background: var(--card-soft, #fff7ec); cursor: pointer; font: inherit; color: inherit;
     transition: transform .18s var(--spring), border-color .18s ease, box-shadow .18s ease;
   }
-  #picker .card:hover { transform: translateY(-3px); }
-  #picker .card[aria-checked="true"] {
+  #picker .card:hover, #gate .card:hover { transform: translateY(-3px); }
+  #picker .card[aria-checked="true"], #gate .card[aria-checked="true"] {
     border-color: var(--accent, #f08c46); box-shadow: 0 8px 20px rgba(240, 140, 70, .25);
   }
-  #picker .card .name { font-size: 14px; font-weight: 700; }
+  #picker .card .name, #gate .card .name { font-size: 14px; font-weight: 700; }
   /* A little CSS minifigure standing in for the model, tinted per character. */
-  #picker .figure { width: 46px; height: 58px; position: relative; }
-  #picker .figure .head {
+  #picker .figure, #gate .figure { width: 46px; height: 58px; position: relative; }
+  #picker .figure .head, #gate .figure .head {
     position: absolute; left: 50%; top: 0; width: 24px; height: 24px; margin-left: -12px;
     border-radius: 50%; background: #f2c49b;
   }
-  #picker .figure .body {
+  #picker .figure .body, #gate .figure .body {
     position: absolute; left: 50%; top: 21px; width: 30px; height: 28px; margin-left: -15px;
     border-radius: 12px 12px 8px 8px; background: var(--tint);
   }
-  #picker .figure .legs {
+  #picker .figure .legs, #gate .figure .legs {
     position: absolute; left: 50%; bottom: 0; width: 22px; height: 10px; margin-left: -11px;
     border-radius: 0 0 6px 6px; background: #4b6470;
   }
@@ -1240,7 +1447,6 @@
   #shop .tabs button[data-kind="themes"] { background: #8ebdd4; }
   #shop .tabs button[data-kind="pets"] { background: #7eb8a8; }
   #shop .tabs button[data-kind="satellites"] { background: #e8b36a; }
-  #shop .tabs button[data-kind="skins"] { background: #d9a3b8; }
   #shop .tabs button[aria-selected="true"] {
     padding-right: 12px; filter: brightness(1.05);
     box-shadow: 3px 3px 0 rgba(120, 70, 30, .14);
@@ -1287,7 +1493,6 @@
   }
   #shop[data-kind="pets"] .polaroid .photo { background: #e7f3ee; }
   #shop[data-kind="satellites"] .polaroid .photo { background: #f8edd6; }
-  #shop[data-kind="skins"] .polaroid .photo { background: #f6e6ee; }
   .polaroid .mini-planet {
     width: 62%; height: 62%; border-radius: 50%;
     box-shadow: inset -6px -6px 0 rgba(0,0,0,.12);
@@ -1380,15 +1585,34 @@
   #detail .close:hover { background: #e2ecef; color: var(--ink); }
 
   #loading {
-    position: fixed; inset: 0; display: grid; place-items: center; z-index: 10;
+    position: fixed; inset: 0; display: grid; place-items: center; z-index: 30;
     background: #dff1f7; font-size: 15px; font-weight: 600; color: var(--ink-soft);
     transition: opacity .5s ease;
   }
   #loading.hide { opacity: 0; pointer-events: none; }
 </style>
 </head>
-<body>
+<body class="gated">
 <canvas id="scene-canvas"></canvas>
+<div id="galaxy-ui">
+  <div id="galaxy-count" class="paper hit">
+    <span class="kicker">worlds</span>
+    <span id="galaxy-count-text">0 planets</span>
+  </div>
+  <div id="galaxy-hint">hover a world · click to open</div>
+  <div id="galaxy-labels"></div>
+  <div id="galaxy-card" class="paper hit" hidden>
+    <div id="galaxy-card-name" class="name"></div>
+    <div id="galaxy-card-meta" class="meta"></div>
+    <button type="button" id="galaxy-open">open this world</button>
+    <button type="button" id="galaxy-delete">delete</button>
+  </div>
+  <button type="button" id="galaxy-new" class="hit">Start a new journal</button>
+</div>
+<div id="world-title" class="paper" hidden>
+  <span class="kicker">journal</span>
+  <span id="world-title-text" class="name"></span>
+</div>
 
 <div id="hud-left">
 <div id="stats-chip" class="paper"><span id="stats-text">a quiet ocean</span></div>
@@ -1437,7 +1661,7 @@
   <div class="sheet paper">
     <h2 id="settings-title">settings</h2>
     <button id="character-btn" type="button">switch character</button>
-    <button id="skins-btn" type="button">switch skins</button>
+    <button id="journals-btn" type="button">switch journal</button>
     <button id="reset-btn" type="button" disabled>start over</button>
   </div>
 </div>
@@ -1601,7 +1825,6 @@
       <button type="button" role="tab" data-kind="themes" aria-selected="true">themes</button>
       <button type="button" role="tab" data-kind="pets" aria-selected="false">pets</button>
       <button type="button" role="tab" data-kind="satellites" aria-selected="false">sky</button>
-      <button type="button" role="tab" data-kind="skins" aria-selected="false">skins</button>
     </div>
   </div>
 </div>
@@ -1610,6 +1833,34 @@
   <div id="empty-hint" class="paper">
     <div>Just your house, so far.<br /><b>Write a memory to grow the land around it ✨</b><br />Each one earns <span class="shard">✦</span> shards, and your planet grows as it fills.</div>
     <button id="demo-btn">or load a demo planet</button>
+  </div>
+</div>
+
+<div id="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+  <div class="cover">
+    <div class="pages">
+      <section id="gate-shelf">
+        <p class="kicker">your journals</p>
+        <h1 id="gate-title">Memory Planet</h1>
+        <p class="blurb" id="gate-blurb">Open a journal you already keep, or start a new world.</p>
+        <div id="gate-journals" class="journals"></div>
+        <p id="gate-empty" class="empty-shelf" hidden>No journals yet. Start one and name your world.</p>
+        <button type="button" id="gate-new" class="new">Start a new journal</button>
+      </section>
+      <section id="gate-create" hidden>
+        <button type="button" id="gate-back" class="back">← your journals</button>
+        <p class="kicker" id="gate-create-kicker">new journal</p>
+        <h2 id="gate-create-title">Name your world</h2>
+        <p class="blurb" id="gate-create-blurb">This title sits at the top of your planet, on the journal you are keeping.</p>
+        <label class="name-field">
+          <span>World name</span>
+          <input id="gate-name" type="text" maxlength="32" placeholder="Willow's planet" autocomplete="off" spellcheck="false">
+        </label>
+        <h2 class="who">Who lives there?</h2>
+        <div id="gate-avatars" class="grid" role="radiogroup" aria-label="Choose your character"></div>
+        <button type="button" id="gate-create-btn" class="play" disabled>Create this world</button>
+      </section>
+    </div>
   </div>
 </div>
 

@@ -1735,6 +1735,10 @@
   // blend the fold animates through snaps to whichever view is showing.
   function applyLighting() {
     refreshViewLight();
+    if (state.galaxy && state.galaxy.on) {
+      applyGalaxyLighting(state.galaxy.mix);
+      return;
+    }
     applyViewLighting(state.flatMode ? 1 : 0);
     if (state.stars) state.stars.visible = !!currentTheme.stars;
   }
@@ -2176,7 +2180,7 @@
         });
       } else {
         state.planet.scale.setScalar(target);
-        if (!state.flatMode) {
+        if (!state.flatMode && !opts.keepCamera) {
           state.camDistance = rest;
           state.updateCamera();
         }
@@ -3145,12 +3149,19 @@
       keys: { wasd: { w: false, a: false, s: false, d: false },
               arrows: { w: false, a: false, s: false, d: false } },
       groundForward: new THREE.Vector3(1, 0, 0), groundPitch: 0.45, groundDistance: 2.6,
-      orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false
+      orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false,
+      galaxy: {
+        on: false, mix: 0, group: null, planets: [], hoverId: null,
+        liveId: null, liveHover: 0, saved: null, busy: false
+      }
     };
     state.stars = makeStars();
     scene.add(state.stars);
     state.sky = makeSky();
     scene.add(state.sky);
+    state.galaxy.group = new THREE.Group();
+    state.galaxy.group.visible = false;
+    scene.add(state.galaxy.group);
     setTheme(opts.theme || 'meadow');
 
     // Orbit camera, shared by both views: eye on a sphere around the origin, looking in.
@@ -3205,6 +3216,11 @@
       hoverPending = null;
       hoverCursor = 'grab';
       canvasEl.style.cursor = 'grab';
+      if (state.galaxy && state.galaxy.on) {
+        // Leave the last hover in place so the HTML card stays clickable when the
+        // pointer leaves the canvas onto it.
+        return;
+      }
       if (hoverListener) hoverListener(null);
     });
     state.pollHover = function () {
@@ -3212,8 +3228,18 @@
       if (state.camMode !== 'orbit') { hoverPending = null; return; }
       var event = hoverPending;
       hoverPending = null;
-      // Always tell the listener, including about leaving a tile, so it can put its own
-      // mark back. Compare against null — tile 0 is a real slot.
+      if (state.galaxy && state.galaxy.on) {
+        if (state.galaxy.busy) return;
+        var gid = pickGalaxy(event, canvasEl);
+        if (gid) {
+          if (setGalaxyHover(gid) && galaxyHoverListener) galaxyHoverListener(gid);
+          hoverCursor = 'pointer';
+        } else {
+          hoverCursor = 'grab';
+        }
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
       var slot = pickSlot(event, canvasEl);
       var over = hoverListener ? hoverListener(slot == null ? null : slot) : false;
       hoverCursor = over ? 'pointer' : 'grab';
@@ -3244,6 +3270,7 @@
         return;
       }
       if (!dragging) return;
+      if (state.galaxy && state.galaxy.busy) return;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
       state.camTheta -= dx * 0.006;
       state.camPhi = clampPhi(state.camPhi - dy * 0.006);
@@ -3264,6 +3291,14 @@
       e.preventDefault();
       if (state.transition) return;
       if (state.camMode !== 'orbit') return; // the follow camera keeps a fixed distance
+      if (state.galaxy && state.galaxy.on) {
+        if (state.galaxy.busy) return;
+        var far = galaxyCameraDistance();
+        state.camDistance = Math.max(far * 0.55, Math.min(far * 1.85,
+          state.camDistance * (1 + e.deltaY * 0.001)));
+        state.updateCamera();
+        return;
+      }
       // The flat layout is much smaller than the planet, so it needs its own zoom range.
       var range = cameraRange();
       var min = state.flatMode ? 2.5 : range.min;
@@ -3306,7 +3341,13 @@
 
     canvasEl.addEventListener('click', function (e) {
       if (dragMoved || state.transition) return; // a camera drag or mid-unfold, not a pick
-      if (state.camMode !== 'orbit') return;     // following: nothing to pick yet
+      if (state.galaxy && state.galaxy.on) {
+        if (state.galaxy.busy) return;
+        var gid = pickGalaxy(e, canvasEl);
+        if (galaxyPickListener) galaxyPickListener(gid);
+        return;
+      }
+      if (state.camMode !== 'orbit') return;     // following or mid-tween: nothing to pick yet
       var slot = pickSlot(e, canvasEl);
       pickListeners.forEach(function (cb) { cb(slot); });
     });
@@ -3452,6 +3493,447 @@
     state.planetMesh = planetMesh;
   }
 
+  // --- Journal galaxy -----------------------------------------------------------------
+  // Switch-journal (and first boot) pull the camera back into space and float a toy planet
+  // for every saved world. The live planet stays at the origin when you came from it;
+  // everything else is a low-poly stand-in so we never rebuild five hex-spheres at once.
+  var SPACE_BG = new THREE.Color(0x070a1c);
+  var SPACE_HEMI_SKY = new THREE.Color(0x9aa8ff);
+  var SPACE_HEMI_GROUND = new THREE.Color(0x16102c);
+  var SPACE_SUN = new THREE.Color(0xe4ecff);
+  var galaxyHoverListener = null;
+  var galaxyPickListener = null;
+  var galaxyFrameListener = null;
+  var galaxyScreenTmp = new THREE.Vector3();
+
+  function reduceMotion() {
+    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
+  function applyGalaxyLighting(mix) {
+    refreshViewLight();
+    var a = VIEW_LIGHT.planet;
+    var m = clamp01(mix);
+    state.scene.background.copy(a.bg).lerp(SPACE_BG, m);
+    state.hemiLight.color.copy(a.sky).lerp(SPACE_HEMI_SKY, m);
+    state.hemiLight.groundColor.copy(a.ground).lerp(SPACE_HEMI_GROUND, m);
+    state.hemiLight.intensity = a.hemi + (0.5 - a.hemi) * m;
+    state.sunLight.color.copy(a.sun).lerp(SPACE_SUN, m);
+    state.sunLight.intensity = a.sunI + (0.95 - a.sunI) * m;
+    state.sunLight.position.set(6 + 2 * m, 12 - 6 * m, 6 + 4 * m);
+    if (state.sky) {
+      var skyOp = (state.flatMode ? 1 : 0) * (1 - m);
+      state.sky.material.opacity = skyOp;
+      state.sky.visible = skyOp > 0.01;
+    }
+    if (state.stars) {
+      state.stars.visible = m > 0.02 || !!(currentTheme && currentTheme.stars);
+      state.stars.material.opacity = (currentTheme && currentTheme.stars) ? 0.85 : (0.18 + 0.72 * m);
+      state.stars.material.size = 0.4 + 0.35 * m;
+    }
+    state.viewMix = state.flatMode ? (1 - m) : 0;
+  }
+
+  function idSeed(id) {
+    var s = 2166136261;
+    String(id || '').split('').forEach(function (ch) {
+      s ^= ch.charCodeAt(0);
+      s = Math.imul(s, 16777619) >>> 0;
+    });
+    return s;
+  }
+
+  function makeMiniPlanet(journal) {
+    var theme = MI.world.themes.get(journal.theme || 'meadow');
+    var geo = new THREE.IcosahedronGeometry(1, 2);
+    var pos = geo.attributes.position;
+    var colors = new Float32Array(pos.count * 3);
+    var landAmt = Math.min(0.78, 0.12 + (journal.memories || 0) * 0.07);
+    var seed = idSeed(journal.id);
+    var land = new THREE.Color(theme.land);
+    var water = new THREE.Color(theme.water);
+    var dirt = new THREE.Color(theme.landSide);
+    for (var i = 0; i < pos.count; i++) {
+      var x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      var n = hash(((x + 2) * 19 + (y + 2) * 37 + (z + 2) * 11 + (seed % 997)) | 0);
+      var isLand = n < landAmt && y > -0.22;
+      var c = isLand ? (y < 0.05 ? dirt : land) : water;
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+      if (isLand) {
+        var bump = 1.05 + n * 0.06;
+        pos.setXYZ(i, x * bump, y * bump, z * bump);
+      }
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    var ball = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+      vertexColors: true, flatShading: true
+    }));
+    ball.castShadow = true;
+    ball.receiveShadow = true;
+    var atmos = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.14, 2),
+      new THREE.MeshBasicMaterial({
+        color: theme.water, transparent: true, opacity: 0.2,
+        side: THREE.BackSide, depthWrite: false
+      })
+    );
+    var group = new THREE.Group();
+    group.add(ball);
+    group.add(atmos);
+    group.userData.journalId = journal.id;
+    group.userData.journal = journal;
+    return { group: group, ball: ball };
+  }
+
+  function livePlanetRadius() {
+    return RADIUS * (state.worldScale || 1);
+  }
+
+  function galaxyRingRadius(miniCount) {
+    var live = state.galaxy.liveId ? livePlanetRadius() : 0;
+    var n = Math.max(1, miniCount != null ? miniCount : state.galaxy.planets.length);
+    return Math.max(live * 3.3, 9 + n * 0.9);
+  }
+
+  function galaxyCameraDistance() {
+    var live = state.galaxy.liveId ? livePlanetRadius() : 1.2;
+    var ring = galaxyRingRadius();
+    return Math.max(24, ring * 2.05 + live * 1.4);
+  }
+
+  function clearGalaxyPlanets() {
+    if (!state.galaxy || !state.galaxy.group) return;
+    while (state.galaxy.group.children.length) {
+      var child = state.galaxy.group.children[0];
+      state.galaxy.group.remove(child);
+      child.traverse(function (node) {
+        if (node.geometry) node.geometry.dispose();
+        if (node.material && node.material.dispose) node.material.dispose();
+      });
+    }
+    state.galaxy.planets = [];
+    state.galaxy.hoverId = null;
+  }
+
+  function setLivePlanetVisible(on) {
+    if (state.planet) state.planet.visible = on;
+    if (state.playerGroup) state.playerGroup.visible = on;
+    if (state.satellite) state.satellite.visible = on && !(state.galaxy && state.galaxy.on);
+    if (state.flatGroup) state.flatGroup.visible = on && !!state.flatMode;
+  }
+
+  function buildGalaxyPlanets(journals, liveId) {
+    clearGalaxyPlanets();
+    state.galaxy.liveId = liveId || null;
+    var minis = (journals || []).filter(function (j) { return j.id !== liveId; });
+    var ring = galaxyRingRadius(minis.length);
+    var facing = state.camTheta || 0;
+    minis.forEach(function (journal, i) {
+      var made = makeMiniPlanet(journal);
+      var count = Math.max(1, minis.length);
+      var angle;
+      if (liveId) {
+        angle = facing + Math.PI + (i / count) * Math.PI * 2;
+      } else {
+        var span = Math.min(Math.PI * 1.15, 0.7 + count * 0.4);
+        var t = count <= 1 ? 0.5 : i / (count - 1);
+        angle = facing + Math.PI - span / 2 + span * t;
+      }
+      var restY = Math.sin(i * 1.7 + 0.4) * 1.15;
+      made.group.position.set(ring * Math.sin(angle), restY, ring * Math.cos(angle));
+      var freq = journal.frequency || 2;
+      var baseScale = 1.05 + Math.min(1.5, (freq - 2) * 0.14);
+      made.group.scale.setScalar(0.0001);
+      state.galaxy.group.add(made.group);
+      state.galaxy.planets.push({
+        id: journal.id,
+        journal: journal,
+        group: made.group,
+        ball: made.ball,
+        restY: restY,
+        baseScale: baseScale,
+        hover: 0,
+        pop: 0,
+        spin: hash(idSeed(journal.id)) * Math.PI * 2,
+        spinSpeed: 0.12 + hash(idSeed(journal.id) + 3) * 0.18
+      });
+    });
+    state.galaxy.group.visible = true;
+  }
+
+  function setGalaxyHover(id) {
+    if (!state.galaxy) return false;
+    id = id || null;
+    if (state.galaxy.hoverId === id) return false;
+    state.galaxy.hoverId = id;
+    return true;
+  }
+
+  function pickGalaxy(e, canvasEl) {
+    if (!state || !state.galaxy || !state.galaxy.on) return null;
+    var rect = canvasEl.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, state.camera);
+    if (state.galaxy.group && state.galaxy.group.visible) {
+      var hits = raycaster.intersectObject(state.galaxy.group, true);
+      for (var i = 0; i < hits.length; i++) {
+        for (var node = hits[i].object; node; node = node.parent) {
+          if (node.userData && node.userData.journalId) return node.userData.journalId;
+        }
+      }
+    }
+    if (state.galaxy.liveId && state.planet && state.planet.visible && state.planetMesh) {
+      var liveHits = raycaster.intersectObject(state.planetMesh);
+      if (liveHits.length) return state.galaxy.liveId;
+    }
+    return null;
+  }
+
+  function projectPoint(pos) {
+    galaxyScreenTmp.copy(pos).project(state.camera);
+    var el = state.renderer.domElement;
+    return {
+      x: (galaxyScreenTmp.x * 0.5 + 0.5) * el.clientWidth,
+      y: (-galaxyScreenTmp.y * 0.5 + 0.5) * el.clientHeight,
+      behind: galaxyScreenTmp.z > 1
+    };
+  }
+
+  function galaxyScreens() {
+    if (!state.galaxy || !state.galaxy.on) return [];
+    var out = state.galaxy.planets.map(function (p) {
+      var s = projectPoint(p.group.getWorldPosition(galaxyScreenTmp.clone()));
+      s.id = p.id;
+      s.journal = p.journal;
+      s.hover = p.id === state.galaxy.hoverId;
+      return s;
+    });
+    if (state.galaxy.liveId && state.planet && state.planet.visible) {
+      var live = projectPoint(state.planet.getWorldPosition(galaxyScreenTmp.clone()));
+      live.id = state.galaxy.liveId;
+      live.live = true;
+      live.hover = state.galaxy.hoverId === state.galaxy.liveId;
+      out.unshift(live);
+    }
+    return out;
+  }
+
+  function tickGalaxy(dt) {
+    if (!state || !state.galaxy || !state.galaxy.on) return;
+    if (state.galaxy.busy) {
+      if (galaxyFrameListener) galaxyFrameListener(galaxyScreens());
+      return;
+    }
+    var hoverEase = Math.min(1, dt * 8);
+    state.galaxy.planets.forEach(function (p) {
+      p.spin += dt * p.spinSpeed;
+      p.ball.rotation.y = p.spin;
+      var want = p.id === state.galaxy.hoverId ? 1 : 0;
+      p.hover += (want - p.hover) * hoverEase;
+      var s = p.baseScale * Math.max(0.0001, p.pop) * (1 + 0.28 * p.hover);
+      p.group.scale.setScalar(s);
+      p.group.position.y = p.restY + 0.6 * p.hover;
+    });
+    var liveWant = state.galaxy.liveId && state.galaxy.hoverId === state.galaxy.liveId ? 1 : 0;
+    state.galaxy.liveHover += (liveWant - (state.galaxy.liveHover || 0)) * hoverEase;
+    if (state.planet && state.galaxy.liveId && state.planet.visible) {
+      state.planet.scale.setScalar(state.worldScale * (1 + 0.14 * state.galaxy.liveHover));
+    }
+    if (galaxyFrameListener) galaxyFrameListener(galaxyScreens());
+  }
+
+  function enterGalaxy(journals, options) {
+    if (!state) return Promise.resolve();
+    var opts = options || {};
+    var liveId = opts.currentId || null;
+    state.galaxy.busy = false;
+    if (state.flatMode) {
+      return setFlatView(false, { instant: true }).then(function () {
+        return enterGalaxy(journals, opts);
+      });
+    }
+    if (state.galaxy.on && state.galaxy.mix > 0.95) {
+      buildGalaxyPlanets(journals, liveId);
+      setLivePlanetVisible(!!liveId);
+      if (state.satellite) state.satellite.visible = false;
+      state.camDistance = galaxyCameraDistance();
+      state.updateCamera();
+      if (opts.instant || reduceMotion()) {
+        state.galaxy.planets.forEach(function (p) { p.pop = 1; });
+        return Promise.resolve();
+      }
+      return animateP(520, function (t) {
+        state.galaxy.planets.forEach(function (p, i) {
+          var popT = (t - i * 0.06) / 0.55;
+          p.pop = popT <= 0 ? 0 : (popT >= 1 ? 1 : easeOutBack(popT));
+        });
+      });
+    }
+    state.galaxy.on = true;
+    buildGalaxyPlanets(journals, liveId);
+    setLivePlanetVisible(!!liveId);
+    if (state.satellite) state.satellite.visible = false;
+    var fromDist = state.camDistance;
+    var toDist = galaxyCameraDistance();
+    var fromMix = state.galaxy.mix || 0;
+    state.galaxy.saved = {
+      dist: opts.savedDist || fromDist,
+      theta: state.camTheta,
+      phi: state.camPhi
+    };
+    state.camTarget.set(0, 0, 0);
+    function finish(t) {
+      var e = t;
+      state.galaxy.mix = fromMix + (1 - fromMix) * e;
+      state.camDistance = fromDist + (toDist - fromDist) * e;
+      applyGalaxyLighting(state.galaxy.mix);
+      state.galaxy.planets.forEach(function (p, i) {
+        var popT = (e - 0.28 - i * 0.07) / 0.4;
+        p.pop = popT <= 0 ? 0 : (popT >= 1 ? 1 : easeOutBack(popT));
+      });
+      state.updateCamera();
+    }
+    if (opts.instant || reduceMotion()) {
+      finish(1);
+      return Promise.resolve();
+    }
+    return animateP(1400, function (t) { finish(easeInOut(t)); });
+  }
+
+  function leaveGalaxy(options) {
+    if (!state || !state.galaxy || !state.galaxy.on) return Promise.resolve();
+    var opts = options || {};
+    var saved = state.galaxy.saved || {};
+    var fromDist = state.camDistance;
+    var toDist = opts.dist || (opts.fit ? cameraRange().rest : null) || saved.dist || cameraRange().rest;
+    var fromMix = state.galaxy.mix || 0;
+    var fromTarget = state.camTarget.clone();
+    state.galaxy.hoverId = null;
+    state.galaxy.busy = true;
+    setLivePlanetVisible(true);
+    if (state.satellite) state.satellite.visible = false;
+    function finish(t) {
+      var e = t;
+      state.galaxy.mix = fromMix * (1 - e);
+      state.camDistance = fromDist + (toDist - fromDist) * e;
+      state.camTarget.copy(fromTarget).lerp(new THREE.Vector3(), e);
+      applyGalaxyLighting(state.galaxy.mix);
+      state.galaxy.planets.forEach(function (p) {
+        p.pop = Math.max(0, p.pop * (1 - e));
+      });
+      if (state.satellite) state.satellite.visible = e > 0.55;
+      state.updateCamera();
+    }
+    function teardown() {
+      finish(1);
+      clearGalaxyPlanets();
+      state.galaxy.group.visible = false;
+      state.galaxy.on = false;
+      state.galaxy.mix = 0;
+      state.galaxy.liveId = null;
+      state.galaxy.liveHover = 0;
+      state.galaxy.saved = null;
+      state.galaxy.busy = false;
+      if (state.planet) state.planet.scale.setScalar(state.worldScale);
+      setLivePlanetVisible(true);
+      applyLighting();
+      state.camTarget.set(0, 0, 0);
+      state.camDistance = toDist;
+      state.updateCamera();
+    }
+    if (opts.instant || reduceMotion()) {
+      teardown();
+      return Promise.resolve();
+    }
+    return animateP(1100, function (t) { finish(easeInOut(t)); }).then(teardown);
+  }
+
+  function galaxyEntry(id) {
+    var found = null;
+    if (!state || !state.galaxy) return null;
+    state.galaxy.planets.forEach(function (p) {
+      if (p.id === id) found = p;
+    });
+    return found;
+  }
+
+  function focusGalaxyPlanet(id) {
+    if (!state || !state.galaxy || !state.galaxy.on || !id) return Promise.resolve();
+    var target = new THREE.Vector3();
+    var entry = galaxyEntry(id);
+    if (entry) entry.group.getWorldPosition(target);
+    else target.set(0, 0, 0);
+    setGalaxyHover(id);
+    var fromTarget = state.camTarget.clone();
+    var fromDist = state.camDistance;
+    var toDist = Math.max(5.5, fromDist * 0.38);
+    return animateP(reduceMotion() ? 1 : 720, function (t) {
+      var e = easeInOut(t);
+      state.camTarget.copy(fromTarget).lerp(target, e);
+      state.camDistance = fromDist + (toDist - fromDist) * e;
+      if (entry) entry.hover = e;
+      state.updateCamera();
+    });
+  }
+
+  // Fly up to a chosen journal, send the others away, and if it is a miniature pull it
+  // into the middle so leaveGalaxy can dive from space into the real planet.
+  function selectGalaxyPlanet(id) {
+    if (!state || !state.galaxy || !state.galaxy.on || !id) return Promise.resolve();
+    var entry = galaxyEntry(id);
+    var isLive = state.galaxy.liveId === id;
+    state.galaxy.busy = true;
+    setGalaxyHover(id);
+    var dest = new THREE.Vector3();
+    if (entry) entry.group.getWorldPosition(dest);
+    else dest.set(0, 0, 0);
+    var fromTarget = state.camTarget.clone();
+    var fromDist = state.camDistance;
+    var closeDist = isLive
+      ? Math.max(livePlanetRadius() * 4.4, 6.2)
+      : Math.max(4.6, entry ? entry.baseScale * 3.4 : 5.5);
+    var flyMs = reduceMotion() ? 1 : 860;
+    return animateP(flyMs, function (t) {
+      var e = easeInOut(t);
+      state.camTarget.copy(fromTarget).lerp(dest, e);
+      state.camDistance = fromDist + (closeDist - fromDist) * e;
+      if (entry) {
+        entry.hover = e;
+        entry.pop = 1;
+      }
+      state.galaxy.planets.forEach(function (p) {
+        if (p.id === id) return;
+        p.pop = Math.max(0, 1 - e * 1.35);
+      });
+      if (isLive && state.planet) {
+        state.galaxy.liveHover = e;
+        state.planet.scale.setScalar(state.worldScale * (1 + 0.1 * e));
+      }
+      state.updateCamera();
+    }).then(function () {
+      if (isLive || !entry || reduceMotion()) return Promise.resolve();
+      var fromPos = entry.group.position.clone();
+      var fromT = state.camTarget.clone();
+      var fromD = state.camDistance;
+      var midD = Math.max(5.4, fromD * 0.82);
+      return animateP(560, function (t) {
+        var e = easeInOut(t);
+        entry.group.position.copy(fromPos).multiplyScalar(1 - e);
+        state.camTarget.copy(fromT).lerp(new THREE.Vector3(), e);
+        state.camDistance = fromD + (midD - fromD) * e;
+        entry.hover = 1;
+        state.updateCamera();
+      });
+    });
+  }
+
+  function isGalaxy() {
+    return !!state && !!state.galaxy && state.galaxy.on;
+  }
+
   function startLoop() {
     var lastFrame = 0;
     (function loop(timestampMs) {
@@ -3469,6 +3951,7 @@
       if (!state.transition) updateWalkers(dt);
       if (!state.transition) updatePlayer(dt);
       if (state.pollHover) state.pollHover();
+      tickGalaxy(dt);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
       for (var i = animations.length - 1; i >= 0; i--) {
         if (animations[i](now)) animations.splice(i, 1);
@@ -3621,4 +4104,12 @@
   MI.world.characters = function () { return MI.world.player.list(); };
   MI.world.currentCharacter = function () { return state && state.characterId; };
   MI.world.setSkin = setSkin;
+  MI.world.enterGalaxy = enterGalaxy;
+  MI.world.leaveGalaxy = leaveGalaxy;
+  MI.world.focusGalaxyPlanet = focusGalaxyPlanet;
+  MI.world.selectGalaxyPlanet = selectGalaxyPlanet;
+  MI.world.isGalaxy = isGalaxy;
+  MI.world.onGalaxyHover = function (cb) { galaxyHoverListener = cb; };
+  MI.world.onGalaxyPick = function (cb) { galaxyPickListener = cb; };
+  MI.world.onGalaxyFrame = function (cb) { galaxyFrameListener = cb; };
 })();
