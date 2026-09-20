@@ -1237,7 +1237,9 @@
     position: absolute; left: 50%; top: 86px; transform: translateX(-50%);
     font-size: 14px; color: #d7def6; text-shadow: 0 1px 6px #070a1c;
     letter-spacing: .04em; white-space: nowrap;
+    transition: opacity .28s ease;
   }
+  #galaxy-ui.detail #galaxy-hint { opacity: 0; }
   #galaxy-new {
     position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
     padding: 12px 22px; border: 0; border-radius: 4px; cursor: pointer;
@@ -1247,21 +1249,30 @@
   #galaxy-new:hover { filter: brightness(1.06); }
   #galaxy-labels { position: absolute; inset: 0; pointer-events: none; }
   #galaxy-labels .label {
-    position: absolute; transform: translate(-50%, 22px);
+    position: absolute; transform: translate(-50%, 0);
     font-size: 15px; color: #f4f7ff; white-space: nowrap;
     text-shadow: 0 1px 8px #070a1c;
-    transition: transform .2s var(--spring), font-size .2s ease, opacity .2s ease;
-    opacity: .8;
+    transition: transform .28s var(--spring), font-size .28s ease, opacity .28s ease;
+    opacity: .78; pointer-events: none;
   }
-  #galaxy-labels .label.hover {
-    opacity: 1; font-size: 18px; transform: translate(-50%, 28px);
+  #galaxy-labels .label.hover, #galaxy-labels .label.focus {
+    opacity: 1; font-size: 17px;
   }
   #galaxy-card {
     position: absolute; width: 230px; padding: 12px 14px 12px;
     border-radius: 3px 10px 4px 8px;
-    transform: translate(-50%, calc(-100% - 18px)) rotate(-0.5deg);
+    left: 50%; top: 0;
+    transform: translate(-50%, calc(-100% - 6px)) translateY(10px) scale(.96);
     text-align: center;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .32s ease, transform .42s var(--spring), visibility .32s;
   }
+  #galaxy-card.show {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: translate(-50%, calc(-100% - 6px)) translateY(0) scale(1);
+  }
+  #galaxy-card.beside { transform: translate(0, -50%) translateX(-10px) scale(.96); }
+  #galaxy-card.beside.show { transform: translate(0, -50%) scale(1); }
   #galaxy-card .name { font-size: 20px; line-height: 1.15; }
   #galaxy-card .meta { margin-top: 2px; font-size: 13px; color: var(--ink-mid); }
   #galaxy-open, #galaxy-delete {
@@ -1599,9 +1610,9 @@
     <span class="kicker">worlds</span>
     <span id="galaxy-count-text">0 planets</span>
   </div>
-  <div id="galaxy-hint">hover a world · click to open</div>
+  <div id="galaxy-hint">arrows or WASD to move · hover for details · click to open</div>
   <div id="galaxy-labels"></div>
-  <div id="galaxy-card" class="paper hit" hidden>
+  <div id="galaxy-card" class="paper hit" aria-hidden="true">
     <div id="galaxy-card-name" class="name"></div>
     <div id="galaxy-card-meta" class="meta"></div>
     <button type="button" id="galaxy-open">open this world</button>

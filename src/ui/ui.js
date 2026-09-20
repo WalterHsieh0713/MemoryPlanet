@@ -1156,6 +1156,8 @@
   var gateBusy = false;
   var hoveredGalaxy = null;
   var galaxyDeleteArmed = null;
+  var galaxyCardHide = null;
+  var lastGalaxyScreens = [];
 
   function fillAvatarGrid(container, selectedId, onPick) {
     var characters = MI.world.characters();
@@ -1287,30 +1289,72 @@
 
   function hideGalaxyHud() {
     el['galaxy-ui'].classList.remove('open');
-    el['galaxy-card'].hidden = true;
+    hideGalaxyCard(true);
     hoveredGalaxy = null;
     disarmGalaxyDelete();
+  }
+
+  function hideGalaxyCard(immediate) {
+    clearTimeout(galaxyCardHide);
+    galaxyCardHide = null;
+    if (immediate) {
+      el['galaxy-ui'].classList.remove('detail');
+      el['galaxy-card'].classList.remove('show', 'beside');
+      el['galaxy-card'].setAttribute('aria-hidden', 'true');
+      return;
+    }
+    galaxyCardHide = setTimeout(function () {
+      if (el['galaxy-card'].matches(':hover')) return;
+      hoveredGalaxy = null;
+      el['galaxy-ui'].classList.remove('detail');
+      el['galaxy-card'].classList.remove('show');
+      el['galaxy-card'].setAttribute('aria-hidden', 'true');
+      disarmGalaxyDelete();
+    }, 140);
+  }
+
+  function placeGalaxyCard(id) {
+    var hit = null;
+    lastGalaxyScreens.forEach(function (s) { if (s.id === id) hit = s; });
+    if (!hit || hit.behind) return false;
+    var radius = hit.r || 36;
+    var above = hit.y - radius - 16;
+    if (above < 118) {
+      el['galaxy-card'].classList.add('beside');
+      el['galaxy-card'].style.left = (hit.x + radius + 18) + 'px';
+      el['galaxy-card'].style.top = Math.max(118, hit.y) + 'px';
+    } else {
+      el['galaxy-card'].classList.remove('beside');
+      el['galaxy-card'].style.left = hit.x + 'px';
+      el['galaxy-card'].style.top = above + 'px';
+    }
+    return true;
   }
 
   function refreshGalaxyCount() {
     var n = MI.store.listJournals().length;
     el['galaxy-count-text'].textContent = n === 1 ? '1 planet' : n + ' planets';
     el['galaxy-hint'].textContent = n
-      ? 'hover a world · click to open'
+      ? 'arrows or WASD to move · hover for details · click to open'
       : 'no worlds yet — start a new journal';
   }
 
   function updateGalaxyCard(id) {
-    if (id === hoveredGalaxy) return;
-    hoveredGalaxy = id;
-    disarmGalaxyDelete();
     if (!id) {
-      el['galaxy-card'].hidden = true;
+      hideGalaxyCard(false);
       return;
     }
+    clearTimeout(galaxyCardHide);
+    galaxyCardHide = null;
+    if (id === hoveredGalaxy && el['galaxy-card'].classList.contains('show')) {
+      placeGalaxyCard(id);
+      return;
+    }
+    hoveredGalaxy = id;
+    disarmGalaxyDelete();
     var journal = journalById(id);
     if (!journal) {
-      el['galaxy-card'].hidden = true;
+      hideGalaxyCard(true);
       return;
     }
     el['galaxy-card-name'].textContent = journal.name;
@@ -1318,10 +1362,14 @@
     if (journal.people) bits.push(plural(journal.people, 'friend'));
     if (journal.character) bits.push(characterName(journal.character));
     el['galaxy-card-meta'].textContent = bits.join(' · ');
-    el['galaxy-card'].hidden = false;
+    placeGalaxyCard(id);
+    el['galaxy-ui'].classList.add('detail');
+    el['galaxy-card'].setAttribute('aria-hidden', 'false');
+    el['galaxy-card'].classList.add('show');
   }
 
   function syncGalaxyLabels(screens) {
+    lastGalaxyScreens = screens || [];
     var wrap = el['galaxy-labels'];
     var seen = {};
     screens.forEach(function (s) {
@@ -1337,19 +1385,15 @@
       var journal = s.journal || journalById(s.id);
       node.textContent = journal ? journal.name : '';
       node.style.left = s.x + 'px';
-      node.style.top = s.y + 'px';
+      node.style.top = (s.y + (s.r || 28) + 10) + 'px';
       node.classList.toggle('hover', !!s.hover);
+      node.classList.toggle('focus', !!s.focus);
     });
     Array.prototype.forEach.call(wrap.querySelectorAll('.label'), function (node) {
       if (!seen[node.getAttribute('data-id')]) node.parentNode.removeChild(node);
     });
-    if (hoveredGalaxy && !el['galaxy-card'].hidden) {
-      var hit = null;
-      screens.forEach(function (s) { if (s.id === hoveredGalaxy) hit = s; });
-      if (hit && !hit.behind) {
-        el['galaxy-card'].style.left = hit.x + 'px';
-        el['galaxy-card'].style.top = Math.max(96, hit.y - 12) + 'px';
-      }
+    if (hoveredGalaxy && el['galaxy-card'].classList.contains('show')) {
+      placeGalaxyCard(hoveredGalaxy);
     }
   }
 
@@ -1381,7 +1425,7 @@
     var result = MI.store.deleteJournal(id);
     if (!result.ok) return;
     hoveredGalaxy = null;
-    el['galaxy-card'].hidden = true;
+    hideGalaxyCard(true);
     if (!MI.store.listJournals().length) {
       hideGalaxyHud();
       MI.world.leaveGalaxy({ instant: true }).then(function () {
@@ -2087,13 +2131,19 @@
     });
     el['journals-btn'].addEventListener('click', returnToShelf);
     el['galaxy-new'].addEventListener('click', function () {
-      updateGalaxyCard(null);
+      hideGalaxyCard(true);
       showGate('create');
     });
     el['galaxy-open'].addEventListener('click', function () {
       if (hoveredGalaxy) enterExisting(hoveredGalaxy);
     });
     el['galaxy-delete'].addEventListener('click', handleGalaxyDelete);
+    el['galaxy-card'].addEventListener('mouseenter', function () {
+      clearTimeout(galaxyCardHide);
+    });
+    el['galaxy-card'].addEventListener('mouseleave', function () {
+      updateGalaxyCard(null);
+    });
     el['gate-new'].addEventListener('click', function () { showGate('create'); });
     el['gate-back'].addEventListener('click', function () {
       if (!MI.store.listJournals().length) return;
