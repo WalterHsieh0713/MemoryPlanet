@@ -64,7 +64,8 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `player.animator` (set by world.js from `MI.world.walkers.makeAnimator`) blends the GLB's own walk/idle clips; null for the procedural figure, which keeps the bob instead.
 - A player's sphere facing is a unit TANGENT VECTOR, not an angle, and `updateSphere` reports the rotation each step applied as `lastAxis`/`lastAngle`. Carry anything else that has a direction — the ground camera does — by that same rotation. Deriving a direction from a recomputed reference tangent instead is what made the camera swing when strafing.
 - `stepSphere(pos, move, distance, radius)`, `moveSphere(...)`, `moveFlat(pos, forward, right, input, distance, isLandAt, blockers?, radius?)`, `blockedStep(from, to, blockers, radius)`, `TILES_PER_SECOND`
-- `blockers` are solid circles `{x, z, r}` (island buildings, `state.island.blockers`): steps into one are refused and the move glides along its edge; a character already inside may only leave.
+- `blockers` are solid BOXES `{x, z, hx, hz, cos, sin}` (island buildings, `state.island.blockers`): steps into one are refused and the move slides along the wall's own axes. `boxDepth(box, point, radius)` is how far inside a point is (0 = clear); `pushOut(pos, blockers, radius)` steps a trapped character back out.
+- `state.island.groundY[slot]` is each tile's walking height; the character eases onto it and walkers interpolate between tiles (`ctx.baseYOf`).
 - `ctx.speed` is WORLD UNITS per second: the caller multiplies `TILES_PER_SECOND` by a tile's size in that view.
 
 ## MI.economy  (`src/game/economy.js`)

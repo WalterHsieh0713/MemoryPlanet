@@ -94,6 +94,9 @@
       // Island view: metres in the XZ plane, facing as a plain rotation about +Y. No
       // curvature there, so an angle is fine and there is nothing to transport.
       x: 0, z: 0, heading: 0,
+      // Island view: the height the feet are currently at, eased toward the tile underneath by
+      // world.js so a change of level reads as a step rather than a jump. null until placed.
+      groundY: null,
       // The GLB's own walk/idle clips, blended by MI.world.walkers (null for the procedural
       // fallback figure, which keeps the bob instead). world.js builds it with the avatar.
       animator: null,
@@ -190,18 +193,24 @@
     var candidates = dirs.map(function (d) {
       return { x: pos.x + d.x * distance, z: pos.z + d.z * distance };
     });
-    // Running at a building: keep the part of the move that runs along its wall, so you
-    // glide round the corner instead of stopping dead against it.
+    // Running at a building: keep the part of the move that runs ALONG its wall, so you
+    // glide round the corner instead of stopping dead against it. The wall's own directions,
+    // not the world's, which is what makes it work for a building at any angle.
     if (blockers && blockers.length) {
       var d0 = dirs[0];
       blockers.forEach(function (b) {
-        var nx = pos.x - b.x, nz = pos.z - b.z, len = Math.sqrt(nx * nx + nz * nz);
-        if (len < 1e-6 || len > b.r + (radius || 0) + distance * 3) return;
-        nx /= len; nz /= len;
-        var tx = d0.x - nx * (d0.x * nx + d0.z * nz), tz = d0.z - nz * (d0.x * nx + d0.z * nz);
-        var tl = Math.sqrt(tx * tx + tz * tz);
-        if (tl < 1e-6) { tx = -nz; tz = nx; tl = 1; } // straight at the middle: pick a side
-        candidates.push({ x: pos.x + tx / tl * distance, z: pos.z + tz / tl * distance });
+        var dx = pos.x - b.x, dz = pos.z - b.z;
+        var near = b.hx + b.hz + (radius || 0) + distance * 4;
+        if (dx * dx + dz * dz > near * near) return;
+        boxAxes(b).forEach(function (axis) {
+          var along = d0.x * axis.x + d0.z * axis.z;
+          if (Math.abs(along) < 1e-6) return;
+          var sign = along > 0 ? 1 : -1;
+          candidates.push({
+            x: pos.x + axis.x * sign * distance,
+            z: pos.z + axis.z * sign * distance
+          });
+        });
       });
     }
     return slide(candidates, function (p) {
@@ -209,23 +218,69 @@
     });
   }
 
-  // Solid props are circles on the island: { x, z, r }. A step INTO one is refused, so the
-  // slide logic above walks you around it. A character already inside (the building appeared
-  // under it, or it spawned close) is never trapped: it may only move outward.
-  // `radius` is the character's own, added to each circle.
+  // Solid props on the island are BOXES, not circles: { x, z, hx, hz, cos, sin } — a box half
+  // hx by hz, centred at x,z and turned by the tile's own rotation. A building is boxy, and a
+  // circle around one is wrong in both directions at once: it holds you off the flat walls
+  // while letting you into the corners. With a box you can walk right up to the wall.
+  //
+  // `depth` is how far inside the box a point is, as a fraction of the way to its middle: 1 at
+  // the surface, larger further in. Everything else is expressed in terms of it.
+  function boxDepth(box, p, radius) {
+    var dx = p.x - box.x, dz = p.z - box.z;
+    var lx = dx * box.cos - dz * box.sin;
+    var lz = dx * box.sin + dz * box.cos;
+    var overX = (box.hx + radius) - Math.abs(lx);
+    var overZ = (box.hz + radius) - Math.abs(lz);
+    if (overX <= 0 || overZ <= 0) return 0;       // outside
+    return Math.min(overX, overZ);
+  }
+
+  // A step INTO a box is refused, so the slide logic above walks you around it. A character
+  // already inside one (a building appeared under it, or it spawned close) is never trapped:
+  // it may move as long as it is heading out. `radius` is the character's own.
   function blockedStep(from, to, blockers, radius) {
     if (!blockers) return false;
+    var r = radius || 0;
     for (var i = 0; i < blockers.length; i++) {
-      var b = blockers[i], reach = b.r + (radius || 0);
-      var dxTo = to.x - b.x, dzTo = to.z - b.z;
-      var distTo = dxTo * dxTo + dzTo * dzTo;
-      if (distTo >= reach * reach) continue;
-      var dxFrom = from.x - b.x, dzFrom = from.z - b.z;
-      var distFrom = dxFrom * dxFrom + dzFrom * dzFrom;
-      if (distFrom < reach * reach && distTo > distFrom) continue; // already inside: may leave
+      var depthTo = boxDepth(blockers[i], to, r);
+      if (depthTo <= 0) continue;
+      if (boxDepth(blockers[i], from, r) > depthTo) continue; // inside already, but leaving
       return true;
     }
     return false;
+  }
+
+  // The two directions a box's walls run in, in world terms.
+  function boxAxes(box) {
+    return [{ x: box.cos, z: -box.sin }, { x: box.sin, z: box.cos }];
+  }
+
+  // Standing inside something solid has to be recoverable: the character spawns beside a
+  // house whose roof reaches out over the spawn, or a building goes up on top of it. Shoves
+  // the position out through the nearest wall. Returns a new { x, z }, or null if it is
+  // already clear.
+  function pushOut(pos, blockers, radius) {
+    if (!blockers) return null;
+    var r = radius || 0;
+    var worst = null, worstDepth = 0;
+    for (var i = 0; i < blockers.length; i++) {
+      var depth = boxDepth(blockers[i], pos, r);
+      if (depth > worstDepth) { worstDepth = depth; worst = blockers[i]; }
+    }
+    if (!worst) return null;
+
+    var dx = pos.x - worst.x, dz = pos.z - worst.z;
+    var lx = dx * worst.cos - dz * worst.sin;
+    var lz = dx * worst.sin + dz * worst.cos;
+    var outX = (worst.hx + r) - Math.abs(lx);
+    var outZ = (worst.hz + r) - Math.abs(lz);
+    // Leave by whichever wall is closest, so the character steps out rather than across.
+    if (outX < outZ) lx += (lx < 0 ? -1 : 1) * outX;
+    else lz += (lz < 0 ? -1 : 1) * outZ;
+    return {
+      x: worst.x + lx * worst.cos + lz * worst.sin,
+      z: worst.z - lx * worst.sin + lz * worst.cos
+    };
   }
 
   // Ease the facing toward where the character is actually travelling, so a change of
@@ -347,6 +402,8 @@
     moveSphere: moveSphere,
     moveFlat: moveFlat,
     blockedStep: blockedStep,
+    boxDepth: boxDepth,
+    pushOut: pushOut,
     inputDirection: inputDirection,
     TILES_PER_SECOND: TILES_PER_SECOND
   };

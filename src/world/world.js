@@ -537,7 +537,22 @@
   var FLAT_MODEL_SCALE = FLAT_TILE_RADIUS * Math.sqrt(3); // kit corners sit at radius 1/sqrt(3)
   var FLAT_BASE_Y = -0.22;      // kit tiles sink this far, so their bases breach the surface
   // Kit tile tops sit at 0.20 in model space; the road overlay rides just above that.
-  var FLAT_ROAD_LIFT = 0.201 * FLAT_MODEL_SCALE;
+  // How high a tile's slab is in model units — where your feet go. Measured off the kit's
+  // hexagon corner columns: every tile is 0.2 except the dirt family and water, which are
+  // half-height, which is why a character standing on dirt used to float above it. Anything
+  // sitting ON the slab (a hill's mound, trees, a building) is not walkable surface.
+  var TILE_TOP = { 'dirt.glb': 0.1, 'dirt-lumber.glb': 0.1, 'water.glb': 0.1 };
+  var TILE_TOP_DEFAULT = 0.2;
+  var ROAD_THICKNESS = 0.026; // the path piece is 0.025 deep and is laid 0.001 clear of the slab
+  function tileTopOf(asset) {
+    var top = TILE_TOP[asset];
+    return top === undefined ? TILE_TOP_DEFAULT : top;
+  }
+  // A path lies ON its tile, so it has to follow that tile's own height, not a fixed one, or
+  // it floats over the low tiles.
+  function roadLiftFor(asset) {
+    return (tileTopOf(asset) + 0.001) * FLAT_MODEL_SCALE;
+  }
   var FLAT_BG = new THREE.Color(0xf2f3ed);
   var PLANET_BG = new THREE.Color(0xdff1f7);
   // The island view stops short of straight-on, but far enough round to look up at the rock
@@ -709,27 +724,51 @@
     });
   }
 
-  // How far a building reaches from its tile's centre, in model units: the extent of every
-  // part that is not the hex base plate. Averaging the two axes keeps a long thin building
-  // from becoming a wall, and the caller caps it so the character always has room to stand.
-  var MAX_FOOTPRINT = 0.36;   // of a tile's width
   var PLAYER_RADIUS = 0.1;    // world units
+  var PLAYER_HEAD = 0.19;     // the character's height, in a tile model's own units
+  var MAX_FOOTPRINT = 1.1;    // world units: a building may fill its tile but not spill far
 
   // Tiles whose model is a stand of trees: eight of them, spread right across the tile, with
   // canopies from ankle height to well over the character. You may walk through (only
   // buildings are solid), but the follow camera must not sit inside the leaves.
   var CANOPY_TILES = { 'grass-forest.glb': true, 'dirt-lumber.glb': true };
-  function footprintOf(parts) {
-    var halfX = 0, halfZ = 0;
+  // The shape a building actually presents to someone walking into it: the box around every
+  // part that is NOT the hex base plate and NOT clear above head height. Tracing the whole
+  // model instead follows the ROOF, which overhangs the walls and holds you a step short of
+  // the building; a circle is wrong in both directions at once, keeping you off the flat
+  // walls while letting you into the corners. Model units, as a centre and half-extents,
+  // since a building is not always centred on its tile.
+  function footprintBox(parts, headY) {
+    var minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity, found = false;
     parts.forEach(function (part) {
       if (part.base) return;
       var g = part.geometry;
       if (!g.boundingBox) g.computeBoundingBox();
       var box = g.boundingBox, at = part.home;
-      halfX = Math.max(halfX, Math.abs(at.x + box.min.x), Math.abs(at.x + box.max.x));
-      halfZ = Math.max(halfZ, Math.abs(at.z + box.min.z), Math.abs(at.z + box.max.z));
+      if (at.y + box.min.y > headY) return; // starts above your head: walk under it
+      found = true;
+      minX = Math.min(minX, at.x + box.min.x); maxX = Math.max(maxX, at.x + box.max.x);
+      minZ = Math.min(minZ, at.z + box.min.z); maxZ = Math.max(maxZ, at.z + box.max.z);
     });
-    return (halfX + halfZ) / 2;
+    if (!found) return null;
+    return { cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2,
+      hx: (maxX - minX) / 2, hz: (maxZ - minZ) / 2 };
+  }
+
+  // That box in island space: turned by the tile's own rotation and scaled up. The kit's
+  // houses are A-frames whose roof comes down to ankle height and reaches past the tile's flat
+  // edge, so the box really can be as big as the tile — buildings are never placed adjacent,
+  // so a tile you have to walk around is fine. The cap only stops an absurd one.
+  function islandBlocker(x, z, rotY, box) {
+    var cos = Math.cos(rotY), sin = Math.sin(rotY);
+    var room = MAX_FOOTPRINT;
+    return {
+      x: x + (box.cx * cos + box.cz * sin) * FLAT_MODEL_SCALE,
+      z: z + (-box.cx * sin + box.cz * cos) * FLAT_MODEL_SCALE,
+      hx: Math.min(box.hx * FLAT_MODEL_SCALE, room),
+      hz: Math.min(box.hz * FLAT_MODEL_SCALE, room),
+      cos: cos, sin: sin
+    };
   }
 
   // The island view: the planet's land coiled into a compact chunk (MI.island.layout),
@@ -811,12 +850,19 @@
     // planet. Keyed off roadEdges rather than `roads` so the buildings a road runs through
     // stay in — see the note on roadSlots() for why dropping them strands every road tile.
     // blockers: a circle per building, filled in as its model loads — what the character
-    // cannot walk through (see footprintOf). canopy: the same for tiles of trees, which stop
+    // cannot walk through (see footprintBox). canopy: the same for tiles of trees, which stop
     // the camera but not the character.
     var blockers = [];
     var canopy = [];
+    // groundY: the world height of each tile's walking surface — its slab, plus the path laid
+    // on it. What the character and the residents stand on, instead of one height for all.
+    var groundY = {};
+    ids.forEach(function (id) {
+      var top = tileTopOf(assetBySlot[id]) + (roads[id] ? ROAD_THICKNESS : 0);
+      groundY[id] = FLAT_BASE_Y + top * FLAT_MODEL_SCALE;
+    });
     state.island = { cells: cells, centres: centres, roadSlots: Object.keys(roadEdges).map(Number),
-      blockers: blockers, canopy: canopy };
+      blockers: blockers, canopy: canopy, groundY: groundY };
 
     // How far the island reaches from its middle, and how deep its rock hangs.
     var spread = 0;
@@ -855,8 +901,8 @@
         obj.rotation.y = Math.PI / 3;
         obj.position.set(x, FLAT_BASE_Y, z);
         if (buildingSlots.has(Number(id))) {
-          var reach = footprintOf(parts) * FLAT_MODEL_SCALE;
-          if (reach > 0) blockers.push({ x: x, z: z, r: Math.min(reach, FLAT_SPACING * MAX_FOOTPRINT) });
+          var box = footprintBox(parts, tileTopOf(assetBySlot[id]) + PLAYER_HEAD);
+          if (box) blockers.push(islandBlocker(x, z, obj.rotation.y, box));
         } else if (CANOPY_TILES[assetBySlot[id]]) {
           canopy.push({ x: x, z: z, r: FLAT_TILE_RADIUS * 0.9 });
         }
@@ -872,8 +918,9 @@
           var strip = buildFromParts(roadParts);
           strip.scale.setScalar(FLAT_MODEL_SCALE);
           strip.rotation.y = road.rotation; // exact: the connector lookup chose this angle
-          strip.position.set(x, FLAT_BASE_Y + FLAT_ROAD_LIFT, z);
-          strip.userData.restY = FLAT_BASE_Y + FLAT_ROAD_LIFT;
+          var lift = roadLiftFor(assetBySlot[id]);
+          strip.position.set(x, FLAT_BASE_Y + lift, z);
+          strip.userData.restY = FLAT_BASE_Y + lift;
           strip.userData.tag = { type: 'flat', slot: Number(id), land: true };
           state.flatGroup.add(strip);
         });
@@ -2452,7 +2499,12 @@
       MI.world.walkers.updateFlat(walkers.flat, dt, {
         isLand: islandCanStand, neighborsOf: flatWalkerNeighbors(state.island.cells),
         findAnchor: flatFindAnchor, centres: centres,
-        baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * spec.flatScale,
+        baseY: FLAT_DEFAULT_Y,
+        baseYOf: function (id) {
+          var y = state.island && state.island.groundY && state.island.groundY[id];
+          return y === undefined ? FLAT_DEFAULT_Y : y;
+        },
+        scale: FLAT_MODEL_SCALE * spec.flatScale,
         offset: spec.offset ? FLAT_SPACING * 0.26 : 0 // the island-view half of the same shift
       });
     }
@@ -2545,7 +2597,11 @@
     if (!state.flatMode || !state.island) return false;
     var local = state.flatGroup.worldToLocal(eye.clone());
     if (local.y > BUILDING_TOP) return false;
-    return insideAny(local, state.island.blockers) || insideAny(local, state.island.canopy);
+    var boxes = state.island.blockers;
+    for (var i = 0; boxes && i < boxes.length; i++) {
+      if (MI.world.player.boxDepth(boxes[i], local, 0.12) > 0) return true;
+    }
+    return insideAny(local, state.island.canopy);
   }
 
   function insideAny(local, circles) {
@@ -2637,6 +2693,41 @@
   // Comparing against the hexagon's circumradius rounds the corners very slightly, which is
   // invisible and stops you catching on them.
   var ISLAND_REACH = 0.58; // circumradius / centre spacing, near enough
+
+  // The walking height under an island point: the nearest tile's own surface. Falls back to
+  // the standard slab so a character is never left hanging while the island rebuilds.
+  var FLAT_DEFAULT_Y = FLAT_BASE_Y + TILE_TOP_DEFAULT * FLAT_MODEL_SCALE;
+  function flatGroundY(p) {
+    var island = state.island;
+    if (!island || !island.centres) return FLAT_DEFAULT_Y;
+    var slot = nearestIslandSlot(p);
+    if (slot === null) return FLAT_DEFAULT_Y;
+    var y = island.groundY && island.groundY[slot];
+    return y === undefined ? FLAT_DEFAULT_Y : y;
+  }
+
+  function nearestIslandSlot(p) {
+    var centres = state.island && state.island.centres;
+    if (!centres) return null;
+    var best = null, bestDist = Infinity;
+    var ids = Object.keys(centres);
+    for (var i = 0; i < ids.length; i++) {
+      var c = centres[ids[i]];
+      var dx = p.x - c.x, dz = p.z - c.z, d = dx * dx + dz * dz;
+      if (d < bestDist) { bestDist = d; best = ids[i]; }
+    }
+    return best;
+  }
+
+  // Steps are taken, not teleported: the feet ease onto a new height over a few frames, so a
+  // half-height dirt tile reads as a step down and the kerb of a path as a step up.
+  var STEP_EASE = 14; // per second
+  function easeGroundY(p, target, dt) {
+    if (p.groundY === null || p.groundY === undefined) { p.groundY = target; return target; }
+    p.groundY += (target - p.groundY) * Math.min(1, dt * STEP_EASE);
+    return p.groundY;
+  }
+
   function flatIsLand(p) {
     var centres = state.island && state.island.centres;
     if (!centres) return false;
@@ -2696,6 +2787,7 @@
       p.z = c.z + away.z * out;
       p.heading = Math.atan2(-away.x, -away.z); // facing the house: the follow camera then sits outside it
     }
+    p.groundY = null; // start standing on the new tile rather than easing down from the old one
     p.placed = true;
     return true;
   }
@@ -2731,12 +2823,18 @@
     var axes = cameraAxes(p, up);
 
     if (state.flatMode) {
+      // A building's roof can reach out over where the character spawned, and a new one can
+      // go up on top of it: step it back out before it walks, so it is never left inside a wall.
+      var blockers = state.island && state.island.blockers;
+      var clear = MI.world.player.pushOut({ x: p.x, z: p.z }, blockers, PLAYER_RADIUS);
+      if (clear && flatIsLand(clear)) { p.x = clear.x; p.z = clear.z; }
       MI.world.player.updateFlat(p, dt, {
         forward: axes.forward, right: axes.right, input: input, isLandAt: flatIsLand,
         // Buildings are solid: a step into a footprint is refused and you glide round it.
-        blockers: state.island && state.island.blockers, blockerRadius: PLAYER_RADIUS,
+        blockers: blockers, blockerRadius: PLAYER_RADIUS,
         speed: MI.world.player.TILES_PER_SECOND * FLAT_SPACING,
-        baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE
+        baseY: easeGroundY(p, flatGroundY({ x: p.x, z: p.z }), dt),
+        scale: FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE
       });
     } else {
       MI.world.player.updateSphere(p, dt, {
@@ -3500,6 +3598,7 @@
       slot: state.flatMode ? null : MI.world.sphere.nearestSlot(p.dir),
       onLand: state.flatMode ? flatIsLand({ x: p.x, z: p.z }) : sphereIsLand(p.dir),
       character: state.characterId, mode: state.camMode, visible: p.group.visible,
+      ground: p.groundY, island: state.flatMode ? { x: p.x, z: p.z } : null,
       cam: { pitch: state.groundPitch, dist: state.groundDistance,
         forward: state.groundForward.toArray() }
     };

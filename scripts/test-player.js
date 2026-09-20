@@ -255,38 +255,78 @@ tiles.forEach(function (t) {
 });
 check('every tile centre resolves to its own tile', wrong === 0, wrong + ' tiles misresolved');
 
-// Solid buildings: circles the character cannot step into, glides round, and can leave.
+// Solid buildings: boxes the character cannot step into, glides round, and can leave.
 (function () {
   var everywhere = function () { return true; };
-  var house = [{ x: 0, z: 2, r: 0.7 }];
+  // A house 1.2 wide by 0.8 deep centred at (0, 2), square to the world.
+  var house = [{ x: 0, z: 2, hx: 0.6, hz: 0.4, cos: 1, sin: 0 }];
   var R = 0.1;
   var f = V(0, 0, 1), r = V(1, 0, 0);
 
   check('a step into a building is refused',
-    player.blockedStep({ x: 0, z: 0.5 }, { x: 0, z: 1.4 }, house, R) === true);
+    player.blockedStep({ x: 0, z: 1.3 }, { x: 0, z: 1.55 }, house, R) === true);
   check('a step beside a building is allowed',
     player.blockedStep({ x: 2, z: 0 }, { x: 2, z: 0.1 }, house, R) === false);
   check('a character inside a footprint may move outward',
-    player.blockedStep({ x: 0, z: 1.5 }, { x: 0, z: 1.4 }, house, R) === false);
+    player.blockedStep({ x: 0, z: 1.75 }, { x: 0, z: 1.7 }, house, R) === false);
   check('but not deeper in',
-    player.blockedStep({ x: 0, z: 1.5 }, { x: 0, z: 1.6 }, house, R) === true);
+    player.blockedStep({ x: 0, z: 1.75 }, { x: 0, z: 1.8 }, house, R) === true);
 
-  // Running at the wall off-centre glides along it instead of stopping.
-  var at = { x: 0.3, z: 1.24 };
-  var glide = player.moveFlat(at, f, r, { forward: 1, strafe: 0 }, 0.05, everywhere, house, R);
-  check('running at a wall off-centre slides along it', glide !== null &&
-    !player.blockedStep(at, glide, house, R) && Math.abs(glide.x - at.x) > 0.01,
-    JSON.stringify(glide));
+  // The whole point of a box: you can stand right against the wall, and the corner is a
+  // corner. A circle of the same reach would hold you off here and let you in there.
+  check('you can walk right up to the flat of the wall',
+    player.blockedStep({ x: 0, z: 1.3 }, { x: 0, z: 1.49 }, house, R) === false);
+  check('the corner is solid, not rounded off',
+    player.blockedStep({ x: 0.75, z: 1.4 }, { x: 0.65, z: 1.55 }, house, R) === true);
 
-  // Walking a long way at it never gets inside.
-  var pos = { x: 0.2, z: 0 }, worst = Infinity;
-  for (var i = 0; i < 200; i++) {
+  // Walk straight at the flat of the wall: you stop against it, as you would in any game,
+  // and you end up right up against it rather than a step short.
+  var pos = { x: 0.2, z: 0 }, inside = 0;
+  for (var i = 0; i < 400; i++) {
     var m = player.moveFlat(pos, f, r, { forward: 1, strafe: 0 }, 0.05, everywhere, house, R);
     if (m) pos = m;
-    worst = Math.min(worst, Math.hypot(pos.x - house[0].x, pos.z - house[0].z));
+    if (player.boxDepth(house[0], pos, 0) > 0) inside++;
   }
-  check('never walks through the building', worst >= house[0].r + R - 1e-6, 'closest ' + worst.toFixed(3));
-  check('and carries on past it', pos.z > 2.5, 'ended at z=' + pos.z.toFixed(2));
+  check('never walks through the building', inside === 0, inside + ' frames inside it');
+  check('stops against the wall, not short of it', Math.abs(pos.z - 1.5) < 0.06,
+    'ended at z=' + pos.z.toFixed(3) + ' (wall at 1.5, half the character clear of it)');
+
+  // Come at the same wall at a shallow angle and you glide along it and round the corner,
+  // which is the case the wall's own axes are there for.
+  var slant = { x: 0.2, z: 0 }, slantIn = 0;
+  var slanted = V(0.45, 0, 1);
+  for (var j2 = 0; j2 < 400; j2++) {
+    var sm = player.moveFlat(slant, slanted, r, { forward: 1, strafe: 0 }, 0.05, everywhere, house, R);
+    if (sm) slant = sm;
+    if (player.boxDepth(house[0], slant, 0) > 0) slantIn++;
+  }
+  check('a glancing approach slides along the wall', slantIn === 0, slantIn + ' frames inside it');
+  check('and gets past the corner', slant.z > 2.5, 'ended at z=' + slant.z.toFixed(2));
+
+  // A building turned to any angle works the same: come at a 30-degree wall and slide along.
+  var a = Math.PI / 6;
+  var turned = [{ x: 0, z: 2, hx: 0.6, hz: 0.4, cos: Math.cos(a), sin: Math.sin(a) }];
+  var tp = { x: 0.1, z: 0 }, tIn = 0;
+  for (var k = 0; k < 400; k++) {
+    var tm = player.moveFlat(tp, V(0.45, 0, 1), r, { forward: 1, strafe: 0 }, 0.05, everywhere, turned, R);
+    if (tm) tp = tm;
+    if (player.boxDepth(turned[0], tp, 0) > 0) tIn++;
+  }
+  check('a building at an angle is solid too', tIn === 0, tIn + ' frames inside it');
+  check('and you get past that one as well', tp.z > 2.5, 'ended at z=' + tp.z.toFixed(2));
+
+  // Caught inside one (spawned under a roof, or a building went up on top of you): step out.
+  check('standing clear of a building needs no push',
+    player.pushOut({ x: 0, z: 0 }, house, R) === null);
+  var out = player.pushOut({ x: 0.1, z: 1.9 }, house, R);
+  check('caught inside, you are pushed out of the nearest wall',
+    out !== null && player.boxDepth(house[0], out, R) <= 1e-9, JSON.stringify(out));
+  check('and out of the near side, not across the building', out !== null && out.z < 2,
+    JSON.stringify(out));
+  var turnedOut = player.pushOut({ x: 0, z: 2 }, turned, R);
+  check('the same for a building at an angle',
+    turnedOut !== null && player.boxDepth(turned[0], turnedOut, R) <= 1e-9,
+    JSON.stringify(turnedOut));
 })();
 
 if (failures) {

@@ -317,6 +317,11 @@
       MI.world.setPet(world.equipped.pet);
       MI.world.setSatellite(world.equipped.satellite);
       MI.world.setSkin(world.equipped.skin);
+      // A wiped world is all ocean, so claim the home tile again and put the house back on
+      // it — without this the planet came back empty and your character had nowhere to
+      // stand until the next reload, which is when restore() would have called ensureHome.
+      ensureHome();
+      return restore();
     });
   }
 

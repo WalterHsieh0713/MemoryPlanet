@@ -384,6 +384,8 @@
 
   // --- Flat view ----------------------------------------------------------------------------
   // ctx: { isLand(id), neighborsOf(id), findAnchor(), centres: {id: {x,z}}, baseY, scale }.
+  // ctx.baseYOf(tileId) is optional: the walking height of that tile, so a walker steps down
+  // onto a low tile and up onto a path instead of gliding at one height over everything.
   // `centres` is world.js's own coiled-island layout (MI.island), already centred — the same
   // positions buildings/people use there, so this always lands in the right visual spot.
 
@@ -398,7 +400,10 @@
     var z = from.z + (to.z - from.z) * ease;
     var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
     var was = walker.group.position.clone();
-    walker.group.position.set(x + (ctx.offset || 0), ctx.baseY + hop, z); // beside the tile centre — see updateSphere
+    var baseY = ctx.baseYOf
+      ? ctx.baseYOf(walker.tileId) + (ctx.baseYOf(walker.targetId) - ctx.baseYOf(walker.tileId)) * ease
+      : ctx.baseY;
+    walker.group.position.set(x + (ctx.offset || 0), baseY + hop, z); // beside the tile centre — see updateSphere
     walker.group.scale.setScalar(ctx.scale);
     animateWalker(walker, dt, was, ctx.scale);
     if (Math.abs(to.x - from.x) > 1e-6 || Math.abs(to.z - from.z) > 1e-6) {
