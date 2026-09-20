@@ -86,16 +86,80 @@
   // The sphere can't place whole kit tiles on its irregular cells, so terrain shows up
   // there as the cell's own colour instead — each theme's `tint` table (themes.js).
 
-  // Every building in the kit, spread across the categories, so repeat entries of the same
-  // kind don't look stamped out.
+  // Where a building model comes from. The hexagon kit is the default and needs no entry;
+  // anything drawn from another pack names its folder here. Packs are kept apart rather than
+  // pooled into one because each ships its own texture atlas — see loaderFor().
+  var PACKS = {
+    'kenney-hexagon-kit': HEX_PACK,
+    'pirate': 'assets/standalone/buildings/pirate-kit/'
+  };
+  var DEFAULT_PACK = 'kenney-hexagon-kit';
+
+  function packPath(pack) {
+    return PACKS[pack] || PACKS[DEFAULT_PACK];
+  }
+
+  // Buildings from the other packs. The hexagon kit's models are authored to sit on a tile of
+  // KIT_TILE_WIDTH, so they need no correction; these are modelled at their own sizes and
+  // carry a measured factor instead. Measure a new one against a hexagon-kit house rather
+  // than guessing — the numbers are not close.
+  //
+  // These do NOT follow the theme. Theme recolouring is an HSL pass over the hexagon kit's
+  // atlas (themes.js), and each pack has its own, so under Frostfall these stay summery. A
+  // handful of models is worth that; a hundred would not be.
+  // LOOK AT A MODEL BEFORE PUTTING IT IN HERE. `assets/standalone/` is sorted by folder name,
+  // not by inspection, and `buildings/` contains component parts: the fantasy-town "windmill"
+  // is its sails alone (two crossed poles, no mill) and both "watermills" are a bare wheel.
+  // All three were catalogued as buildings and planted on the island before anyone rendered
+  // them. `/asset-sheet/` exists to make that a ten-second check. The hexagon kit's own
+  // building-mill and building-watermill are the real mills.
+  //
+  // Scales are set by measuring what LANDS ON THE TILE, not from the raw GLB box — a box
+  // counts parts that never read as height. Reference: a hexagon-kit building stands 0.52 in
+  // model units above its tile, and these aim at 1.1-1.5x that, so a foreign building reads as
+  // a landmark without towering over the street. The pirate tower at its "footprint fits the
+  // tile" scale came out 2.9x and had to come down by half.
+  var FOREIGN_BUILDINGS = {
+    'tower-complete-large.glb': { pack: 'pirate', scale: 0.073 }, // -> 0.75 (1.4x)
+    'tower-complete-small.glb': { pack: 'pirate', scale: 0.103 }, // -> 0.70 (1.3x)
+    'tower-watch.glb': { pack: 'pirate', scale: 0.25 },           // -> 0.70 (1.3x)
+    'castle-gate.glb': { pack: 'pirate', scale: 0.17 }            // -> 0.75 (1.4x)
+  };
+
+  function buildingSpec(key) {
+    return FOREIGN_BUILDINGS[key] || { pack: DEFAULT_PACK, scale: 1 };
+  }
+
+  // What a category is KNOWN for. It is no longer all a category can have: six categories
+  // splitting the kit's eighteen buildings three or four ways, with the keyword guess sending
+  // most entries to `other`, meant you saw the same three models over and over. A memory now
+  // takes its category's own building most of the time and any building the rest of the time,
+  // so a street varies without a farm ceasing to mean home.
   var CATEGORY_BUILDINGS = {
-    achievement: ['building-castle.glb', 'building-tower.glb', 'building-wizard-tower.glb', 'building-walls.glb'],
+    achievement: ['building-castle.glb', 'building-tower.glb', 'building-wizard-tower.glb',
+      'building-walls.glb', 'tower-complete-large.glb', 'castle-gate.glb'],
     everyday: ['building-house.glb', 'building-cabin.glb', 'building-mill.glb'],
-    travel: ['building-dock.glb', 'building-port.glb'],
+    travel: ['building-dock.glb', 'building-port.glb', 'tower-complete-small.glb',
+      'tower-watch.glb'],
     home: ['building-farm.glb', 'building-sheep.glb', 'building-watermill.glb'],
     social: ['building-village.glb', 'building-market.glb', 'building-archery.glb'],
     other: ['building-mine.glb', 'building-smelter.glb', 'building-wall.glb']
   };
+
+  // How often a memory gets one of its own category's buildings rather than any building.
+  var SIGNATURE_CHANCE = 0.6;
+
+  // Every building there is, category order, no repeats — the pool for the other 40%, and the
+  // list the detail card offers when you want to swap one out by hand.
+  var ALL_BUILDINGS = (function () {
+    var seen = {}, all = [];
+    Object.keys(CATEGORY_BUILDINGS).forEach(function (category) {
+      CATEGORY_BUILDINGS[category].forEach(function (key) {
+        if (!seen[key]) { seen[key] = true; all.push(key); }
+      });
+    });
+    return all;
+  })();
 
   var PERSON_COLORS = [0xff9f68, 0x7ec8e3, 0xf7b7d2, 0xa5d86e, 0xc3a5f0, 0xffd97d, 0x6fd8c0, 0xf2836b];
 
@@ -309,6 +373,10 @@
     var c1 = 1.70158, c3 = c1 + 1;
     return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
   }
+  function easeOutBackSoft(t) {
+    var c1 = 1.12, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+  }
   function easeInOut(t) {
     return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
   }
@@ -316,6 +384,7 @@
   var state = null;      // everything built in init(), shared with the public API below
   var animations = [];   // each entry: fn(nowMs) -> true when finished
   var pickListeners = [];
+  var shipPickListeners = [];
   // cb(slot | null) -> truthy when that tile is worth a pointer cursor. The UI decides what
   // counts, and does its own highlighting inside the callback.
   var hoverListener = null;
@@ -334,9 +403,16 @@
   // Which building a category gets. Called once by MI.app and then persisted on the Memory,
   // so the same memory always renders the same building (CLAUDE.md: no Math.random() at spawn).
   function pickAssetFor(category, seed) {
-    var options = CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other;
+    var signature = CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other;
+    var options = hash(seed * 7 + 3) < SIGNATURE_CHANCE ? signature : ALL_BUILDINGS;
     var index = Math.floor(hash(seed || 0) * options.length) % options.length;
-    return { pack: 'kenney-hexagon-kit', key: options[index] };
+    return assetFor(options[index]);
+  }
+
+  // A building file as it is stored on a Memory. Saved rather than looked up each time, so a
+  // model can move packs later without rewriting what is already on the planet.
+  function assetFor(key) {
+    return { pack: buildingSpec(key).pack, key: key };
   }
 
   // Which terrain a seeded tile gets. `index` is its position in that memory's little
@@ -370,6 +446,22 @@
     });
   }
 
+  // Placeholder gathering hall for the friend hub. Village-kit piece, distinct from the
+  // main house, so it reads as a place people meet rather than a second home.
+  var HUB_SCALE = 1.32;
+
+  function spawnHub(hub, options) {
+    if (!state || !hub || typeof hub.slot !== 'number') return Promise.resolve();
+    var opts = options || {};
+    setTileLand(hub.slot);
+    if (opts.animate !== false) popTile(hub.slot);
+    return placeProp(HEX_PACK + hub.asset, { slot: hub.slot, scale: HUB_SCALE }, {
+      animate: opts.animate !== false,
+      rotY: Math.PI / 3,
+      tag: { type: 'hub', slot: hub.slot }
+    });
+  }
+
   function spawnLandscape(entry, options) {
     if (!state || typeof entry.slot !== 'number') return;
     // Remembered so a theme change can repaint this tile in place.
@@ -393,10 +485,20 @@
     setTileLand(slot);
     if (opts.animate !== false) popTile(slot);
 
-    var file = (memory.asset && memory.asset.key) || pickAssetFor(memory.category, slot).key;
-    return placeProp(HEX_PACK + file, memory.placement, {
+    var asset = memory.asset && memory.asset.key ? memory.asset : pickAssetFor(memory.category, slot);
+    // A building is persisted on its memory, so a model retired from the catalogue would leave
+    // a saved world asking for a file that is no longer served: the url 404s and the tile comes
+    // up empty, with nothing to say why. Re-pick and keep it instead. (Three fantasy-town
+    // "buildings" were retired this way once they turned out to be rotor parts.)
+    if (ALL_BUILDINGS.indexOf(asset.key) === -1) {
+      asset = pickAssetFor(memory.category, slot);
+      memory.asset = asset;
+    }
+    var spec = buildingSpec(asset.key);
+    return placeProp(packPath(asset.pack) + asset.key, memory.placement, {
       animate: opts.animate !== false,
       rotY: (memory.placement && memory.placement.rotY) || 0,
+      modelScale: spec.scale,
       tag: { type: 'memory', id: memory.id, slot: slot }
     }).then(function (obj) {
       rebuildRoads(); // the new tile may extend or reroute the network
@@ -512,12 +614,21 @@
     pickListeners.push(cb);
   }
 
+  function onShipPick(cb) {
+    shipPickListeners.push(cb);
+  }
+
   function onHover(cb) {
     hoverListener = cb;
   }
 
+  // What the detail card offers when you want to swap a building by hand: every building
+  // there is, this category's own first, since those are the likeliest picks.
   function buildingsFor(category) {
-    return (CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other).slice();
+    var signature = CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other;
+    return signature.concat(ALL_BUILDINGS.filter(function (key) {
+      return signature.indexOf(key) === -1;
+    }));
   }
 
   // Swap the building on an already-placed memory (the detail card's override).
@@ -814,6 +925,11 @@
       buildingSlots.add(world.house.slot);
       assetBySlot[world.house.slot] = world.house.asset;
     }
+    if (world.hub && typeof world.hub.slot === 'number') {
+      landSlots.add(world.hub.slot);
+      buildingSlots.add(world.hub.slot);
+      assetBySlot[world.hub.slot] = world.hub.asset;
+    }
     if (!landSlots.size) {
       state.flatRadius = 3;
       state.island = null;
@@ -900,22 +1016,54 @@
       (maxScreenX + padding) / (Math.tan(halfFov) * state.camera.aspect * 0.88),
       (depth + padding) / (Math.tan(halfFov) * 0.78));
 
+    // A building from another pack, standing on the grass tile that was just laid for it. It
+    // carries no hexagon base of its own, so it is built without one (`false`) and lifted to
+    // that tile's top, the same way a path is.
+    function placeForeignOnIsland(foreign, key, id, x, z, groundKey, blockers) {
+      return loadParts(packPath(foreign.pack) + key).then(function (parts) {
+        if (!parts) return;
+        var obj = buildFromParts(parts, false);
+        obj.scale.setScalar(FLAT_MODEL_SCALE * foreign.scale);
+        obj.rotation.y = Math.PI / 3;
+        var lift = tileTopOf(groundKey) * FLAT_MODEL_SCALE;
+        obj.position.set(x, FLAT_BASE_Y + lift, z);
+        obj.userData.restY = FLAT_BASE_Y + lift;
+        obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
+        state.flatGroup.add(obj);
+        if (parts.some(function (part) { return part.spin; })) state.spinners.push(obj);
+        // This model starts at the tile's top rather than its bottom, and is drawn at its own
+        // scale, so head height converts into its units; footprintBox reads the parts' own
+        // positions, which buildFromParts has since settled onto y=0 by baseDrop. islandBlocker
+        // then scales the box by FLAT_MODEL_SCALE, so fold this model's own scale in first.
+        var box = footprintBox(parts, PLAYER_HEAD / foreign.scale + obj.userData.baseDrop);
+        if (box) {
+          ['cx', 'cz', 'hx', 'hz'].forEach(function (k) { box[k] *= foreign.scale; });
+          blockers.push(islandBlocker(x, z, obj.rotation.y, box));
+        }
+      });
+    }
+
     var extent = 0;
     var jobs = [];
     ids.forEach(function (id) {
       var x = centres[id].x, z = centres[id].z;
       extent = Math.max(extent, Math.sqrt(x * x + z * z));
       var road = roads[id];
-      jobs.push(loadParts(HEX_PACK + assetBySlot[id]).then(function (parts) {
+      // A hexagon-kit building is modelled WITH the hexagon of ground it stands on, so one
+      // model is the whole tile. A building from another pack is only the building, so its
+      // tile is plain grass and the model is set on top — otherwise it stands over a hole.
+      var foreign = FOREIGN_BUILDINGS[assetBySlot[id]];
+      var groundKey = foreign ? 'grass.glb' : assetBySlot[id];
+      jobs.push(loadParts(HEX_PACK + groundKey).then(function (parts) {
         if (!parts) return;
         var obj = buildFromParts(parts);
         obj.scale.setScalar(FLAT_MODEL_SCALE);
         obj.rotation.y = Math.PI / 3;
         obj.position.set(x, FLAT_BASE_Y, z);
-        if (buildingSlots.has(Number(id))) {
-          var box = footprintBox(parts, tileTopOf(assetBySlot[id]) + PLAYER_HEAD);
+        if (buildingSlots.has(Number(id)) && !foreign) {
+          var box = footprintBox(parts, tileTopOf(groundKey) + PLAYER_HEAD);
           if (box) blockers.push(islandBlocker(x, z, obj.rotation.y, box));
-        } else if (CANOPY_TILES[assetBySlot[id]]) {
+        } else if (CANOPY_TILES[groundKey]) {
           canopy.push({ x: x, z: z, r: FLAT_TILE_RADIUS * 0.9 });
         }
         obj.userData.restY = FLAT_BASE_Y;
@@ -923,19 +1071,23 @@
         state.flatGroup.add(obj);
         if (parts.some(function (part) { return part.spin; })) state.spinners.push(obj);
 
+        var after = [];
+        if (foreign) after.push(placeForeignOnIsland(foreign, assetBySlot[id], id, x, z, groundKey, blockers));
+
         // The kit's path pieces are thin road overlays, not tiles — they lay ON the terrain.
-        if (!road) return;
-        return loadParts(HEX_PACK + road.file).then(function (roadParts) {
+        if (!road) return after.length ? Promise.all(after) : undefined;
+        after.push(loadParts(HEX_PACK + road.file).then(function (roadParts) {
           if (!roadParts) return;
           var strip = buildFromParts(roadParts);
           strip.scale.setScalar(FLAT_MODEL_SCALE);
           strip.rotation.y = road.rotation; // exact: the connector lookup chose this angle
-          var lift = roadLiftFor(assetBySlot[id]);
+          var lift = roadLiftFor(groundKey);
           strip.position.set(x, FLAT_BASE_Y + lift, z);
           strip.userData.restY = FLAT_BASE_Y + lift;
           strip.userData.tag = { type: 'flat', slot: Number(id), land: true };
           state.flatGroup.add(strip);
-        });
+        }));
+        return Promise.all(after);
       }));
     });
 
@@ -1352,6 +1504,9 @@
 
   function setFlatView(on, options) {
     if (!state) return Promise.resolve();
+    if (state.hub && state.hub.on) {
+      return leaveHub({ instant: true }).then(function () { return setFlatView(on, options); });
+    }
     if (state.transition) return state.transition;
     var goingFlat = !!on;
     var animated = !(options && options.instant) && goingFlat !== !!state.flatMode;
@@ -1869,10 +2024,26 @@
 
   // --- Props (buildings, characters) ---------------------------------------------------
 
+  // One GLTFLoader per pack, per CLAUDE.md: every Kenney pack ships its own `colormap.png`,
+  // so a single manager rewriting that name to the hexagon kit's atlas would paint a pirate
+  // tower in hexagon-kit colours. A pack's directory is simply the url up to the file name —
+  // each one keeps its `Textures/` folder beside its GLBs, which is what makes this work.
+  function loaderFor(dir) {
+    if (!state.loaders[dir]) {
+      var manager = new THREE.LoadingManager();
+      manager.setURLModifier(function (url) {
+        return url.indexOf('colormap.png') !== -1 ? dir + 'Textures/variation-a.png' : url;
+      });
+      state.loaders[dir] = new THREE.GLTFLoader(manager);
+    }
+    return state.loaders[dir];
+  }
+
   function loadGLB(url) {
     if (!state.glbCache[url]) {
+      var dir = url.slice(0, url.lastIndexOf('/') + 1);
       state.glbCache[url] = new Promise(function (resolve) {
-        state.loader.load(url, resolve, undefined, function () { resolve(null); });
+        loaderFor(dir).load(url, resolve, undefined, function () { resolve(null); });
       });
     }
     return state.glbCache[url];
@@ -2135,7 +2306,9 @@
       if (!parts || !parts.length) return null;
       var obj = buildFromParts(parts, false); // no hex base — the cell itself is the ground
       var tile = MI.world.sphere.tile(placement.slot);
-      var scale = (tile ? tileScale(tile) : state.spacing) * (placement.scale || 1);
+      // modelScale corrects a pack whose models aren't authored to the hexagon kit's tile.
+      var scale = (tile ? tileScale(tile) : state.spacing) * (placement.scale || 1)
+        * (options.modelScale || 1);
       prepareProp(obj, placement, scale, 0);
       if (tile) {
         alignToCell(obj, tile);
@@ -2189,6 +2362,7 @@
     while (state.residentGroup.children.length) state.residentGroup.remove(state.residentGroup.children[0]);
     Object.keys(state.residentWalkers).forEach(function (id) { disposeWalkerPair(state.residentWalkers[id]); });
     state.residentWalkers = {};
+    clearShips();
   }
 
   // Swap to the grid for `frequency`: a fresh all-water mesh, scaled so tiles keep their
@@ -2508,6 +2682,198 @@
         offset: true // most of the road route is building tiles; stand beside them, not in them
       });
     });
+  }
+
+  // --- The pirate fleet (src/world/ships.js owns who they are) ----------------------------
+  // A ship is a walker whose walkable set is WATER. That one substitution is the whole
+  // feature: the wander FSM, the easing, the turn-to-face — all of it already worked, because
+  // world.js was already the thing that decides where a walker may go.
+  //
+  // Ships are planet-only. The island is land coiled into a chunk with no sea around it to
+  // sail on (buildIslandUnderside builds water UNDER the tiles), so there is nowhere to put
+  // one; they are hidden with the rest of the planet when the view folds.
+
+  // Hulls are 8.8-13.1 long in their own units against a hexagon-kit tile's 1.0, so a ship
+  // takes roughly one tile of ocean at this scale — the size of the buildings, as asked.
+  var SHIP_SCALE = 0.11;
+  // How deep a hull sits IN the water, in the model's own units. Measured off the mesh: the
+  // keel is at 0 and the hull reaches its full beam at about 1.75, which is the deck — so the
+  // waterline is the tapering part below that. Sitting the model on y=0 like a building left
+  // every ship hovering with its keel in view.
+  var SHIP_DRAFT = 1.3;
+
+  // The sea is not flat. animateWater pushes each water tile out along its own normal by
+  // WAVE_AMPLITUDE * sin(t * WAVE_SPEED + phase), so a ship held at a fixed radius rides over
+  // the troughs and gets swallowed by the crests. This is that same wave, so a ship lifts and
+  // drops with the actual water underneath it.
+  function waveOffsetAt(tileId, timeSeconds) {
+    var tile = (tileId === null || tileId === undefined) ? null : state.tiles[tileId];
+    if (!tile) return 0;
+    var phase = (tile.dir[0] + tile.dir[2]) * 2.5;
+    return WAVE_AMPLITUDE * Math.sin(timeSeconds * WAVE_SPEED + phase);
+  }
+
+  // Blended across the two tiles a ship is between, so crossing from one swell to the next is
+  // a roll rather than a step.
+  function shipHeight(walker, timeSeconds, scale) {
+    var from = waveOffsetAt(walker.tileId, timeSeconds);
+    var to = waveOffsetAt(walker.targetId, timeSeconds);
+    var t = Math.max(0, Math.min(1, walker.t));
+    return RADIUS + (from + (to - from) * t) - SHIP_DRAFT * scale;
+  }
+
+  function isWater(id) {
+    return state.waterTileIds.has(id) && !!MI.world.sphere.tile(id);
+  }
+
+  // Open sea: water with no land in sight. An unclaimed ship keeps to it, which is what
+  // "hostile" means here — it will not come near your island, and you feel that as distance
+  // rather than as damage. Claiming lifts the restriction, and the ship sails in to the coast.
+  function isOpenSea(id) {
+    if (!isWater(id)) return false;
+    var tile = MI.world.sphere.tile(id);
+    for (var i = 0; i < tile.neighbors.length; i++) {
+      if (!state.waterTileIds.has(tile.neighbors[i])) return false;
+    }
+    return true;
+  }
+
+  function shipTileOf(live) {
+    if (!live) return null;
+    if (live.walker && live.walker.tileId !== null && live.walker.tileId !== undefined) {
+      return live.walker.tileId;
+    }
+    if (live.tile !== null && live.tile !== undefined) return live.tile;
+    return null;
+  }
+
+  function disposeShip(live) {
+    if (!live) return;
+    if (live.walker && live.walker.animator) live.walker.animator.dispose();
+    if (live.walker && live.walker.group && state.shipGroup) {
+      state.shipGroup.remove(live.walker.group);
+    }
+  }
+
+  function clearShips() {
+    if (!state || !state.shipWalkers) return;
+    Object.keys(state.shipWalkers).forEach(function (id) {
+      disposeShip(state.shipWalkers[id]);
+    });
+    state.shipWalkers = {};
+    if (state.shipGroup) {
+      while (state.shipGroup.children.length) state.shipGroup.remove(state.shipGroup.children[0]);
+    }
+  }
+
+  function spawnShip(ship, tile) {
+    var model = MI.ships.modelFor(ship);
+    var id = ship.id;
+    // Reserved before the GLB returns so a second sync cannot start another load for the same hull.
+    state.shipWalkers[id] = { model: model, walker: null, ship: ship, tile: tile };
+    MI.world.walkers.makeWalkerSolo(model).then(function (walker) {
+      var slot = state.shipWalkers[id];
+      if (!walker || !slot || slot.model !== model) return;
+      slot.walker = walker;
+      if (tile !== null && tile !== undefined) {
+        walker.tileId = walker.targetId = tile;
+        walker.fromTileId = null;
+        walker.t = 1;
+      }
+      walker.group.userData.tag = { type: 'ship', id: id };
+      state.shipGroup.add(walker.group);
+    });
+  }
+
+  // Brings what is on screen in line with world.ships: adds ships that have appeared, drops
+  // ships that are gone, and swaps the hull of one that has just been claimed. Cheap to call
+  // — it only touches what actually differs.
+  //
+  // Journal ids are always ship-0..ship-3, so a kept walker from the previous journal would
+  // show the wrong claimed flag. clearProps drops the fleet; this then rebuilds it. A hull
+  // swap (claim) keeps the tile so the ship does not jump across the ocean.
+  function syncShips() {
+    if (!state || !state.tiles) return;
+    var world = MI.store.get();
+    var wanted = {};
+    (world.ships || []).forEach(function (ship) { wanted[ship.id] = ship; });
+
+    Object.keys(state.shipWalkers).forEach(function (id) {
+      var live = state.shipWalkers[id];
+      var ship = wanted[id];
+      if (!ship) {
+        disposeShip(live);
+        delete state.shipWalkers[id];
+        return;
+      }
+      live.ship = ship;
+      if (live.model === MI.ships.modelFor(ship)) return;
+      var tile = shipTileOf(live);
+      disposeShip(live);
+      delete state.shipWalkers[id];
+      spawnShip(ship, tile);
+    });
+
+    Object.keys(wanted).forEach(function (id) {
+      if (state.shipWalkers[id]) return;
+      spawnShip(wanted[id], null);
+    });
+  }
+
+  function updateShips(dt) {
+    if (!state.tiles || !state.shipWalkers) return;
+    var ids = Object.keys(state.shipWalkers);
+    if (!ids.length) return;
+    // Nothing to sail on yet (a brand-new planet is all water, so this is only ever true
+    // before the grid has loaded) — and nothing to do while the island is up.
+    var sailing = !state.flatMode && !state.transition;
+    var now = performance.now() / 1000; // the clock animateWater runs the swell on
+    ids.forEach(function (id) {
+      var live = state.shipWalkers[id];
+      if (!live.walker) return;
+      live.walker.group.visible = sailing;
+      if (!sailing) return;
+      var canSail = live.ship.claimed ? isWater : isOpenSea;
+      var scale = state.spacing * SHIP_SCALE;
+      MI.world.walkers.updateSphere(live.walker, dt, {
+        isLand: canSail,
+        neighborsOf: walkerNeighbors,
+        findAnchor: function () { return findSeaAnchor(id, canSail); },
+        dirOf: function (tileId) {
+          var t = MI.world.sphere.tile(tileId);
+          return t ? new THREE.Vector3().fromArray(t.dir) : null;
+        },
+        height: shipHeight(live.walker, now, scale),
+        scale: scale,
+        offset: 0,
+        hop: 0 // a ship rides the swell; it does not bounce from tile to tile
+      });
+      live.tile = live.walker.tileId;
+    });
+  }
+
+  // Where a ship starts, and where it re-appears if the sea it was on became land. Chosen from
+  // the ship's own id rather than at random, so the same world puts the same ship in the same
+  // stretch of ocean on every reload (CLAUDE.md: nothing re-rolled at spawn time). Ships are
+  // spread around the planet by starting each search at a different point in the tile list.
+  function findSeaAnchor(shipId, canSail) {
+    var tiles = state.tiles;
+    var offset = Math.floor(hash(hashString(shipId)) * tiles.length);
+    for (var i = 0; i < tiles.length; i++) {
+      var tile = tiles[(offset + i) % tiles.length];
+      if (tile.sides === 6 && canSail(tile.id)) return tile.id;
+    }
+    // Every open-sea tile is gone (a very built-up small planet): any water will do.
+    for (var j = 0; j < tiles.length; j++) {
+      if (tiles[j].sides === 6 && isWater(tiles[j].id)) return tiles[j].id;
+    }
+    return null;
+  }
+
+  function hashString(text) {
+    var out = 0;
+    for (var i = 0; i < String(text).length; i++) out = ((out * 31) + String(text).charCodeAt(i)) >>> 0;
+    return out;
   }
 
   function driveWalkers(walkers, dt, spec) {
@@ -2851,8 +3217,8 @@
     // being land between one frame and the next. Put it back on the home tile if so.
     if (!isLandAt(standingOn) && !placePlayer(p, view)) return;
 
-    // Where you can walk: in follow mode, and on the island from above. On the planet from
-    // orbit you only watch the character stand and wander.
+    // Where you can walk: in follow mode, on the island from above, and in the friend hub's
+    // plaza. On the planet from orbit you only watch the character stand and wander.
     // WASD and the arrows both steer, in either place — one character, one set of controls,
     // whichever keys your hand falls on. They stay tracked as two sets only so that a keyup
     // for one never clears a key the other is still holding down.
@@ -2962,6 +3328,7 @@
 
   function setGroundView(on) {
     if (!state || state.transition || state.camMode === 'tween') return Promise.resolve(isGroundView());
+    if (state.hub && state.hub.on) return Promise.resolve(false);
     var want = !!on;
     if (want === isGroundView()) return Promise.resolve(want);
 
@@ -3149,23 +3516,19 @@
     planet.add(petWalkerGroup);
     var residentGroup = new THREE.Group();
     planet.add(residentGroup);
+    // Ships hang off the planet like everything else, so they turn with it and are hidden
+    // with it when the view folds to the island.
+    var shipGroup = new THREE.Group();
+    planet.add(shipGroup);
     // Your character, one instance per view, parented for the same reasons.
     var playerGroup = new THREE.Group();
     planet.add(playerGroup);
-
-    var manager = new THREE.LoadingManager();
-    manager.setURLModifier(function (url) {
-      if (url.indexOf('colormap.png') !== -1) {
-        return HEX_PACK + 'Textures/variation-a.png';
-      }
-      return url;
-    });
 
     state = {
       renderer: renderer, scene: scene, camera: camera,
       planet: planet, props: props, flatGroup: flatGroup,
       hemiLight: hemi, sunLight: sun,
-      loader: new THREE.GLTFLoader(manager), glbCache: {}, partsCache: {}, spinners: [],
+      loaders: {}, glbCache: {}, partsCache: {}, spinners: [],
       camTheta: 0.7, camPhi: 1.1, camDistance: 13, camTarget: new THREE.Vector3(),
       flatMode: false, flatRadius: 3, transition: null,
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
@@ -3183,6 +3546,8 @@
       petId: null, petGroup: petWalkerGroup, petWalkers: null,
       residentGroup: residentGroup, residentWalkers: {},
       roadSlotsCache: null,
+      // The pirate fleet, keyed by ship id: { model, walker, ship, tile }. Planet-only.
+      shipGroup: shipGroup, shipWalkers: {},
       // camMode is 'orbit' or 'ground'; orbitRestore is the orbit camera stashed on the
       // way into ground view, so leaving puts the view back exactly as it was. groundForward
       // is a TANGENT VECTOR in the character's own group's space, carried along by the same
@@ -3195,7 +3560,13 @@
       orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false,
       galaxy: {
         on: false, mix: 0, group: null, planets: [], hoverId: null,
-        liveId: null, liveHover: 0, saved: null, busy: false
+        liveId: null, liveHover: 0, liveBounce: 0, saved: null, busy: false,
+        focusId: null, hop: null
+      },
+      hub: {
+        on: false, busy: false, group: null, figures: [], player: null,
+        hoverId: null, prompt: false, autoArmed: true, saved: null,
+        camOffset: null, blockers: [], groundY: 0, centres: [], radius: 0
       }
     };
     state.stars = makeStars();
@@ -3205,6 +3576,9 @@
     state.galaxy.group = new THREE.Group();
     state.galaxy.group.visible = false;
     scene.add(state.galaxy.group);
+    state.hub.group = new THREE.Group();
+    state.hub.group.visible = false;
+    scene.add(state.hub.group);
     setTheme(opts.theme || 'meadow');
 
     // Orbit camera, shared by both views: eye on a sphere around the origin, looking in.
@@ -3225,6 +3599,13 @@
     canvasEl.addEventListener('mousedown', function (e) {
       lastX = e.clientX; lastY = e.clientY;
       if (state.camMode === 'tween') return;
+      if (state.hub && state.hub.on) {
+        if (e.button !== 0) return;
+        dragging = true; dragMoved = false;
+        canvasEl.style.cursor = 'grabbing';
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        return;
+      }
       if (state.camMode === 'ground') {
         // Middle button only. Left is left alone so it stays free for clicking on things.
         if (e.button !== 1) return;
@@ -3244,7 +3625,9 @@
     window.addEventListener('mouseup', function () {
       dragging = false;
       looking = false;
-      canvasEl.style.cursor = state.camMode === 'ground' ? 'default' : hoverCursor;
+      canvasEl.style.cursor = (state.hub && state.hub.on)
+        ? 'grab'
+        : (state.camMode === 'ground' ? 'default' : hoverCursor);
     });
 
     // Hover: a pointer over anything you can actually open, plus a light mark on the tile.
@@ -3260,26 +3643,46 @@
       hoverCursor = 'grab';
       canvasEl.style.cursor = 'grab';
       if (state.galaxy && state.galaxy.on) {
-        // Leave the last hover in place so the HTML card stays clickable when the
-        // pointer leaves the canvas onto it.
+        setGalaxyHover(null);
+        if (galaxyHoverListener) galaxyHoverListener(null);
         return;
       }
       if (hoverListener) hoverListener(null);
     });
     state.pollHover = function () {
       if (!hoverPending || dragging || state.transition) return;
+      if (state.hub && state.hub.on) {
+        var event = hoverPending;
+        hoverPending = null;
+        var hid = pickHubLook(event, canvasEl, true);
+        setHubHover(hid);
+        hoverCursor = hid ? 'pointer' : 'grab';
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
+      if (state.camMode === 'ground') {
+        var groundEvent = hoverPending;
+        hoverPending = null;
+        var groundSlot = pickSlot(groundEvent, canvasEl);
+        hoverCursor = isHubBuildingSlot(groundSlot) ? 'pointer' : 'default';
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
       if (state.camMode !== 'orbit') { hoverPending = null; return; }
       var event = hoverPending;
       hoverPending = null;
       if (state.galaxy && state.galaxy.on) {
         if (state.galaxy.busy) return;
         var gid = pickGalaxy(event, canvasEl);
-        if (gid) {
-          if (setGalaxyHover(gid) && galaxyHoverListener) galaxyHoverListener(gid);
-          hoverCursor = 'pointer';
-        } else {
-          hoverCursor = 'grab';
-        }
+        if (setGalaxyHover(gid) && galaxyHoverListener) galaxyHoverListener(gid);
+        hoverCursor = gid ? 'pointer' : 'grab';
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
+      var shipId = pickShip(event, canvasEl);
+      if (shipId) {
+        if (hoverListener) hoverListener(null);
+        hoverCursor = 'pointer';
         canvasEl.style.cursor = hoverCursor;
         return;
       }
@@ -3313,7 +3716,18 @@
         return;
       }
       if (!dragging) return;
+      if (state.hub && state.hub.on) {
+        if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+        if (state.hub.camOffset) {
+          state.hub.camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), -dx * 0.008);
+          state.hub.camOffset.y = Math.max(2.2, Math.min(9, state.hub.camOffset.y - dy * 0.02));
+          updateHubCamera();
+        }
+        lastX = e.clientX; lastY = e.clientY;
+        return;
+      }
       if (state.galaxy && state.galaxy.busy) return;
+      if (state.galaxy && state.galaxy.hop) return;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
       state.camTheta -= dx * 0.006;
       state.camPhi = clampPhi(state.camPhi - dy * 0.006);
@@ -3333,6 +3747,15 @@
     canvasEl.addEventListener('wheel', function (e) {
       e.preventDefault();
       if (state.transition) return;
+      if (state.hub && state.hub.on) {
+        var off = state.hub.camOffset;
+        if (!off) return;
+        var len = off.length();
+        var next = Math.max(5, Math.min(14, len * (1 + e.deltaY * 0.001)));
+        if (len > 0.001) off.multiplyScalar(next / len);
+        updateHubCamera();
+        return;
+      }
       if (state.camMode !== 'orbit') return; // the follow camera keeps a fixed distance
       if (state.galaxy && state.galaxy.on) {
         if (state.galaxy.busy) return;
@@ -3367,12 +3790,18 @@
     }
 
     window.addEventListener('keydown', function (e) {
-      // No mode check: the character walks in orbit views too, which is the point of it
-      // being a permanent inhabitant rather than something ground view switches on.
       if (typingSomewhere() || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (state.galaxy && state.galaxy.on) {
+        if (GALAXY_MOVE[e.code] || e.code === 'Enter' || e.code === 'NumpadEnter') {
+          dragging = false;
+          dragMoved = false;
+        }
+        if (handleGalaxyKey(e)) return;
+      }
       var key = MOVE_KEYS[e.code];
       if (!key) return;
-      if (key[0] === 'arrows') e.preventDefault(); // arrows would otherwise scroll the page
+      // Arrows would scroll the page; in the hub both sets are walking, so neither should.
+      if (key[0] === 'arrows' || (state.hub && state.hub.on)) e.preventDefault();
       state.keys[key[0]][key[1]] = true;
     });
     window.addEventListener('keyup', function (e) {
@@ -3384,13 +3813,30 @@
 
     canvasEl.addEventListener('click', function (e) {
       if (dragMoved || state.transition) return; // a camera drag or mid-unfold, not a pick
+      if (state.hub && state.hub.on) {
+        var lookId = pickHubLook(e, canvasEl, false);
+        if (hubPickListener) hubPickListener(lookId);
+        return;
+      }
       if (state.galaxy && state.galaxy.on) {
         if (state.galaxy.busy) return;
         var gid = pickGalaxy(e, canvasEl);
         if (galaxyPickListener) galaxyPickListener(gid);
         return;
       }
+      if (state.camMode === 'ground') {
+        var groundSlot = pickSlot(e, canvasEl);
+        if (isHubBuildingSlot(groundSlot)) enterHub();
+        return;
+      }
       if (state.camMode !== 'orbit') return;     // following or mid-tween: nothing to pick yet
+      // Ships first: one stands proud of the sea it is on, so answering with the water tile
+      // underneath it (and opening nothing) would read as a dead click.
+      var shipId = pickShip(e, canvasEl);
+      if (shipId) {
+        shipPickListeners.forEach(function (cb) { cb(shipId); });
+        return;
+      }
       var slot = pickSlot(e, canvasEl);
       pickListeners.forEach(function (cb) { cb(slot); });
     });
@@ -3548,6 +3994,10 @@
   var galaxyPickListener = null;
   var galaxyFrameListener = null;
   var galaxyScreenTmp = new THREE.Vector3();
+  var galaxyEdgeTmp = new THREE.Vector3();
+  var galaxyPosTmp = new THREE.Vector3();
+  var galaxyRightTmp = new THREE.Vector3();
+  var galaxyUpTmp = new THREE.Vector3();
 
   function reduceMotion() {
     return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -3660,15 +4110,22 @@
       var slot = memory.placement && memory.placement.slot;
       if (typeof slot !== 'number') return;
       landSlots.add(slot);
+      var key = memory.asset && memory.asset.key;
       buildings.push({
         slot: slot,
-        file: (memory.asset && memory.asset.key) || null,
+        file: key || null,
+        // Saved worlds predate the pack field, and a model can move packs, so resolve the
+        // folder from the catalogue rather than trusting what was written down.
+        pack: key ? buildingSpec(key).pack : null,
         rotY: (memory.placement && memory.placement.rotY) || 0
       });
     });
     if (world.house && typeof world.house.slot === 'number') {
       landSlots.add(world.house.slot);
-      buildings.push({ slot: world.house.slot, file: world.house.asset, rotY: 0, house: true });
+      buildings.push({
+        slot: world.house.slot, file: world.house.asset, rotY: 0, house: true,
+        pack: world.house.asset ? buildingSpec(world.house.asset).pack : null
+      });
     }
     // Newest first, then capped: a busy world still reads as busy from its land.
     buildings.reverse();
@@ -3706,11 +4163,14 @@
       var jobs = plan.buildings.map(function (item) {
         var tile = byId[item.slot];
         if (!tile || !item.file) return Promise.resolve();
-        return loadParts(HEX_PACK + item.file).then(function (parts) {
+        return loadParts(packPath(item.pack) + item.file).then(function (parts) {
           if (!parts || !parts.length) return;
           var prop = buildFromParts(parts, false); // no hex base: the tile itself is the ground
           // tileApothem measures on the real globe, so bring it back to this unit sphere.
+          // A building from another pack is modelled at its own size and carries a measured
+          // correction, which the full-size planet applies too.
           var scale = (tileApothem(tile) / RADIUS) * 2 / KIT_TILE_WIDTH;
+          scale *= buildingSpec(item.file).scale;
           prop.scale.setScalar(scale * (item.house ? HOUSE_SCALE : 1));
           MI.world.sphere.orientToSurface(prop, tile.dir, 0, surface - seatDepth(tile, surface));
           alignMiniToCell(prop, tile, surface);
@@ -3808,6 +4268,10 @@
   function buildGalaxyPlanets(journals, liveId) {
     clearGalaxyPlanets();
     state.galaxy.liveId = liveId || null;
+    state.galaxy.liveJournal = null;
+    (journals || []).forEach(function (j) {
+      if (j.id === liveId) state.galaxy.liveJournal = j;
+    });
     var minis = (journals || []).filter(function (j) { return j.id !== liveId; });
     var ring = galaxyRingRadius(minis.length);
     var facing = state.camTheta || 0;
@@ -3841,6 +4305,7 @@
         baseScale: baseScale,
         hover: 0,
         pop: 0,
+        bounce: 0,
         spin: hash(idSeed(journal.id)) * Math.PI * 2,
         spinSpeed: 0.12 + hash(idSeed(journal.id) + 3) * 0.18
       });
@@ -3887,20 +4352,179 @@
     };
   }
 
+  function pixelRadius(worldPos, worldR) {
+    galaxyUpTmp.setFromMatrixColumn(state.camera.matrixWorld, 1).normalize();
+    galaxyEdgeTmp.copy(worldPos).addScaledVector(galaxyUpTmp, worldR);
+    var c = projectPoint(worldPos);
+    var e = projectPoint(galaxyEdgeTmp);
+    return Math.max(16, Math.hypot(e.x - c.x, e.y - c.y));
+  }
+
+  function galaxyWorldPos(id, out) {
+    out = out || galaxyPosTmp;
+    var entry = galaxyEntry(id);
+    if (entry) return entry.group.getWorldPosition(out);
+    if (state.galaxy.liveId === id && state.planet) return state.planet.getWorldPosition(out);
+    return null;
+  }
+
+  function galaxyWorldList() {
+    var list = state.galaxy.planets.map(function (p) {
+      return { id: p.id, pos: p.group.getWorldPosition(new THREE.Vector3()) };
+    });
+    if (state.galaxy.liveId && state.planet && state.planet.visible) {
+      list.unshift({
+        id: state.galaxy.liveId,
+        pos: state.planet.getWorldPosition(new THREE.Vector3())
+      });
+    }
+    return list;
+  }
+
+  function galaxyFocusDistance(id) {
+    var r = 1.2;
+    var entry = galaxyEntry(id);
+    if (entry) r = entry.baseScale;
+    else if (id === state.galaxy.liveId) r = livePlanetRadius();
+    var ring = galaxyRingRadius();
+    return Math.max(8.4, Math.min(ring * 1.4, r * 6.4 + 5.2));
+  }
+
+  function hopGalaxyFocus(id, options) {
+    if (!state || !state.galaxy || !state.galaxy.on || !id) return;
+    var opts = options || {};
+    var dest = new THREE.Vector3();
+    var entry = galaxyEntry(id);
+    if (entry) {
+      if (state.galaxy.group) state.galaxy.group.updateMatrixWorld(true);
+      dest.set(entry.group.position.x, entry.restY, entry.group.position.z);
+      if (state.galaxy.group) state.galaxy.group.localToWorld(dest);
+    } else if (!galaxyWorldPos(id, dest)) {
+      return;
+    }
+    state.galaxy.focusId = id;
+    var toDist = galaxyFocusDistance(id);
+    if (opts.instant || reduceMotion()) {
+      state.camTarget.copy(dest);
+      state.camDistance = toDist;
+      state.galaxy.hop = null;
+      state.updateCamera();
+      return;
+    }
+    state.galaxy.hop = {
+      from: state.camTarget.clone(),
+      to: dest.clone(),
+      fromDist: state.camDistance,
+      toDist: toDist,
+      start: performance.now(),
+      dur: 620
+    };
+    if (entry) entry.bounce = 1;
+    else if (id === state.galaxy.liveId) state.galaxy.liveBounce = 1;
+  }
+
+  function hopGalaxyInDirection(sx, sy) {
+    var screens = galaxyScreens();
+    var byId = {};
+    screens.forEach(function (s) { byId[s.id] = s; });
+    var worlds = galaxyWorldList().map(function (w) {
+      var s = byId[w.id];
+      return s ? { id: w.id, x: s.x, y: s.y, behind: s.behind, pos: w.pos } : w;
+    });
+    if (!worlds.length) return;
+    var focusId = state.galaxy.focusId;
+    var current = null;
+    worlds.forEach(function (w) { if (w.id === focusId) current = w; });
+    if (!current) current = worlds[0];
+    if (worlds.length === 1) {
+      hopGalaxyFocus(current.id);
+      return;
+    }
+    var best = null, bestScore = -Infinity, wrap = null, wrapScore = Infinity;
+    worlds.forEach(function (w) {
+      if (w.id === current.id) return;
+      var along, dist, fromScreen = w.x != null && current.x != null && !w.behind && !current.behind;
+      if (fromScreen) {
+        var dx = w.x - current.x;
+        var dy = current.y - w.y;
+        dist = Math.hypot(dx, dy) || 0.001;
+        along = dx * sx + dy * sy;
+      } else {
+        state.camera.updateMatrixWorld();
+        galaxyRightTmp.setFromMatrixColumn(state.camera.matrixWorld, 0).normalize();
+        galaxyUpTmp.setFromMatrixColumn(state.camera.matrixWorld, 1).normalize();
+        var wx = w.pos.x - current.pos.x;
+        var wy = w.pos.y - current.pos.y;
+        var wz = w.pos.z - current.pos.z;
+        along = wx * galaxyRightTmp.x * sx + wy * galaxyRightTmp.y * sx + wz * galaxyRightTmp.z * sx
+          + wx * galaxyUpTmp.x * sy + wy * galaxyUpTmp.y * sy + wz * galaxyUpTmp.z * sy;
+        dist = Math.sqrt(wx * wx + wy * wy + wz * wz) || 0.001;
+      }
+      if (along > dist * 0.08) {
+        var score = along / dist - dist * (fromScreen ? 0.00025 : 0.015);
+        if (score > bestScore) { bestScore = score; best = w; }
+      }
+      if (along < wrapScore) { wrapScore = along; wrap = w; }
+    });
+    hopGalaxyFocus((best || wrap || current).id);
+  }
+
+  function settleGalaxyFocus(journals, liveId, instant) {
+    var keep = state.galaxy.focusId;
+    var still = false;
+    (journals || []).forEach(function (j) { if (j.id === keep) still = true; });
+    var id = (still && keep) || liveId || (journals && journals[0] && journals[0].id) || null;
+    if (id) hopGalaxyFocus(id, { instant: instant });
+  }
+
+  var GALAXY_MOVE = {
+    KeyW: [0, 1], ArrowUp: [0, 1],
+    KeyS: [0, -1], ArrowDown: [0, -1],
+    KeyA: [-1, 0], ArrowLeft: [-1, 0],
+    KeyD: [1, 0], ArrowRight: [1, 0]
+  };
+
+  function handleGalaxyKey(e) {
+    if (state.galaxy.busy) return true;
+    var dir = GALAXY_MOVE[e.code];
+    if (dir) {
+      e.preventDefault();
+      if (e.repeat) return true;
+      hopGalaxyInDirection(dir[0], dir[1]);
+      return true;
+    }
+    if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+      e.preventDefault();
+      if (e.repeat) return true;
+      var id = state.galaxy.hoverId || state.galaxy.focusId;
+      if (id && galaxyPickListener) galaxyPickListener(id);
+      return true;
+    }
+    return false;
+  }
+
   function galaxyScreens() {
     if (!state.galaxy || !state.galaxy.on) return [];
+    var focusId = state.galaxy.focusId;
     var out = state.galaxy.planets.map(function (p) {
-      var s = projectPoint(p.group.getWorldPosition(galaxyScreenTmp.clone()));
+      var pos = p.group.getWorldPosition(galaxyScreenTmp.clone());
+      var s = projectPoint(pos);
       s.id = p.id;
       s.journal = p.journal;
       s.hover = p.id === state.galaxy.hoverId;
+      s.focus = p.id === focusId;
+      s.r = pixelRadius(pos, p.baseScale * Math.max(0.0001, p.pop) * (1 + 0.28 * p.hover) * 1.14);
       return s;
     });
     if (state.galaxy.liveId && state.planet && state.planet.visible) {
-      var live = projectPoint(state.planet.getWorldPosition(galaxyScreenTmp.clone()));
+      var livePos = state.planet.getWorldPosition(galaxyScreenTmp.clone());
+      var live = projectPoint(livePos);
       live.id = state.galaxy.liveId;
+      live.journal = state.galaxy.liveJournal;
       live.live = true;
       live.hover = state.galaxy.hoverId === state.galaxy.liveId;
+      live.focus = state.galaxy.liveId === focusId;
+      live.r = pixelRadius(livePos, livePlanetRadius() * (1 + 0.14 * (state.galaxy.liveHover || 0)));
       out.unshift(live);
     }
     return out;
@@ -3908,6 +4532,20 @@
 
   function tickGalaxy(dt) {
     if (!state || !state.galaxy || !state.galaxy.on) return;
+    if (state.galaxy.hop && state.galaxy.hop.start != null) {
+      var hop = state.galaxy.hop;
+      var u = Math.min(1, (performance.now() - hop.start) / hop.dur);
+      var e = easeOutBackSoft(Math.max(0, u));
+      state.camTarget.lerpVectors(hop.from, hop.to, e);
+      state.camDistance = hop.fromDist + (hop.toDist - hop.fromDist) * easeInOut(Math.max(0, u));
+      state.updateCamera();
+      if (u >= 1) {
+        state.camTarget.copy(hop.to);
+        state.camDistance = hop.toDist;
+        state.galaxy.hop = null;
+        state.updateCamera();
+      }
+    }
     if (state.galaxy.busy) {
       if (galaxyFrameListener) galaxyFrameListener(galaxyScreens());
       return;
@@ -3916,22 +4554,34 @@
     state.galaxy.planets.forEach(function (p) {
       p.spin += dt * p.spinSpeed;
       p.ball.rotation.y = p.spin;
-      var want = p.id === state.galaxy.hoverId ? 1 : 0;
+      var want = (p.id === state.galaxy.hoverId || p.id === state.galaxy.focusId) ? 1 : 0;
       p.hover += (want - p.hover) * hoverEase;
-      var s = p.baseScale * Math.max(0.0001, p.pop) * (1 + 0.28 * p.hover);
+      if (p.bounce > 0) p.bounce = Math.max(0, p.bounce - dt * 2.4);
+      var bounce = Math.sin((p.bounce || 0) * Math.PI) * p.baseScale * 0.32;
+      var s = p.baseScale * Math.max(0.0001, p.pop) * (1 + 0.22 * p.hover);
       p.group.scale.setScalar(s);
-      p.group.position.y = p.restY + 0.6 * p.hover;
+      p.group.position.y = p.restY + 0.28 * p.baseScale * p.hover + bounce;
     });
-    var liveWant = state.galaxy.liveId && state.galaxy.hoverId === state.galaxy.liveId ? 1 : 0;
+    var liveHot = state.galaxy.liveId &&
+      (state.galaxy.hoverId === state.galaxy.liveId || state.galaxy.focusId === state.galaxy.liveId);
+    var liveWant = liveHot ? 1 : 0;
     state.galaxy.liveHover += (liveWant - (state.galaxy.liveHover || 0)) * hoverEase;
+    if (state.galaxy.liveBounce > 0) {
+      state.galaxy.liveBounce = Math.max(0, state.galaxy.liveBounce - dt * 2.4);
+    }
     if (state.planet && state.galaxy.liveId && state.planet.visible) {
-      state.planet.scale.setScalar(state.worldScale * (1 + 0.14 * state.galaxy.liveHover));
+      var liveBounce = Math.sin((state.galaxy.liveBounce || 0) * Math.PI) * livePlanetRadius() * 0.28;
+      state.planet.scale.setScalar(state.worldScale * (1 + 0.1 * state.galaxy.liveHover));
+      state.planet.position.y = 0.18 * (state.galaxy.liveHover || 0) + liveBounce;
     }
     if (galaxyFrameListener) galaxyFrameListener(galaxyScreens());
   }
 
   function enterGalaxy(journals, options) {
     if (!state) return Promise.resolve();
+    if (state.hub && state.hub.on) {
+      return leaveHub({ instant: true }).then(function () { return enterGalaxy(journals, options); });
+    }
     var opts = options || {};
     var liveId = opts.currentId || null;
     state.galaxy.busy = false;
@@ -3944,10 +4594,9 @@
       buildGalaxyPlanets(journals, liveId);
       setLivePlanetVisible(!!liveId);
       if (state.satellite) state.satellite.visible = false;
-      state.camDistance = galaxyCameraDistance();
-      state.updateCamera();
       if (opts.instant || reduceMotion()) {
         state.galaxy.planets.forEach(function (p) { p.pop = 1; });
+        settleGalaxyFocus(journals, liveId, true);
         return Promise.resolve();
       }
       return animateP(520, function (t) {
@@ -3955,6 +4604,8 @@
           var popT = (t - i * 0.06) / 0.55;
           p.pop = popT <= 0 ? 0 : (popT >= 1 ? 1 : easeOutBack(popT));
         });
+      }).then(function () {
+        settleGalaxyFocus(journals, liveId);
       });
     }
     state.galaxy.on = true;
@@ -3983,9 +4634,12 @@
     }
     if (opts.instant || reduceMotion()) {
       finish(1);
+      settleGalaxyFocus(journals, liveId, true);
       return Promise.resolve();
     }
-    return animateP(1400, function (t) { finish(easeInOut(t)); });
+    return animateP(1400, function (t) { finish(easeInOut(t)); }).then(function () {
+      settleGalaxyFocus(journals, liveId);
+    });
   }
 
   function leaveGalaxy(options) {
@@ -4020,9 +4674,15 @@
       state.galaxy.mix = 0;
       state.galaxy.liveId = null;
       state.galaxy.liveHover = 0;
+      state.galaxy.liveBounce = 0;
       state.galaxy.saved = null;
       state.galaxy.busy = false;
-      if (state.planet) state.planet.scale.setScalar(state.worldScale);
+      state.galaxy.focusId = null;
+      state.galaxy.hop = null;
+      if (state.planet) {
+        state.planet.scale.setScalar(state.worldScale);
+        state.planet.position.y = 0;
+      }
       setLivePlanetVisible(true);
       applyLighting();
       state.camTarget.set(0, 0, 0);
@@ -4133,8 +4793,11 @@
       }
       animateWater(now / 1000);
       animateSatellite(now / 1000);
-      if (!state.transition) updateWalkers(dt);
-      if (!state.transition) updatePlayer(dt);
+      if (!state.transition && !(state.hub && state.hub.on)) updateWalkers(dt);
+      updateShips(dt); // hides itself mid-fold rather than freezing, so a ship never lands ashore
+      if (!state.transition && !(state.hub && state.hub.on)) updatePlayer(dt);
+      if (!state.transition && state.hub && state.hub.on) updateHub(dt);
+      pollHubApproach();
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
@@ -4176,6 +4839,434 @@
     posAttr.needsUpdate = true;
   }
 
+  // --- Friend hub ---------------------------------------------------------------------
+  // A walkable plaza of every character look, entered from the village hall on the world
+  // (click in orbit, walk up in follow) or from settings. Models are the real Mini
+  // Characters; swapping writes player.character and, when a friend already wears that
+  // look, trades appearance.model with them.
+  var hubPickListener = null;
+  var hubChangeListener = null;
+  var HUB_CAM_OFFSET = new THREE.Vector3(4.1, 5.4, 4.7);
+  var HUB_CLICK_REACH = 2.8;
+
+  function isHub() {
+    return !!state && !!state.hub && state.hub.on;
+  }
+
+  function isHubBuildingSlot(slot) {
+    if (slot === null || slot === undefined || !MI.store) return false;
+    var world = MI.store.get();
+    return !!(world.hub && world.hub.slot === slot);
+  }
+
+  function notifyHub() {
+    if (hubChangeListener) hubChangeListener(isHub());
+  }
+
+  function makeHubLabel(text, ink) {
+    var canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    var ctx = canvas.getContext('2d');
+    var label = String(text || '').slice(0, 18);
+    ctx.font = '700 22px Quicksand, Nunito, sans-serif';
+    var w = Math.min(232, Math.max(72, ctx.measureText(label).width + 28));
+    var x = (256 - w) / 2, y = 16, h = 34, r = 12;
+    ctx.fillStyle = 'rgba(255, 247, 236, 0.94)';
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232, 201, 160, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = ink || '#2c5f6f';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 128, y + h / 2 + 1);
+    var tex = new THREE.CanvasTexture(canvas);
+    tex.encoding = THREE.sRGBEncoding;
+    var mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    var sprite = new THREE.Sprite(mat);
+    sprite.scale.set(1.6, 0.4, 1);
+    sprite.position.y = 1.08;
+    sprite.center.set(0.5, 0);
+    sprite.userData.isHubLabel = true;
+    return sprite;
+  }
+
+  function hubIsLand(p) {
+    // One disk, not a circle per hex: inscribed circles leave gaps at the hex corners,
+    // which is what made walking seize up in some directions.
+    var r = state.hub && state.hub.radius;
+    if (!r) return false;
+    return p.x * p.x + p.z * p.z <= r * r;
+  }
+
+  function clearHubScene() {
+    if (!state || !state.hub) return;
+    if (state.hub.player && state.hub.player.animator) state.hub.player.animator.dispose();
+    state.hub.player = null;
+    (state.hub.figures || []).forEach(function (fig) {
+      if (fig.animator) fig.animator.dispose();
+    });
+    state.hub.figures = [];
+    state.hub.blockers = [];
+    state.hub.centres = [];
+    state.hub.hoverId = null;
+    if (!state.hub.group) return;
+    while (state.hub.group.children.length) {
+      state.hub.group.remove(state.hub.group.children[0]);
+    }
+  }
+
+  function retagHubFigures() {
+    if (!state || !state.hub) return;
+    var world = MI.store.get();
+    state.hub.figures.forEach(function (fig) {
+      var info = MI.world.hub.inspect(world, fig.id);
+      var toDrop = [];
+      fig.group.children.forEach(function (ch) {
+        if (ch.userData && ch.userData.isHubLabel) toDrop.push(ch);
+      });
+      toDrop.forEach(function (ch) { fig.group.remove(ch); });
+      var name = info.person ? info.person.name : info.look.name;
+      var ink = info.you ? '#2c5f6f' : (info.person ? '#c45c26' : '#3d6b52');
+      fig.group.add(makeHubLabel(name, ink));
+    });
+  }
+
+  function placeHubFigures() {
+    var world = MI.store.get();
+    var list = MI.world.hub.looks();
+    var spots = MI.world.hub.figureSpots(list.length, FLAT_SPACING);
+    var scale = FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE;
+    return Promise.all(list.map(function (look, i) {
+      var spot = spots[i];
+      if (!spot) return null;
+      return MI.world.walkers.makeModel(look.model).then(function (model) {
+        if (!state || !state.hub.on) return;
+        var mesh = model || makePersonModel(look.color);
+        var holder = new THREE.Group();
+        holder.add(mesh);
+        holder.position.set(spot.x, state.hub.groundY, spot.z);
+        holder.scale.setScalar(scale);
+        holder.rotation.y = spot.yaw;
+        holder.userData.tag = { type: 'hub-look', id: look.id };
+        var info = MI.world.hub.inspect(world, look.id);
+        var name = info.person ? info.person.name : look.name;
+        var ink = info.you ? '#2c5f6f' : (info.person ? '#c45c26' : '#3d6b52');
+        holder.add(makeHubLabel(name, ink));
+        state.hub.group.add(holder);
+        state.hub.figures.push({
+          id: look.id,
+          group: holder,
+          animator: MI.world.walkers.makeAnimator(mesh),
+          spot: spot
+        });
+      });
+    }));
+  }
+
+  function placeHubPlayer() {
+    var start = MI.world.hub.playerStart(FLAT_SPACING);
+    var id = state.characterId || MI.world.player.defaultId();
+    var p = MI.world.player.newPlayer();
+    return MI.world.player.makeAvatar(id, makePersonModel).then(function (model) {
+      if (!state || !state.hub.on || !model) return;
+      if (state.hub.player && state.hub.player.group && state.hub.player.group.parent) {
+        if (state.hub.player.animator) state.hub.player.animator.dispose();
+        state.hub.group.remove(state.hub.player.group);
+      }
+      var holder = new THREE.Group();
+      holder.add(model);
+      p.group = holder;
+      p.animator = MI.world.walkers.makeAnimator(model);
+      p.x = start.x;
+      p.z = start.z;
+      p.heading = start.heading;
+      p.groundY = state.hub.groundY;
+      p.placed = true;
+      state.hub.group.add(holder);
+      state.hub.player = p;
+      state.hub.groundForward = new THREE.Vector3(Math.sin(p.heading), 0, Math.cos(p.heading));
+    });
+  }
+
+  function buildHubScene() {
+    clearHubScene();
+    var cells = MI.world.hub.plazaCells();
+    var centres = cells.map(function (cell) { return MI.island.toXZ(cell, FLAT_SPACING); });
+    state.hub.centres = centres;
+    var spread = 0;
+    centres.forEach(function (c) {
+      spread = Math.max(spread, Math.sqrt(c.x * c.x + c.z * c.z));
+    });
+    // Cover the outer hexes' corners, but stop short of stepping off the grass rim.
+    state.hub.radius = spread + FLAT_TILE_RADIUS * 0.9;
+    state.hub.groundY = FLAT_BASE_Y + TILE_TOP_DEFAULT * FLAT_MODEL_SCALE;
+    var grassUrl = HEX_PACK + 'grass.glb';
+    var houseUrl = HEX_PACK + 'building-house.glb';
+    return Promise.all([loadParts(grassUrl), loadParts(houseUrl)]).then(function (pack) {
+      if (!state || !state.hub.on) return;
+      var grassParts = pack[0], houseParts = pack[1];
+      cells.forEach(function (cell, idx) {
+        var c = centres[idx];
+        var isHouse = cell.i === 0 && cell.j === 0;
+        var parts = isHouse && houseParts ? houseParts : grassParts;
+        if (!parts) return;
+        var obj = buildFromParts(parts, true);
+        obj.scale.setScalar(FLAT_MODEL_SCALE * (isHouse ? 1.18 : 1));
+        obj.rotation.y = Math.PI / 3;
+        obj.position.set(c.x, FLAT_BASE_Y, c.z);
+        obj.userData.tag = { type: 'hub-tile', house: isHouse };
+        state.hub.group.add(obj);
+        if (isHouse) {
+          // Kit house GLBs include the garden (trees, fence, logs). Tracing that whole
+          // footprint walled off the path around the house. A modest pad on the cottage
+          // itself is enough to walk around it.
+          state.hub.blockers.push({
+            x: c.x, z: c.z, hx: 0.55, hz: 0.55, cos: 1, sin: 0
+          });
+        }
+      });
+      return placeHubFigures();
+    }).then(function () {
+      if (!state || !state.hub.on) return;
+      return placeHubPlayer();
+    });
+  }
+
+  function hubCameraAxes() {
+    var up = new THREE.Vector3(0, 1, 0);
+    var dir = state.camera.getWorldDirection(new THREE.Vector3());
+    var forward = MI.world.player.tangent(dir, up);
+    if (!forward) {
+      forward = (state.hub.groundForward && state.hub.groundForward.clone())
+        || new THREE.Vector3(0, 0, 1);
+    }
+    var right = new THREE.Vector3().crossVectors(forward, up).normalize();
+    return { forward: forward, right: right };
+  }
+
+  function updateHubCamera() {
+    var p = state.hub && state.hub.player;
+    if (!p || !state.hub.camOffset) return;
+    var target = new THREE.Vector3(p.x, state.hub.groundY + 0.55, p.z);
+    state.camera.up.set(0, 1, 0);
+    state.camera.position.copy(target).add(state.hub.camOffset);
+    state.camera.lookAt(target);
+    state.camTarget.copy(target);
+  }
+
+  function setHubHover(id) {
+    if (!state || !state.hub) return;
+    if (state.hub.hoverId === id) return;
+    state.hub.hoverId = id;
+    var base = FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE;
+    state.hub.figures.forEach(function (fig) {
+      fig.group.scale.setScalar(fig.id === id ? base * 1.12 : base);
+    });
+  }
+
+  function pickHubLook(e, canvasEl, anyDistance) {
+    if (!state || !state.hub || !state.hub.on || !state.hub.group) return null;
+    var rect = canvasEl.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, state.camera);
+    var hits = raycaster.intersectObject(state.hub.group, true);
+    var found = null;
+    for (var i = 0; i < hits.length; i++) {
+      for (var node = hits[i].object; node; node = node.parent) {
+        if (node.userData && node.userData.tag && node.userData.tag.type === 'hub-look') {
+          found = node.userData.tag.id;
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (!found || anyDistance) return found;
+    var fig = null;
+    for (var f = 0; f < state.hub.figures.length; f++) {
+      if (state.hub.figures[f].id === found) fig = state.hub.figures[f];
+    }
+    var p = state.hub.player;
+    if (!fig || !p) return null;
+    var dx = p.x - fig.spot.x, dz = p.z - fig.spot.z;
+    if (dx * dx + dz * dz > HUB_CLICK_REACH * HUB_CLICK_REACH) return null;
+    return found;
+  }
+
+  function updateHub(dt) {
+    var p = state.hub && state.hub.player;
+    if (!p || !p.group) return;
+    var input = { forward: 0, strafe: 0 };
+    function down(k) { return state.keys.wasd[k] || state.keys.arrows[k]; }
+    if (down('w')) input.forward += 1;
+    if (down('s')) input.forward -= 1;
+    if (down('d')) input.strafe += 1;
+    if (down('a')) input.strafe -= 1;
+    var axes = hubCameraAxes();
+    var clear = MI.world.player.pushOut({ x: p.x, z: p.z }, state.hub.blockers, PLAYER_RADIUS);
+    if (clear) { p.x = clear.x; p.z = clear.z; }
+    var rad = state.hub.radius;
+    if (rad) {
+      var dist = Math.sqrt(p.x * p.x + p.z * p.z);
+      if (dist > rad && dist > 1e-6) {
+        p.x *= rad / dist;
+        p.z *= rad / dist;
+      }
+    }
+    MI.world.player.updateFlat(p, dt, {
+      forward: axes.forward, right: axes.right, input: input,
+      isLandAt: hubIsLand,
+      blockers: state.hub.blockers, blockerRadius: PLAYER_RADIUS,
+      speed: MI.world.player.TILES_PER_SECOND * FLAT_SPACING,
+      baseY: state.hub.groundY,
+      scale: FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE
+    });
+    state.hub.figures.forEach(function (fig) {
+      if (fig.animator) fig.animator.update(dt, 0);
+    });
+    updateHubCamera();
+  }
+
+  function hubApproach() {
+    if (!state || !state.flatMode || state.camMode !== 'ground') return false;
+    if (!MI.store) return false;
+    var world = MI.store.get();
+    if (!world.hub || !state.island || !state.island.centres) return false;
+    var c = state.island.centres[world.hub.slot];
+    var p = state.players && state.players.flat;
+    if (!c || !p || !p.placed) return false;
+    var dx = p.x - c.x, dz = p.z - c.z;
+    var reach = FLAT_SPACING * 1.15;
+    return dx * dx + dz * dz < reach * reach;
+  }
+
+  function pollHubApproach() {
+    if (!state || !state.hub || state.hub.on || state.hub.busy || state.transition) return;
+    var near = hubApproach();
+    if (near && state.hub.autoArmed) {
+      state.hub.autoArmed = false;
+      enterHub();
+      return;
+    }
+    if (!near) state.hub.autoArmed = true;
+  }
+
+  function enterHub() {
+    if (!state || state.hub.on || state.hub.busy) return Promise.resolve(false);
+    if (state.galaxy && state.galaxy.on) return Promise.resolve(false);
+    if (state.transition || state.camMode === 'tween') return Promise.resolve(false);
+    state.hub.busy = true;
+    var ready = isGroundView() ? setGroundView(false) : Promise.resolve();
+    return ready.then(function () {
+      if (!state) return false;
+      state.hub.saved = {
+        flatMode: state.flatMode,
+        dist: state.camDistance,
+        theta: state.camTheta,
+        phi: state.camPhi,
+        target: state.camTarget.clone(),
+        planetVisible: state.planet.visible,
+        flatVisible: state.flatGroup.visible,
+        starsVisible: !!(state.stars && state.stars.visible)
+      };
+      state.planet.visible = false;
+      state.flatGroup.visible = false;
+      if (state.satellite) state.satellite.visible = false;
+      if (state.stars) state.stars.visible = false;
+      applyViewLighting(1);
+      state.hub.on = true;
+      state.hub.group.visible = true;
+      state.camMode = 'hub';
+      state.hub.camOffset = HUB_CAM_OFFSET.clone();
+      clearKeys();
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      notifyHub();
+      return buildHubScene();
+    }).then(function () {
+      if (!state) return false;
+      updateHubCamera();
+      state.hub.busy = false;
+      return true;
+    }).catch(function (err) {
+      console.error('[hub] failed to enter', err);
+      if (state) {
+        state.hub.busy = false;
+        state.hub.on = false;
+        state.camMode = 'orbit';
+        if (state.hub.group) state.hub.group.visible = false;
+        notifyHub();
+      }
+      return false;
+    });
+  }
+
+  function leaveHub(options) {
+    if (!state || !state.hub || !state.hub.on) return Promise.resolve();
+    var opts = options || {};
+    var saved = state.hub.saved || {};
+    state.hub.on = false;
+    state.hub.busy = false;
+    state.hub.autoArmed = false;
+    state.hub.group.visible = false;
+    clearHubScene();
+    state.planet.visible = saved.planetVisible !== undefined ? saved.planetVisible : !saved.flatMode;
+    state.flatGroup.visible = saved.flatVisible !== undefined ? saved.flatVisible : !!saved.flatMode;
+    if (state.stars) state.stars.visible = saved.starsVisible !== false && !saved.flatMode;
+    if (state.satellite) state.satellite.visible = true;
+    applyViewLighting(saved.flatMode ? 1 : 0);
+    state.camMode = 'orbit';
+    if (typeof saved.dist === 'number') state.camDistance = saved.dist;
+    if (typeof saved.theta === 'number') state.camTheta = saved.theta;
+    if (typeof saved.phi === 'number') state.camPhi = saved.phi;
+    if (saved.target) state.camTarget.copy(saved.target);
+    state.camera.up.set(0, 1, 0);
+    state.updateCamera();
+    clearKeys();
+    notifyHub();
+    if (opts.instant || reduceMotion()) return Promise.resolve();
+    return Promise.resolve();
+  }
+
+  function applyHubSwap(lookId) {
+    if (!state) return Promise.resolve({ ok: false });
+    var world = MI.store.get();
+    var result = MI.world.hub.swap(world, lookId);
+    if (!result.ok) return Promise.resolve(result);
+    MI.store.save();
+    var jobs = [setCharacter(world.player.character)];
+    if (result.person) jobs.push(spawnPerson(result.person, { animate: true }));
+    return Promise.all(jobs).then(function () {
+      if (state.hub && state.hub.on) {
+        retagHubFigures();
+        var keep = state.hub.player
+          ? { x: state.hub.player.x, z: state.hub.player.z, heading: state.hub.player.heading }
+          : null;
+        return placeHubPlayer().then(function () {
+          if (keep && state.hub.player) {
+            state.hub.player.x = keep.x;
+            state.hub.player.z = keep.z;
+            state.hub.player.heading = keep.heading;
+          }
+          return result;
+        });
+      }
+      return result;
+    });
+  }
+
   var raycaster = new THREE.Raycaster();
   var pointer = new THREE.Vector2();
   function pickSlot(e, canvasEl) {
@@ -4203,12 +5294,43 @@
     return state.faceToTileId[hits[0].faceIndex];
   }
 
+  // A ship under the pointer, if there is one. Asked BEFORE pickSlot by whoever handles the
+  // click: a ship stands proud of the sea it is on, so hitting the water tile underneath it
+  // and opening nothing would feel broken.
+  function pickShip(e, canvasEl) {
+    if (!state || state.flatMode || !state.shipGroup) return null;
+    var rect = canvasEl.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, state.camera);
+    var hits = raycaster.intersectObject(state.shipGroup, true);
+    for (var i = 0; i < hits.length; i++) {
+      for (var node = hits[i].object; node; node = node.parent) {
+        if (node.userData && node.userData.tag && node.userData.tag.type === 'ship') {
+          return node.userData.tag.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Turns the camera to whichever stretch of ocean a ship is currently on, so "your ship is
+  // ready" can actually show you the ship.
+  function focusShip(shipId) {
+    var live = state.shipWalkers && state.shipWalkers[shipId];
+    var tile = shipTileOf(live);
+    if (tile === null || tile === undefined) return false;
+    focus(tile);
+    return true;
+  }
+
   MI.world.init = init;
   MI.world.spawnMemory = spawnMemory;
   MI.world.spawnPerson = spawnPerson;
   MI.world.despawnPerson = despawnPerson;
   MI.world.focus = focus;
   MI.world.onPick = onPick;
+  MI.world.onShipPick = onShipPick;
   MI.world.onHover = onHover;
   MI.world.highlightSlot = highlightSlot;
   MI.world.clearHighlight = clearHighlight;
@@ -4223,12 +5345,16 @@
   MI.world.clear = clear;
   MI.world.pickAssetFor = pickAssetFor;
   MI.world.buildingsFor = buildingsFor;
+  MI.world.assetFor = assetFor;
   MI.world.respawnMemory = respawnMemory;
   MI.world.pickTerrainFor = pickTerrainFor;
   MI.world.landscapeCountFor = landscapeCountFor;
   MI.world.spawnLandscape = spawnLandscape;
   MI.world.spawnHouse = spawnHouse;
+  MI.world.spawnHub = spawnHub;
   MI.world.personColor = personColor;
+  MI.world.syncShips = syncShips;
+  MI.world.focusShip = focusShip;
   // Test hooks (scripts/ and the browser console): the island layout, the planet scale
   // and a way to swing the camera without a mouse.
   MI.world.__island = function () { return state && state.island; };
@@ -4303,6 +5429,7 @@
   MI.world.enterGalaxy = enterGalaxy;
   MI.world.leaveGalaxy = leaveGalaxy;
   MI.world.focusGalaxyPlanet = focusGalaxyPlanet;
+  MI.world.hopGalaxyFocus = hopGalaxyFocus;
   // Raise a planet as though the pointer were on it, without flying the camera to it.
   // Reordering needs this: the ring is rebuilt underneath you and the world you are
   // holding should stay lifted, but the view must not lurch on every nudge.
@@ -4312,4 +5439,14 @@
   MI.world.onGalaxyHover = function (cb) { galaxyHoverListener = cb; };
   MI.world.onGalaxyPick = function (cb) { galaxyPickListener = cb; };
   MI.world.onGalaxyFrame = function (cb) { galaxyFrameListener = cb; };
+  MI.world.enterHub = enterHub;
+  MI.world.leaveHub = leaveHub;
+  MI.world.isHub = isHub;
+  MI.world.isHubSlot = isHubBuildingSlot;
+  MI.world.applyHubSwap = applyHubSwap;
+  MI.world.inspectHubLook = function (id) {
+    return MI.world.hub.inspect(MI.store.get(), id);
+  };
+  MI.world.onHubPick = function (cb) { hubPickListener = cb; };
+  MI.world.onHubChange = function (cb) { hubChangeListener = cb; };
 })();

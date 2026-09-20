@@ -18,8 +18,8 @@
     --shadow-soft: 0 4px 14px rgba(112, 70, 44, .12);
     --spring: cubic-bezier(.34, 1.56, .64, 1);
     --ink-mid: #537682;   /* small text on cards; --ink-soft is too light below ~16px */
-    --shard: #6a4bd6;
-    --shard-soft: #efeafd;
+    --coin: #d4921a;
+    --coin-soft: #fff4d4;
     --paper: #fffdf4;
     --paper-line: #eadcc4;
     --paper-grid: #e7eef0;
@@ -1061,11 +1061,11 @@
   #toast .emoji { font-size: 26px; }
   #toast .headline { font-size: 15px; font-weight: 700; }
   #toast .sub { font-size: 13px; font-weight: 500; color: var(--ink-soft); margin-top: 2px; }
-  #toast-shards {
+  #toast-coins {
     margin-left: 4px; padding: 6px 11px; border-radius: 999px; white-space: nowrap;
-    background: var(--shard-soft); color: var(--shard); font-size: 13px; font-weight: 700;
+    background: var(--coin-soft); color: var(--coin); font-size: 13px; font-weight: 700;
   }
-  #toast-shards:empty { display: none; }
+  #toast-coins:empty { display: none; }
 
   /* --- wallet + shop (same width as the memories chip, flatter) --- */
   #wallet {
@@ -1075,23 +1075,34 @@
     transition: transform .4s var(--spring);
   }
   #wallet.bump { transform: rotate(-0.7deg) scale(1.06); }
-  .shard { color: var(--shard); }
+  .coin {
+    display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+    background: radial-gradient(circle at 32% 28%, #ffe9a8, #e8b23a 55%, #c48418);
+    box-shadow: inset 0 -1px 0 #a66c10, inset 0 0 0 1.5px rgba(255, 220, 120, .5);
+    vertical-align: -1px;
+  }
   #wallet-count { font-size: 18px; font-weight: 400; min-width: 2ch; font-variant-numeric: tabular-nums; }
   #shop-btn {
     margin-left: auto;
-    border: 1px solid #dcc4f0; cursor: pointer; font-family: inherit;
+    border: 1px solid #e8c56a; cursor: pointer; font-family: inherit;
     padding: 7px 16px; border-radius: 3px;
-    background: var(--shard); color: #fff; font-size: 16px; font-weight: 400;
+    background: var(--coin); color: #fff; font-size: 16px; font-weight: 400;
     transition: transform .25s var(--spring), background .2s ease;
   }
-  #shop-btn:hover { background: #5a3cc4; transform: translateY(-1px); }
+  #shop-btn:hover { background: #c48418; transform: translateY(-1px); }
   #shop-btn:active { transform: scale(.96); }
-  .shard-float {
+  .coin-float {
     position: fixed; z-index: 8; pointer-events: none;
-    font-size: 15px; font-weight: 700; color: var(--shard);
-    animation: shard-float 1.2s ease-out forwards;
+    font-size: 15px; font-weight: 700; color: var(--coin);
+    animation: coin-float 1.2s ease-out forwards;
   }
-  @keyframes shard-float {
+  .coin-float::before {
+    content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 5px;
+    border-radius: 50%; vertical-align: -1px;
+    background: radial-gradient(circle at 32% 28%, #ffe9a8, #e8b23a 55%, #c48418);
+    box-shadow: inset 0 0 0 1px rgba(255, 220, 120, .5);
+  }
+  @keyframes coin-float {
     0% { opacity: 0; transform: translateY(8px) scale(.9); }
     18% { opacity: 1; transform: translateY(0) scale(1.05); }
     100% { opacity: 0; transform: translateY(-28px) scale(1); }
@@ -1218,7 +1229,22 @@
   body.gated #shop,
   body.gated #picker,
   body.gated #book,
-  body.gated #detail {
+  body.gated #detail,
+  body.hub #hud-left,
+  body.hub #book-btn,
+  body.hub #settings-btn,
+  body.hub #theme-rack,
+  body.hub #settings,
+  body.hub #planet-card,
+  body.hub #view-btn,
+  body.hub #ground-btn,
+  body.hub #world-title,
+  body.hub #journal,
+  body.hub #shop,
+  body.hub #picker,
+  body.hub #book,
+  body.hub #detail,
+  body.hub #ship-card {
     opacity: 0 !important; pointer-events: none !important; visibility: hidden !important;
   }
 
@@ -1252,7 +1278,9 @@
     position: absolute; left: 50%; top: 86px; transform: translateX(-50%);
     font-size: 14px; color: #d7def6; text-shadow: 0 1px 6px #070a1c;
     letter-spacing: .04em; white-space: nowrap;
+    transition: opacity .28s ease;
   }
+  #galaxy-ui.detail #galaxy-hint { opacity: 0; }
   #galaxy-new {
     position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
     padding: 12px 22px; border: 0; border-radius: 4px; cursor: pointer;
@@ -1269,7 +1297,7 @@
   #galaxy-labels .label {
     position: absolute; transform: translate(-50%, 24px);
     font-size: 19px; font-weight: 700; letter-spacing: .01em;
-    color: #fffdf6; white-space: nowrap;
+    color: #fffdf6; white-space: nowrap; pointer-events: none;
     /* A dark rim first so the name holds its shape over a bright planet, then a soft glow
        so it still reads against empty space. */
     text-shadow:
@@ -1279,15 +1307,24 @@
     transition: transform .2s var(--spring), font-size .2s ease, opacity .2s ease;
     opacity: .92;
   }
-  #galaxy-labels .label.hover {
+  #galaxy-labels .label.hover, #galaxy-labels .label.focus {
     opacity: 1; font-size: 23px; transform: translate(-50%, 30px);
   }
   #galaxy-card {
     position: absolute; width: 230px; padding: 12px 14px 12px;
     border-radius: 3px 10px 4px 8px;
-    transform: translate(-50%, calc(-100% - 18px)) rotate(-0.5deg);
+    left: 50%; top: 0;
+    transform: translate(-50%, calc(-100% - 6px)) translateY(10px) scale(.96);
     text-align: center;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .32s ease, transform .42s var(--spring), visibility .32s;
   }
+  #galaxy-card.show {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: translate(-50%, calc(-100% - 6px)) translateY(0) scale(1);
+  }
+  #galaxy-card.beside { transform: translate(0, -50%) translateX(-10px) scale(.96); }
+  #galaxy-card.beside.show { transform: translate(0, -50%) scale(1); }
   #galaxy-card .meta { font-size: 15px; color: var(--ink); white-space: nowrap; }
   /* The tools only exist in edit mode; hovering a world is otherwise read-only. */
   #galaxy-card .tools { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
@@ -1372,6 +1409,68 @@
   }
   #picker .play:hover { filter: brightness(1.05); }
   #picker .hint { margin-top: 10px; font-size: 12.5px; color: var(--ink-mid); }
+
+  #hub-ui {
+    position: fixed; left: 50%; bottom: 22px; z-index: 18;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .25s ease, visibility .25s;
+  }
+  body.hub #hub-ui { opacity: 1; visibility: visible; pointer-events: auto; }
+  #hub-ui .hint {
+    margin: 0; padding: 6px 12px; border-radius: 999px;
+    background: rgba(255, 247, 236, 0.9); color: var(--ink-mid);
+    font-size: 13px; box-shadow: 0 6px 16px rgba(112, 70, 44, .12);
+  }
+  #hub-leave {
+    border: 0; border-radius: 16px; cursor: pointer; font: inherit;
+    font-size: 14px; font-weight: 700; color: var(--ink);
+    padding: 10px 18px; background: var(--paper);
+    box-shadow: 1px 2px 0 #e4d2b0, 0 6px 14px rgba(112, 70, 44, .12);
+  }
+  #hub-leave:hover { background: #fff8ec; }
+  #hub-card {
+    position: fixed; left: 18px; top: 50%; z-index: 19;
+    transform: translateY(-50%) translateX(-8px);
+    width: min(320px, calc(100vw - 36px));
+    padding: 18px 18px 16px; border-radius: 22px;
+    background: #fff7ec;
+    border: 1px solid #e6d4b6;
+    color: var(--ink);
+    box-shadow: 2px 3px 0 #e4d2b0, 0 18px 40px rgba(112, 70, 44, .18);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .22s ease, transform .22s var(--spring), visibility .22s;
+  }
+  #hub-card.open {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: translateY(-50%);
+  }
+  #hub-card h2 { margin: 0; font-size: 20px; font-weight: 700; }
+  #hub-card .sub { margin: 4px 0 0; font-size: 14px; font-weight: 600; color: var(--ink-mid); }
+  #hub-card .meta { margin: 10px 0 0; font-size: 13px; color: var(--ink-mid); line-height: 1.45; }
+  #hub-card .titles { margin: 8px 0 0; padding: 0; list-style: none; }
+  #hub-card .titles li {
+    font-size: 13px; color: var(--ink); padding: 4px 0 4px 12px;
+    border-left: 3px solid #f0c49a;
+  }
+  #hub-card .row { display: flex; gap: 8px; margin-top: 14px; }
+  #hub-card .row button {
+    flex: 1; border: 0; border-radius: 14px; cursor: pointer; font: inherit;
+    font-size: 14px; font-weight: 700; padding: 10px 8px;
+  }
+  #hub-card-swap { background: var(--accent, #f08c46); color: #fff; }
+  #hub-card-swap:hover { filter: brightness(1.05); }
+  #hub-card-swap[hidden], #hub-card-friend[hidden] { display: none; }
+  #hub-card-close { background: #fff8ec; color: var(--ink-mid); }
+  #hub-card-close:hover { color: var(--ink); }
+  @media (max-width: 640px) {
+    #hub-card {
+      left: 50%; top: auto; bottom: 88px;
+      transform: translateX(-50%) translateY(8px);
+    }
+    #hub-card.open { transform: translateX(-50%); }
+  }
   #shop {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
     background: rgba(44, 95, 111, .24); backdrop-filter: blur(3px);
@@ -1450,11 +1549,10 @@
     width: 104px; height: 104px; border-radius: 50%;
     margin: 8px 0 18px 8px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    background: radial-gradient(circle at 35% 30%, #c4b4f4, var(--shard));
+    background: radial-gradient(circle at 35% 30%, #f0d06a, var(--coin));
     color: #fff; transform: rotate(8deg);
-    box-shadow: inset 0 0 0 4px rgba(255,255,255,.22), 2px 3px 0 rgba(80, 40, 120, .25);
+    box-shadow: inset 0 0 0 4px rgba(255,255,255,.22), 2px 3px 0 rgba(140, 80, 20, .25);
   }
-  #shop .seal .shard { color: #fff; font-size: 14px; }
   #shop .seal b {
     font-size: 28px; font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums;
   }
@@ -1554,10 +1652,10 @@
     position: absolute; top: -10px; right: -10px;
     min-width: 44px; height: 44px; padding: 0 6px; border-radius: 50%;
     display: grid; place-items: center;
-    background: var(--shard-soft); color: var(--shard);
+    background: var(--coin-soft); color: var(--coin);
     font-size: 12px; line-height: 1.05; transform: rotate(12deg);
     white-space: pre-line; text-align: center;
-    box-shadow: inset 0 0 0 2px #dcc4f0;
+    box-shadow: inset 0 0 0 2px #ead28a;
   }
   .polaroid.short { cursor: default; filter: saturate(.7); opacity: .78; }
   .polaroid.short:hover { transform: none; }
@@ -1612,6 +1710,42 @@
   }
   #detail .swap:hover { background: #e2ecef; color: var(--ink); transform: translateY(-1px); }
   #detail .swap.current { background: var(--accent); color: #fff; cursor: default; }
+
+  /* A ship's card: the same scrap of paper as #detail, tilted the other way so the two read
+     as different things when one replaces the other. */
+  #ship-card {
+    position: fixed; right: 16px; top: 118px; z-index: 6;
+    width: min(300px, calc(100vw - 40px));
+    padding: 18px 20px; border-radius: 12px 4px 10px 6px;
+    transform: rotate(-0.9deg) translateY(-10px) scale(.97); pointer-events: none;
+    opacity: 0;
+    transition: opacity .25s ease, transform .4s var(--spring);
+  }
+  #ship-card.show { opacity: 1; transform: rotate(-0.9deg); pointer-events: auto; }
+  body.gated #ship-card {
+    opacity: 0 !important; pointer-events: none !important; visibility: hidden !important;
+  }
+  #ship-card .cat { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--accent-deep); }
+  #ship-card.claimed .cat { color: #4fa58c; }
+  #ship-card h3 { margin: 6px 0 2px; font-size: 19px; font-weight: 700; line-height: 1.25; }
+  #ship-card p { margin: 10px 0 0; font-size: 14px; font-weight: 500; line-height: 1.55; }
+  #ship-card .date { margin-top: 7px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  #ship-bar {
+    margin-top: 14px; height: 8px; border-radius: 999px; background: #e7eef1; overflow: hidden;
+  }
+  #ship-fill {
+    display: block; height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+    transition: width .5s var(--spring);
+  }
+  #ship-claim {
+    margin-top: 14px; width: 100%; border: none; cursor: pointer; font-family: inherit;
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    background: var(--accent); color: #fff; box-shadow: var(--shadow-soft);
+    transition: background .2s ease, transform .25s var(--spring);
+  }
+  #ship-claim:hover { background: var(--accent-deep); transform: translateY(-1px); }
   #detail .pill {
     padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
     background: #eaf6fa; color: var(--ink);
@@ -1647,9 +1781,9 @@
     <span class="kicker">worlds</span>
     <span id="galaxy-count-text">0 planets</span>
   </div>
-  <div id="galaxy-hint">hover a world · click to open</div>
+  <div id="galaxy-hint">arrows or WASD to move · hover for details · click to open</div>
   <div id="galaxy-labels"></div>
-  <div id="galaxy-card" class="paper hit" hidden>
+  <div id="galaxy-card" class="paper hit" aria-hidden="true">
     <div id="galaxy-card-meta" class="meta"></div>
     <div id="galaxy-tools" class="tools" hidden>
       <button type="button" id="galaxy-left" class="nudge" aria-label="Move this world left">&lsaquo;</button>
@@ -1674,8 +1808,8 @@
 <div id="hud-left">
 <div id="stats-chip" class="paper"><span id="stats-text">a quiet ocean</span></div>
 <div id="wallet" class="paper">
-  <span class="shard" aria-hidden="true">✦</span>
-  <span id="wallet-count" aria-label="shards">0</span>
+  <span class="coin" aria-hidden="true"></span>
+  <span id="wallet-count" aria-label="coins">0</span>
   <button id="shop-btn" aria-haspopup="dialog">Shop</button>
 </div>
 </div>
@@ -1717,7 +1851,7 @@
 <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="sheet paper">
     <h2 id="settings-title">settings</h2>
-    <button id="character-btn" type="button">switch character</button>
+    <button id="character-btn" type="button">friend hub</button>
     <button id="journals-btn" type="button">switch journal</button>
     <button id="reset-btn" type="button" disabled>start over</button>
   </div>
@@ -1843,13 +1977,25 @@
   <div class="swaps" id="detail-swaps"></div>
 </div>
 
+<!-- A ship you clicked out on the ocean: who they are, what they want, and the button that
+     takes them once you have given it. -->
+<div id="ship-card" class="paper">
+  <button class="close" id="ship-close" aria-label="Close">✕</button>
+  <div class="cat" id="ship-flag"></div>
+  <h3 id="ship-name"></h3>
+  <p id="ship-ask"></p>
+  <div id="ship-bar"><span id="ship-fill"></span></div>
+  <div class="date" id="ship-count"></div>
+  <button id="ship-claim" hidden>Strike their flag</button>
+</div>
+
 <div id="toast">
   <div class="emoji" id="toast-emoji">✨</div>
   <div>
     <div class="headline" id="toast-headline"></div>
     <div class="sub" id="toast-sub"></div>
   </div>
-  <div id="toast-shards"></div>
+  <div id="toast-coins"></div>
 </div>
 
 <div id="picker">
@@ -1858,7 +2004,24 @@
     <div class="sub">Who lives on your planet?</div>
     <div id="picker-grid" class="grid" role="radiogroup" aria-labelledby="picker-title"></div>
     <button id="picker-play" class="play">Play</button>
-    <div class="hint">Arrow keys walk them on the island &middot; the <b>footprints</b> button follows them, WASD moves and the mouse steers</div>
+    <div class="hint">The footprints button follows you. WASD and the arrow keys walk.</div>
+  </div>
+</div>
+
+<div id="hub-ui" aria-hidden="true">
+  <p class="hint">Walk up to a look and click it</p>
+  <button id="hub-leave" type="button">leave hub</button>
+</div>
+<div id="hub-card" role="dialog" aria-labelledby="hub-card-name">
+  <h2 id="hub-card-name">Scout</h2>
+  <p class="sub" id="hub-card-sub"></p>
+  <div id="hub-card-friend" hidden>
+    <p class="meta" id="hub-card-friend-meta"></p>
+    <ul class="titles" id="hub-card-titles"></ul>
+  </div>
+  <div class="row">
+    <button id="hub-card-swap" type="button">Swap</button>
+    <button id="hub-card-close" type="button">Not now</button>
   </div>
 </div>
 
@@ -1871,12 +2034,11 @@
           <p class="album-kicker">keepsakes</p>
           <h2 id="shop-title">themes</h2>
           <p id="shop-blurb" class="blurb">Whole-planet clothes. Swap a world on like a postcard.</p>
-          <div class="seal" aria-label="Shard balance">
-            <span class="shard" aria-hidden="true">✦</span>
+          <div class="seal" aria-label="Coin balance">
             <b id="shop-balance">0</b>
-            <span>shards</span>
+            <span>coins</span>
           </div>
-          <p class="earn-hint">Write memories to earn shards. Bought things leave these pages and wait on the circle under settings.</p>
+          <p class="earn-hint">Write memories to earn coins. Bought things leave these pages and wait on the circle under settings.</p>
           <span class="doodle" aria-hidden="true"></span>
         </section>
         <div class="rings" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
@@ -1895,7 +2057,7 @@
 
 <div id="journal">
   <div id="empty-hint" class="paper">
-    <div>Just your house, so far.<br /><b>Write a memory to grow the land around it ✨</b><br />Each one earns <span class="shard">✦</span> shards, and your planet grows as it fills.</div>
+    <div>Just your house, so far.<br /><b>Write a memory to grow the land around it ✨</b><br />Each one earns coins, and your planet grows as it fills.</div>
     <button id="demo-btn">or load a demo planet</button>
   </div>
 </div>
@@ -1940,6 +2102,8 @@
 <script src="src/world/themes.js"></script>
 <script src="src/world/cosmetics.js"></script>
 <script src="src/world/walkers.js"></script>
+<script src="src/world/ships.js"></script>
+<script src="src/world/hub.js"></script>
 <script src="src/world/player.js"></script>
 <script src="src/world/connectors.js"></script>
 <script src="src/world/world.js"></script>

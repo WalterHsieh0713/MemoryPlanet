@@ -58,6 +58,7 @@
   function chooseSlot(world) {
     var buildings = new Set(MI.store.takenSlots());
     if (world.house && typeof world.house.slot === 'number') buildings.add(world.house.slot);
+    if (world.hub && typeof world.hub.slot === 'number') buildings.add(world.hub.slot);
     var found = MI.placement.choose(MI.world.currentTiles(), {
       home: world.home,
       buildings: buildings,
@@ -118,7 +119,7 @@
     return created;
   }
 
-  // --- Progress events (shards earned, planet grew) for the UI -------------------------
+  // --- Progress events (coins earned, planet grew) for the UI -------------------------
   var listeners = [];
   function onEvent(cb) { listeners.push(cb); }
   function emit(event) { listeners.forEach(function (cb) { cb(event); }); }
@@ -381,6 +382,8 @@
 
     return Promise.all(spawns).then(function () {
       if (opts.focus !== false) MI.world.focus(slot, { instant: opts.instant === true });
+      // This entry may have been the one a ship was waiting for.
+      checkShips();
       return memory;
     });
   }
@@ -391,6 +394,7 @@
   // `home` at it. Worlds that already have a home (their first memory set it) are left
   // alone, so this never moves an existing island.
   var HOUSE_ASSET = 'building-house.glb';
+  var HUB_ASSET = 'building-village.glb';
 
   function ensureHome() {
     var world = MI.store.get();
@@ -405,8 +409,42 @@
     return true;
   }
 
+  // The friend hub's front door on the world: a village hall, kept off the house the way
+  // every other building is. Worlds that already have a hub keep it; brand-new ones get
+  // one next to home so there is always a way in.
+  function ensureHub() {
+    var world = MI.store.get();
+    if (world.hub && typeof world.hub.slot === 'number') return false;
+    ensureHome();
+    world = MI.store.get();
+    var tiles = MI.world.currentTiles();
+    if (!tiles || !tiles.length) return false;
+    var buildings = new Set();
+    if (world.house && typeof world.house.slot === 'number') buildings.add(world.house.slot);
+    MI.store.takenSlots().forEach(function (slot) { buildings.add(slot); });
+    if (world.hub && typeof world.hub.slot === 'number') buildings.add(world.hub.slot);
+    var found = MI.placement.choose(tiles, {
+      home: world.home,
+      buildings: buildings,
+      land: MI.growth.landSlots(world),
+      taken: MI.store.occupiedSlots(),
+      count: world.memories.length
+    });
+    if (!found) return false;
+    if (found.via !== null && found.via !== undefined && !MI.store.occupiedSlots().has(found.via)) {
+      MI.store.addLandscape({ slot: found.via, asset: 'grass.glb', fromMemoryId: null, source: 'hub' });
+    }
+    if (!MI.store.occupiedSlots().has(found.slot)) {
+      MI.store.addLandscape({ slot: found.slot, asset: 'grass.glb', fromMemoryId: null, source: 'hub' });
+    }
+    world.hub = { slot: found.slot, asset: HUB_ASSET };
+    MI.store.save();
+    return true;
+  }
+
   function restore() {
     ensureHome();
+    ensureHub();
     var world = MI.store.get();
     world.landscape.forEach(function (entry) {
       MI.world.spawnLandscape(entry, { animate: false });
@@ -415,12 +453,62 @@
       return MI.world.spawnMemory(memory, { animate: false });
     });
     if (world.house) spawns.push(MI.world.spawnHouse(world.house, { animate: false }));
+    if (world.hub) spawns.push(MI.world.spawnHub(world.hub, { animate: false }));
     world.people.forEach(function (person) {
       if (person.placement) spawns.push(MI.world.spawnPerson(person, { animate: false }));
     });
     return Promise.all(spawns).then(function () {
       MI.world.rebuildRoads(); // draw the network once everything is on the planet
+      ensureFleet();           // and put the ships back out on the water
+      // spawnMemory may have re-picked a building that left the catalogue; persist that once.
+      MI.store.save();
     });
+  }
+
+  // --- The pirate fleet (src/world/ships.js) ---------------------------------------------
+  // Ships arrive as the planet grows and are won by writing, never bought. Everything about
+  // one — its hull, its name, what it asks for — comes from the world's seed, so this only
+  // has to keep the count right and let ships.js say the rest.
+
+  function ensureFleet() {
+    var world = MI.store.get();
+    var added = MI.ships.ensureFleet(world, MI.growth.tierIndex(currentFrequency()));
+    if (added.length) MI.store.save();
+    MI.world.syncShips();
+    return added;
+  }
+
+  // Called after anything that could have moved a goal on. Announces a ship the player can now
+  // go and take, once per ship: claiming is theirs to do, so this points rather than acts.
+  //
+  // ONE ship per call, even when an entry finishes two of them. The announcement is a toast,
+  // and a second toast simply replaces the first — so telling the player about two ships at
+  // once tells them about one. The other waits for the next entry, which is also a kinder
+  // pace: a ship at a time is a thread to follow, four at once is a chore list.
+  function checkShips() {
+    var world = MI.store.get();
+    var waiting = MI.ships.claimable(world).filter(function (ship) { return !announced[ship.id]; });
+    if (!waiting.length) return null;
+    var ship = waiting[0];
+    announced[ship.id] = true;
+    emit({ type: 'ship-ready', ship: ship, progress: MI.ships.progressFor(world, ship) });
+    return ship;
+  }
+  var announced = {};
+
+  // The player's own act: strike the flag, swap the hull, and look at it happening.
+  function claimShip(shipId) {
+    var world = MI.store.get();
+    var ship = MI.ships.find(world, shipId);
+    if (!MI.ships.claim(world, shipId)) return false;
+    MI.store.save();
+    // Look now, while the current hull still has a tile; syncShips then swaps the model
+    // in place so the camera does not turn toward an empty patch of sea.
+    MI.world.focusShip(shipId);
+    MI.world.syncShips();
+    MI.world.focusShip(shipId);
+    emit({ type: 'ship-claimed', ship: ship });
+    return true;
   }
 
   // One size up the ladder: carry every saved slot onto the bigger grid (MI.growth.remap),
@@ -472,8 +560,10 @@
   function rebuildScene(opts) {
     opts = opts || {};
     var world = MI.store.get();
+    announced = {}; // ship ids repeat across journals; this one's ships have not been announced
     var ready = Promise.resolve();
-    if (MI.world.isGroundView()) ready = Promise.resolve(MI.world.setGroundView(false));
+    if (MI.world.isHub && MI.world.isHub()) ready = Promise.resolve(MI.world.leaveHub({ instant: true }));
+    if (MI.world.isGroundView()) ready = ready.then(function () { return MI.world.setGroundView(false); });
     return ready.then(function () {
       return MI.world.isFlatView() ? MI.world.setFlatView(false, { instant: true }) : Promise.resolve();
     }).then(function () {
@@ -491,6 +581,7 @@
       // back empty and your character had nowhere to stand until the next reload, which is
       // when restore() would have called ensureHome.
       ensureHome();
+      ensureHub();
       return MI.world.setCharacter(world.player && world.player.character);
     }).then(restore).then(function () {
       if (opts.keepCamera) return;
@@ -511,7 +602,7 @@
     return rebuildScene({ keepCamera: !!opts.keepCamera }).then(function () { return true; });
   }
 
-  // Wipe this journal's memories, shards and unlocks — back to the smallest planet.
+  // Wipe this journal's memories, coins and unlocks — back to the smallest planet.
   // The journal's name and character stay; it is still the same book.
   function startOver() {
     MI.store.reset();
@@ -521,6 +612,8 @@
   MI.app = {
     addEntry: addEntry, updateEntry: updateEntry, restore: restore, growPlanet: growPlanet,
     equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
-    rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal
+    ensureHub: ensureHub,
+    rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
+    claimShip: claimShip, checkShips: checkShips
   };
 })();

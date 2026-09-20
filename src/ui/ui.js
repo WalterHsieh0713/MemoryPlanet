@@ -31,7 +31,7 @@
       'toast', 'toast-emoji', 'toast-headline', 'toast-sub', 'detail', 'detail-close',
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
       'reset-btn', 'view-btn', 'view-planet-label', 'view-island-label',
-      'detail-swaps', 'toast-shards',
+      'detail-swaps', 'toast-coins',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'shop-blurb',
@@ -51,7 +51,12 @@
       'galaxy-ui', 'galaxy-count', 'galaxy-count-text', 'galaxy-hint', 'galaxy-labels',
       'galaxy-card', 'galaxy-card-meta', 'galaxy-delete', 'galaxy-tools',
       'galaxy-edit', 'galaxy-left', 'galaxy-right',
-      'galaxy-new']
+      'galaxy-new',
+      'ship-card', 'ship-close', 'ship-flag', 'ship-name', 'ship-ask', 'ship-bar', 'ship-fill',
+      'ship-count', 'ship-claim',
+      'hub-ui', 'hub-leave', 'hub-card', 'hub-card-name', 'hub-card-sub',
+      'hub-card-friend', 'hub-card-friend-meta', 'hub-card-titles',
+      'hub-card-swap', 'hub-card-close']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -872,12 +877,12 @@
     bump(row, 'flash');
   }
 
-  // --- Shards + planet size ------------------------------------------------------------
+  // --- Coins + planet size ------------------------------------------------------------
 
   function refreshWallet() {
-    var shards = MI.economy.balance();
-    el['wallet-count'].textContent = shards;
-    el['shop-balance'].textContent = shards;
+    var coins = MI.economy.balance();
+    el['wallet-count'].textContent = coins;
+    el['shop-balance'].textContent = coins;
     if (el.shop.classList.contains('open')) renderShop();
     renderThemeTray();
   }
@@ -905,24 +910,24 @@
     setTimeout(function () { node.classList.remove(className); }, 450);
   }
 
-  // A "+18 ✦" that drifts up off the wallet.
-  function floatShards(amount) {
+  // A "+18" that drifts up off the wallet.
+  function floatCoins(amount) {
     if (!amount) return;
     var rect = el.wallet.getBoundingClientRect();
     var tag = document.createElement('div');
-    tag.className = 'shard-float';
-    tag.textContent = '+' + amount + ' ✦';
+    tag.className = 'coin-float';
+    tag.textContent = '+' + amount;
     tag.style.left = (rect.left + 10) + 'px';
     tag.style.top = (rect.bottom + 6) + 'px';
     document.body.appendChild(tag);
     setTimeout(function () { tag.remove(); }, 1300);
   }
 
-  function toast(emoji, headline, sub, shards, holdMs) {
+  function toast(emoji, headline, sub, coins, holdMs) {
     el['toast-emoji'].textContent = emoji;
     el['toast-headline'].textContent = headline;
     el['toast-sub'].textContent = sub || '';
-    el['toast-shards'].textContent = shards ? '+' + shards + ' ✦' : '';
+    el['toast-coins'].textContent = coins ? '+' + coins : '';
     el.toast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.toast.classList.remove('show'); }, holdMs || 3200);
@@ -939,16 +944,24 @@
       refreshStats(); // counts, wallet and planet bar, the moment the memory lands
       bump(el.wallet, 'bump');
       bump(el['book-btn'], 'nudge'); // the book just got another page
-      floatShards(event.reward.total);
+      floatCoins(event.reward.total);
     } else if (event.type === 'grew') {
       syncViewButton(); // growing always returns to the planet view
       refreshStats();
       bump(el['planet-card'], 'grew');
       bump(el.wallet, 'bump');
-      floatShards(event.reward.total);
+      floatCoins(event.reward.total);
       toast('🪐', 'Your planet grew!',
         'Size ' + event.size + ' of ' + event.sizes + ' · ' + event.tiles + ' tiles of room',
         event.reward.total, 4200);
+    } else if (event.type === 'ship-ready') {
+      // Claiming is the player's to do, so this points at the ship rather than taking it.
+      toast('🏴', event.ship.name + ' will hear you out',
+        'You gave them what they asked. Click the ship to take her.', 0, 5200);
+      MI.world.focusShip(event.ship.id);
+    } else if (event.type === 'ship-claimed') {
+      toast('⛵', event.ship.name + ' sails with you',
+        'Their black flag is down, and they keep to your coast now.', 0, 4200);
     }
   }
 
@@ -1140,7 +1153,7 @@
 
       var sticker = document.createElement('span');
       sticker.className = 'sticker';
-      sticker.textContent = canBuy ? ('✦ ' + item.price) : ((item.price - balance) + ' short');
+      sticker.textContent = canBuy ? String(item.price) : ((item.price - balance) + ' short');
       card.appendChild(sticker);
 
       if (canBuy) card.addEventListener('click', function () { buy(kind, item); });
@@ -1161,11 +1174,14 @@
 
   var pickerChoice = null;
   var pickerOpener = null;
+  var hubLookId = null;
   var gateAvatar = null;
   var gateBusy = false;
   var hoveredGalaxy = null;
   var galaxyEditing = false;
   var galaxyDeleteArmed = null;
+  var galaxyCardHide = null;
+  var lastGalaxyScreens = [];
 
   function fillAvatarGrid(container, selectedId, onPick) {
     var characters = MI.world.characters();
@@ -1201,6 +1217,93 @@
   function closePicker() {
     el.picker.classList.remove('open');
     if (pickerOpener && pickerOpener.focus) pickerOpener.focus();
+  }
+
+  function closeHubCard() {
+    hubLookId = null;
+    if (el['hub-card']) el['hub-card'].classList.remove('open');
+  }
+
+  function showHubCard(lookId) {
+    if (!lookId) { closeHubCard(); return; }
+    var info = MI.world.inspectHubLook(lookId);
+    if (!info) { closeHubCard(); return; }
+    hubLookId = lookId;
+    el['hub-card-name'].textContent = info.person ? info.person.name : info.look.name;
+    if (info.you) {
+      el['hub-card-sub'].textContent = info.person
+        ? 'This is you — ' + info.person.name + ' wears this look too'
+        : 'This is you';
+    } else if (info.person) {
+      el['hub-card-sub'].textContent = (info.person.relationship || 'friend')
+        + ' · wearing ' + info.look.name;
+    } else {
+      el['hub-card-sub'].textContent = 'Nobody is using this look';
+    }
+    if (info.person && !info.you) {
+      el['hub-card-friend'].hidden = false;
+      var n = (info.person.memoryIds && info.person.memoryIds.length)
+        || info.titles.length;
+      el['hub-card-friend-meta'].textContent = n
+        ? (info.person.name + ' is in ' + plural(n, 'memory').replace('memorys', 'memories'))
+        : (info.person.name + ' lives on your planet');
+      el['hub-card-titles'].innerHTML = '';
+      info.titles.forEach(function (title) {
+        var li = document.createElement('li');
+        li.textContent = title;
+        el['hub-card-titles'].appendChild(li);
+      });
+    } else {
+      el['hub-card-friend'].hidden = true;
+    }
+    el['hub-card-swap'].hidden = !info.canSwap;
+    el['hub-card-swap'].textContent = info.person ? 'Swap looks' : 'Swap';
+    el['hub-card'].classList.add('open');
+  }
+
+  function confirmHubSwap() {
+    if (!hubLookId) return;
+    var wanted = hubLookId;
+    MI.world.applyHubSwap(wanted).then(function (result) {
+      if (!result || !result.ok) return;
+      closeHubCard();
+      var name = result.look ? result.look.name : 'that look';
+      if (result.person) {
+        toast('🤝', 'Looks swapped', result.person.name + ' took your old look.', 0, 2400);
+      } else {
+        toast('✨', 'Now ' + name, 'Walk around — this is you.', 0, 2200);
+      }
+    });
+  }
+
+  function openHub() {
+    closeSettings();
+    closeShop();
+    closePicker();
+    hideDetail();
+    hideShip();
+    if (isBookBusy()) closeBook();
+    closeHubCard();
+    return Promise.resolve(MI.world.enterHub());
+  }
+
+  function exitHub() {
+    closeHubCard();
+    return Promise.resolve(MI.world.leaveHub());
+  }
+
+  function syncHubUi(on) {
+    document.body.classList.toggle('hub', !!on);
+    if (el['hub-ui']) el['hub-ui'].setAttribute('aria-hidden', on ? 'false' : 'true');
+    if (on) {
+      closeSettings();
+      closeShop();
+      closePicker();
+      hideDetail();
+    } else {
+      closeHubCard();
+    }
+    syncGroundButton();
   }
 
   function renderPicker() {
@@ -1297,38 +1400,83 @@
 
   function hideGalaxyHud() {
     el['galaxy-ui'].classList.remove('open');
-    el['galaxy-card'].hidden = true;
+    hideGalaxyCard(true);
     hoveredGalaxy = null;
     setGalaxyEditing(false);
+  }
+
+  function hideGalaxyCard(immediate) {
+    clearTimeout(galaxyCardHide);
+    galaxyCardHide = null;
+    if (immediate) {
+      el['galaxy-ui'].classList.remove('detail');
+      el['galaxy-card'].classList.remove('show', 'beside');
+      el['galaxy-card'].setAttribute('aria-hidden', 'true');
+      return;
+    }
+    galaxyCardHide = setTimeout(function () {
+      if (el['galaxy-card'].matches(':hover')) return;
+      hoveredGalaxy = null;
+      el['galaxy-ui'].classList.remove('detail');
+      el['galaxy-card'].classList.remove('show');
+      el['galaxy-card'].setAttribute('aria-hidden', 'true');
+      disarmGalaxyDelete();
+    }, 140);
+  }
+
+  function placeGalaxyCard(id) {
+    var hit = null;
+    lastGalaxyScreens.forEach(function (s) { if (s.id === id) hit = s; });
+    if (!hit || hit.behind) return false;
+    var radius = hit.r || 36;
+    var above = hit.y - radius - 16;
+    if (above < 118) {
+      el['galaxy-card'].classList.add('beside');
+      el['galaxy-card'].style.left = (hit.x + radius + 18) + 'px';
+      el['galaxy-card'].style.top = Math.max(118, hit.y) + 'px';
+    } else {
+      el['galaxy-card'].classList.remove('beside');
+      el['galaxy-card'].style.left = hit.x + 'px';
+      el['galaxy-card'].style.top = above + 'px';
+    }
+    return true;
   }
 
   function refreshGalaxyCount() {
     var n = MI.store.listJournals().length;
     el['galaxy-count-text'].textContent = n === 1 ? '1 planet' : n + ' planets';
     el['galaxy-hint'].textContent = n
-      ? 'hover a world · click to open'
+      ? 'arrows or WASD to move · hover for details · click to open'
       : 'no worlds yet — start a new journal';
   }
 
   function updateGalaxyCard(id) {
-    if (id === hoveredGalaxy) return;
-    hoveredGalaxy = id;
-    el['galaxy-hint'].classList.toggle('dim', !!id);
-    disarmGalaxyDelete();
+    el['galaxy-hint'].classList.toggle('dim', !!id); // the bold planet names land on it
     if (!id) {
-      el['galaxy-card'].hidden = true;
+      hideGalaxyCard(false);
       return;
     }
+    clearTimeout(galaxyCardHide);
+    galaxyCardHide = null;
+    if (id === hoveredGalaxy && el['galaxy-card'].classList.contains('show')) {
+      placeGalaxyCard(id);
+      return;
+    }
+    hoveredGalaxy = id;
+    disarmGalaxyDelete();
     var journal = journalById(id);
     if (!journal) {
-      el['galaxy-card'].hidden = true;
+      hideGalaxyCard(true);
       return;
     }
     var bits = [plural(journal.memories, 'memory').replace('memorys', 'memories')];
     if (journal.people) bits.push(plural(journal.people, 'friend'));
     el['galaxy-card-meta'].textContent = bits.join(' · ');
     syncGalaxyTools();
-    el['galaxy-card'].hidden = false;
+    placeGalaxyCard(id);
+    el['galaxy-ui'].classList.add('detail');
+    el['galaxy-card'].setAttribute('aria-hidden', 'false');
+    el['galaxy-card'].classList.add('show');
   }
 
   // Delete and the reorder nudges only exist while editing; hovering is otherwise read-only.
@@ -1351,9 +1499,8 @@
     var label = galaxyEditing ? 'Done editing your worlds' : 'Edit your worlds';
     el['galaxy-edit'].setAttribute('aria-label', label);
     el['galaxy-edit'].title = label;
-    el['galaxy-hint'].textContent = galaxyEditing
-      ? 'editing · reorder with ‹ › · delete a world'
-      : 'hover a world · click to open';
+    if (galaxyEditing) el['galaxy-hint'].textContent = 'editing · reorder with ‹ › · delete a world';
+    else refreshGalaxyCount(); // owns the hint text, and theirs now names the controls
     disarmGalaxyDelete();
     syncGalaxyTools();
   }
@@ -1372,6 +1519,7 @@
   }
 
   function syncGalaxyLabels(screens) {
+    lastGalaxyScreens = screens || [];
     var wrap = el['galaxy-labels'];
     var seen = {};
     screens.forEach(function (s) {
@@ -1387,29 +1535,15 @@
       var journal = s.journal || journalById(s.id);
       node.textContent = journal ? journal.name : '';
       node.style.left = s.x + 'px';
-      node.style.top = s.y + 'px';
+      node.style.top = (s.y + (s.r || 28) + 10) + 'px';
       node.classList.toggle('hover', !!s.hover);
+      node.classList.toggle('focus', !!s.focus);
     });
     Array.prototype.forEach.call(wrap.querySelectorAll('.label'), function (node) {
       if (!seen[node.getAttribute('data-id')]) node.parentNode.removeChild(node);
     });
-    if (hoveredGalaxy && !el['galaxy-card'].hidden) {
-      var hit = null;
-      screens.forEach(function (s) { if (s.id === hoveredGalaxy) hit = s; });
-      if (hit && !hit.behind) {
-        // The card is drawn ABOVE the point it is given (see its transform), so the clamp has
-        // to know how tall it currently is — it grows when the edit tools appear, and a fixed
-        // 96px floor used to slide the taller card off the top of the screen.
-        var card = el['galaxy-card'];
-        var lift = card.offsetHeight + 18;
-        var half = card.offsetWidth / 2 + 12;
-        // Clear whatever the top-centre chrome actually occupies, rather than a guess: the
-        // hint line sits under the count chip and both grow with the text in them.
-        var hint = el['galaxy-hint'].getBoundingClientRect();
-        var floor = Math.max(96, hint.bottom + 14);
-        card.style.left = Math.max(half, Math.min(window.innerWidth - half, hit.x)) + 'px';
-        card.style.top = Math.max(floor + lift, hit.y - 12) + 'px';
-      }
+    if (hoveredGalaxy && el['galaxy-card'].classList.contains('show')) {
+      placeGalaxyCard(hoveredGalaxy);
     }
   }
 
@@ -1441,7 +1575,7 @@
     var result = MI.store.deleteJournal(id);
     if (!result.ok) return;
     hoveredGalaxy = null;
-    el['galaxy-card'].hidden = true;
+    hideGalaxyCard(true);
     if (!MI.store.listJournals().length) {
       hideGalaxyHud();
       MI.world.leaveGalaxy({ instant: true }).then(function () {
@@ -1537,8 +1671,11 @@
     closePicker();
     hideDetail();
     if (isBookBusy()) dismissBook();
-    var ready = MI.world.isGroundView() ? leaveGroundView() : Promise.resolve();
-    ready.then(function () { showGate('shelf'); });
+    var ready = Promise.resolve();
+    if (MI.world.isHub && MI.world.isHub()) ready = Promise.resolve(MI.world.leaveHub({ instant: true }));
+    ready.then(function () {
+      return MI.world.isGroundView() ? leaveGroundView() : Promise.resolve();
+    }).then(function () { showGate('shelf'); });
   }
 
   function chooseCharacter() {
@@ -1564,7 +1701,8 @@
   // of a fold, and lit while you are following.
   function syncGroundButton() {
     var onGround = MI.world.isGroundView();
-    var available = MI.world.isFlatView() && !MI.world.isTransitioning();
+    var available = MI.world.isFlatView() && !MI.world.isTransitioning()
+      && !(MI.world.isHub && MI.world.isHub());
     el['ground-btn'].classList.toggle('show', available);
     el['ground-btn'].classList.toggle('on', onGround);
     el['ground-btn'].setAttribute('aria-pressed', onGround ? 'true' : 'false');
@@ -1635,7 +1773,8 @@
       button.textContent = file.replace(/^building-/, '').replace(/\.glb$/, '').replace(/-/g, ' ');
       if (file !== current) {
         button.addEventListener('click', function () {
-          memory.asset = { pack: 'kenney-hexagon-kit', key: file };
+          // Which pack a building comes from is world.js's to know, not ours.
+          memory.asset = MI.world.assetFor(file);
           MI.store.save();
           MI.world.respawnMemory(memory);
           renderSwaps(memory);
@@ -1668,6 +1807,47 @@
     openMemory = null;
     MI.world.clearHighlight();
     markOpenRow(false);
+  }
+
+  // --- Ships ------------------------------------------------------------------------------
+  // A ship is the one thing here you cannot buy: it asks for something written, and until you
+  // write it the ship keeps its distance. The card is the only place that says what it wants,
+  // so it has to say it plainly.
+
+  var openShipId = null;
+
+  function showShip(shipId) {
+    var world = MI.store.get();
+    var ship = MI.ships.find(world, shipId);
+    if (!ship) return;
+    hideDetail(); // the two cards share a corner
+    openShipId = shipId;
+    var progress = MI.ships.progressFor(world, ship);
+
+    el['ship-card'].classList.toggle('claimed', !!ship.claimed);
+    el['ship-flag'].textContent = ship.claimed ? 'sails with you' : 'flies a black flag';
+    el['ship-name'].textContent = ship.name;
+    el['ship-ask'].textContent = ship.claimed
+      ? 'Yours. They keep to your coast now, and they will not trouble you again.'
+      : progress.ask + ', and they will hear you out.';
+    el['ship-bar'].hidden = !!ship.claimed;
+    el['ship-count'].textContent = ship.claimed
+      ? ''
+      : progress.done + ' of ' + progress.target + ' ' + progress.unit;
+    el['ship-fill'].style.width = Math.round((progress.done / progress.target) * 100) + '%';
+    el['ship-claim'].hidden = !!ship.claimed || !progress.complete;
+    el['ship-card'].classList.add('show');
+  }
+
+  function hideShip() {
+    openShipId = null;
+    el['ship-card'].classList.remove('show');
+  }
+
+  function claimOpenShip() {
+    if (!openShipId) return;
+    var id = openShipId;
+    if (MI.app.claimShip(id)) showShip(id); // the same card, now saying it is yours
   }
 
   function setBusy(busy) {
@@ -2156,7 +2336,7 @@
     closeShop();
     closeSettings();
     el.toast.classList.remove('show');
-    // Back to the smallest planet, with shards and unlocks wiped too.
+    // Back to the smallest planet, with coins and unlocks wiped too.
     MI.app.startOver().then(function () {
       syncViewButton();
       refreshStats();
@@ -2272,17 +2452,23 @@
     // would have seen the first time.
     el['character-btn'].addEventListener('click', function () {
       closeSettings();
-      openPicker();
+      openHub();
     });
     el['journals-btn'].addEventListener('click', returnToShelf);
     el['galaxy-new'].addEventListener('click', function () {
-      updateGalaxyCard(null);
+      hideGalaxyCard(true);
       showGate('create');
     });
     el['galaxy-delete'].addEventListener('click', handleGalaxyDelete);
     el['galaxy-edit'].addEventListener('click', function () { setGalaxyEditing(!galaxyEditing); });
     el['galaxy-left'].addEventListener('click', function () { nudgeGalaxy(-1); });
     el['galaxy-right'].addEventListener('click', function () { nudgeGalaxy(1); });
+    el['galaxy-card'].addEventListener('mouseenter', function () {
+      clearTimeout(galaxyCardHide);
+    });
+    el['galaxy-card'].addEventListener('mouseleave', function () {
+      updateGalaxyCard(null);
+    });
     el['gate-new'].addEventListener('click', function () { showGate('create'); });
     el['gate-back'].addEventListener('click', function () {
       if (!MI.store.listJournals().length) return;
@@ -2344,15 +2530,31 @@
         return;
       }
       if (el.picker.classList.contains('open')) { closePicker(); return; }
+      if (el['hub-card'] && el['hub-card'].classList.contains('open')) { closeHubCard(); return; }
+      if (MI.world.isHub && MI.world.isHub()) { exitHub(); return; }
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
       else if (el.settings.classList.contains('open')) closeSettings();
       else if (el['theme-rack'].classList.contains('open')) closeThemeTray();
+      else if (el['ship-card'] && el['ship-card'].classList.contains('show')) hideShip();
       else if (isBookBusy()) dismissBook();
     });
 
+    MI.world.onShipPick(function (shipId) {
+      if (document.body.classList.contains('gated')) return;
+      showShip(shipId);
+    });
+    el['ship-close'].addEventListener('click', hideShip);
+    el['ship-claim'].addEventListener('click', claimOpenShip);
+
     MI.world.onPick(function (slot) {
       if (document.body.classList.contains('gated')) return;
+      hideShip(); // clicked away from the ocean
+      if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
+        hideDetail();
+        openHub();
+        return;
+      }
       if (slot === null || slot === undefined) { hideDetail(); return; }
       var memory = MI.store.findMemoryBySlot(slot);
       if (memory) {
@@ -2367,6 +2569,10 @@
     // the pointer leaves, the open entry's own mark comes back.
     MI.world.onHover(function (slot) {
       if (document.body.classList.contains('gated')) return false;
+      if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
+        MI.world.highlightSlot(slot, { soft: true });
+        return true;
+      }
       var memory = slot === null || slot === undefined ? null : MI.store.findMemoryBySlot(slot);
       if (memory) MI.world.highlightSlot(slot, { soft: true });
       else if (openSlot === null) MI.world.clearHighlight();
@@ -2393,6 +2599,11 @@
       enterExisting(id);
     });
     MI.world.onGalaxyFrame(syncGalaxyLabels);
+    MI.world.onHubPick(showHubCard);
+    MI.world.onHubChange(syncHubUi);
+    el['hub-leave'].addEventListener('click', exitHub);
+    el['hub-card-close'].addEventListener('click', closeHubCard);
+    el['hub-card-swap'].addEventListener('click', confirmHubSwap);
 
     refreshStats();
   }
@@ -2405,6 +2616,6 @@
     init: init, refreshStats: refreshStats, hideLoading: hideLoading,
     showGate: showGate,
     // The settings menu opens this; it is the only way to change who you are.
-    openCharacterPicker: openPicker
+    openCharacterPicker: openHub
   };
 })();

@@ -20,8 +20,10 @@ Landscape = { slot, asset, fromMemoryId }   // plain terrain tiles around memori
 World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: tangent vec|null, seed,
            memories: [], people: [], landscape: [],
            planet: { frequency },                       // on MI.growth.LADDER; every slot indexes this grid
-           wallet: { shards, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
+           wallet: { shards /*shown as coins*/, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
            house: { slot, asset } | null,            // the main house; the character starts here
+           hub: { slot, asset } | null,              // village hall; click or walk up to enter the friend hub
+           ships: [{ id, hull, name, goal, claimed }], // pirate fleet; position is not stored
            player: { character: id|null },           // who your character is
            unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
            equipped: { theme: id, pet: id|null, satellite: id|null, skin: id } }
@@ -42,7 +44,7 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 
 ## MI.store  (owner: C)
 - `boot() -> World` / `load() -> World` — migrate a lone v4/v3/v2 save onto the journal shelf, then return an unsaved empty ocean (no `id`) so the first-screen picker can sit over a quiet planet. `save()` no-ops until a journal has been created or opened.
-- `get()`, `save()`, `reset()` (wipes this journal's shards and unlocks, keeps its id/name/character), `newId(prefix)`
+- `get()`, `save()`, `reset()` (wipes this journal's coins and unlocks, keeps its id/name/character), `newId(prefix)`
 - `listJournals() -> [{ id, name, character, memories, people, theme, frequency, updatedAt }]`, `lastJournalId()`, `currentId()`, `createJournal({ name, character }) -> World`, `openJournal(id) -> World|null`, `deleteJournal(id) -> { ok, wasCurrent }`
 - `addMemory(m)`, `addPerson(p)`, `addLandscape(entry)`, `findPerson(name) -> Person|null` (case-insensitive), `findMemoryBySlot(slot)`, `takenSlots()`, `occupiedSlots()`
 - `exportJSON() -> string`, `importJSON(str)` (normalized to v4)
@@ -65,7 +67,8 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 
 ## MI.world.player  (`src/world/player.js`)
 - Your character's model and movement maths. Pure: world.js passes it an `isLandAt` test and the camera's tangent axes each frame. `node scripts/test-player.js`.
-- `list()`, `get(id)`, `isCharacter(id)`, `defaultId()`, `makeAvatar(id, fallbackBuilder) -> Promise<Object3D>`
+- `list()`, `looks()`, `get(id)`, `isCharacter(id)`, `defaultId()`, `makeAvatar(id, fallbackBuilder) -> Promise<Object3D>`
+- `looks()` is all twelve Mini Character models (the six named gate avatars plus six extra looks used in the friend hub). `list()` stays the six named ones.
 - `newPlayer()`, `updateSphere(player, dt, ctx)`, `updateFlat(player, dt, ctx)`
 - `player.animator` (set by world.js from `MI.world.walkers.makeAnimator`) blends the GLB's own walk/idle clips; null for the procedural figure, which keeps the bob instead.
 - A player's sphere facing is a unit TANGENT VECTOR, not an angle, and `updateSphere` reports the rotation each step applied as `lastAxis`/`lastAngle`. Carry anything else that has a direction — the ground camera does — by that same rotation. Deriving a direction from a recomputed reference tangent instead is what made the camera swing when strafing.
@@ -81,24 +84,33 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
 - `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`
 
+## MI.ships  (`src/world/ships.js`, pure — `node scripts/test-ships.js`)
+- Who the pirate fleet is, what each ship asks for, and whether it has been claimed. No THREE, no DOM. Sailing lives in world.js (a walker whose walkable set is water); app.js watches for a goal being met.
+- `fleetSize(sizeIndex)`, `makeShip(seed, index, taken?)`, `ensureFleet(world, sizeIndex) -> added[]` (never shrinks; new ships skip goals/names already in the fleet)
+- `progressFor(world, ship) -> { done, target, complete, title, ask, unit }`, `claimable(world)`, `claim(world, shipId) -> bool`, `find(world, shipId)`, `modelFor(ship)`
+- Goals are journalling milestones (travel memories, a day with 2 people, a streak, 6 entries, 4 people). Claiming is the player's click, not automatic.
+
 ## MI.world  (owners: A = scene/planet/controls, B = spawn/assets/characters)
 - `init(canvasEl, { frequency, theme, pet, satellite, character, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
 - `setPlanet(frequency, { animate }) -> Promise` — swap to that grid (planet group scaled by frequency/10, so tiles keep their world size); clears props, caller replays the remapped world. `loadGrid(f)`, `currentTiles()`, `planetInfo()`
 - `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/walkers.js` (pets and residents).
   - A **satellite** lives in the scene, not on the planet: `animateSatellite` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
   - A **pet** stands on the tiles, so it is parented to the planet (sphere view) and to the island group (flat view), one wandering instance each. `updatePet` steps it tile to tile and is skipped mid-transition.
-- `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`, `spawnHouse(house, { animate })`
+- `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`, `spawnHouse(house, { animate })`, `spawnHub(hub, { animate })`
 - Your character: `setCharacter(id) -> Promise`, `characters()`, `currentCharacter()`. It is a permanent inhabitant — built at boot from `world.player.character`, visible in every view, and walked by WASD in orbit views as well as on the ground.
 - Ground view: `setGroundView(on) -> Promise<bool>`, `isGroundView()`. A third camera beside planet and island view, not a mode the character depends on. Orbit's controls are suspended while it is on and restored on exit.
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
-- `onPick(cb(slot | null))`
+- `onPick(cb(slot | null))`, `onShipPick(cb(shipId))`
+- `assetFor(key) -> { pack, key }`, `syncShips()`, `focusShip(shipId) -> bool`
 - `clear()`
 - Also implemented: `spawnLandscape(entry, { animate })`, `respawnMemory(memory)`, `pickAssetFor`, `pickTerrainFor`, `buildingsFor`, `landscapeCountFor`, `personColor`, `setFlatView(on, { instant }) -> Promise` (the island view; animated lift-and-gather unless `instant`) / `isFlatView()` / `isTransitioning()` (input and view toggles are ignored while true), `computeRoadEdges` / `roadConnections` / `rebuildRoads`.
 - The island's shape and roads come from `MI.island`; `world.js` draws it (`buildFlatView`, `buildIslandUnderside`, `makeSky`) and animates the change of view (`makeFoldRig`). `MI.world.computeFlatLayout` / `computeRoads` are gone with the strip layout.
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - `highlightSlot(slot, { soft })` / `clearHighlight()` / `highlightedSlot()` — marks one tile: a vertex tint on the planet, a gold rim and a lift on the island. Survives theme changes and the fold.
 - `onHover(cb(slot | null) -> bool)` — one raycast per frame; return true for tiles that open something and the cursor becomes a pointer.
-- `enterGalaxy(journals, { currentId, instant }) -> Promise`, `leaveGalaxy({ instant, dist, fit }) -> Promise`, `focusGalaxyPlanet(id) -> Promise`, `selectGalaxyPlanet(id) -> Promise`, `isGalaxy()`, `onGalaxyHover(cb)`, `onGalaxyPick(cb)`, `onGalaxyFrame(cb)` — space shelf of journal planets. Switching journals zooms the live planet out into a starfield and floats the others around it. Opening one flies up to it, then dives from space back into day.
+- `enterGalaxy(journals, { currentId, instant }) -> Promise`, `leaveGalaxy({ instant, dist, fit }) -> Promise`, `focusGalaxyPlanet(id) -> Promise`, `selectGalaxyPlanet(id) -> Promise`, `isGalaxy()`, `onGalaxyHover(cb)`, `onGalaxyPick(cb)`, `onGalaxyFrame(cb)` — space shelf of journal planets. Switching journals zooms the live planet out into a starfield and floats the others around it. WASD and arrows hop the camera so the chosen world stays centred, with a slight bounce. Hovering a planet shows its card above it (the name sits below); the card fades away when you leave. Opening one flies up to it, then dives from space back into day.
+- Friend hub: `enterHub() -> Promise<bool>`, `leaveHub({ instant }) -> Promise`, `isHub()`, `isHubSlot(slot)`, `inspectHubLook(id)`, `applyHubSwap(id) -> Promise`, `onHubPick(cb)`, `onHubChange(cb)`. Plaza of Mini Character looks around a house; occupancy and swap maths live in `src/world/hub.js` (`node scripts/test-hub.js`). The world building is Kenney `building-village.glb`. `MI.app.ensureHub` plants it beside home.
+- `MI.app.ensureHome` / `ensureHub` claim the house and village hall tiles on a new world.
 - **Planned:** person-linked roads and clicking a resident to show who
   they are and the memories they appear in.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
@@ -110,11 +122,13 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 
 ## MI.app  (owner: D)
 - `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.
-- `restore() -> Promise` replays the stored world (landscape, memories, people) without animation, then rebuilds roads.
-- `addEntry` also pays shards and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
+- `restore() -> Promise` replays the stored world (landscape, memories, people, ships) without animation, then rebuilds roads.
+- `addEntry` also pays coins and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
 - `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
 - `enterJournal(id, { keepCamera }) -> Promise<bool>`, `createJournal({ name, character, keepCamera }) -> Promise<bool>`, `rebuildScene({ keepCamera }) -> Promise` — swap the live planet to the stored world (grid, cosmetics, character, restore). `keepCamera` is for the galaxy dive, so the zoom-in is not reset.
-- `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`.
+- `ensureHome()`, `ensureHub()` — claim the house tile and the village-hall hub tile on a new world. Existing worlds keep theirs.
+- `claimShip(shipId) -> bool`, `checkShips()` — ships are won by writing; a toast points at one that is ready, claiming is the player's click.
+- `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`; `{ type: 'ship-ready', ship, progress }`; `{ type: 'ship-claimed', ship }`.
 - `opts.tags = { people: [{ name, personId? }], category, mood, importance }` from the tag row; each field falls back to `MI.ai.guess`. A `personId` is reused directly, so there is no name matching and no "same person?" prompt.
 
 ## Rules

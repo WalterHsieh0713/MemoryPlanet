@@ -38,12 +38,19 @@
       // The main house: the tile your character starts on, claimed at world creation so a
       // brand-new planet has somewhere to stand. { slot, asset } once MI.app.ensureHome runs.
       house: null,
+      // Gathering hall on the world: click it (or walk up in follow) to enter the friend hub.
+      // { slot, asset } once MI.app.ensureHub runs. Placeholder: Kenney village hall.
+      hub: null,
       // Plain terrain seeded around memories so the island reads as a landscape with
       // buildings in it, rather than a solid block of buildings.
       landscape: [],
       // Planet size: a frequency on MI.growth.LADDER. Every slot above indexes into the grid
       // for this frequency, so it must change together with them (MI.app.growPlanet).
       planet: { frequency: firstFrequency() },
+      // The pirate fleet (src/world/ships.js): one entry per ship, only its identity and
+      // whether it has been claimed. Where a ship IS at any moment is not stored — they sail,
+      // and their route is rebuilt from the seed, so there is nothing here to keep in sync.
+      ships: [],
       // Progression — see src/game/economy.js.
       wallet: { shards: 0, lifetime: 0, streak: 0, lastDay: null },
       // Pets walk on the land, satellites orbit in the sky (src/game/economy.js). Separate
@@ -98,8 +105,10 @@
     if (!w.memories) w.memories = [];
     if (!w.people) w.people = [];
     if (!w.landscape) w.landscape = []; // worlds saved before landscape existed
+    if (!w.ships) w.ships = [];         // worlds saved before the pirate fleet
     if (!w.player) w.player = { character: null }; // worlds saved before the character
     if (w.house === undefined) w.house = null;
+    if (w.hub === undefined) w.hub = null; // worlds saved before the village hall
     if (!w.planet) {
       // Every v2 world was built on the original 1002-tile grid (frequency 10).
       w.planet = { frequency: w.version >= 3 ? fresh.planet.frequency : 10 };

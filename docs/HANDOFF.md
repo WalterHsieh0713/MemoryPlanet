@@ -52,7 +52,7 @@ grows when half its buildable tiles are land: 42 → 92 → 162 → 362 → 642 
   opens between tiles that used to touch is bridged so the island never splits.
 - Roughly: growth lands at about 5-7, 12, 21, 48 and 89 memories.
 
-**Shards and shop** (`src/game/economy.js`). Every memory pays 10, plus importance, new
+**Coins and shop** (`src/game/economy.js`). Every memory pays 10, plus importance, new
 people, a daily streak, a first-memory bonus, and a bonus per growth. Spent on 4 themes,
 4 pets and 5 character skins. All the numbers are two tables at the top of that file.
 
@@ -110,8 +110,8 @@ mid-transition input lock came from a teammate's fold work and were kept.
 ## Open, and decisions already made
 
 - **Input method is still undecided** by the team. Rewards are paid inside `MI.app.addEntry`,
-  so any new input path that goes through it earns shards automatically.
-- **Start over wipes shards and unlocks** along with the planet. Deliberate, easy to change.
+  so any new input path that goes through it earns coins automatically.
+- **Start over wipes coins and unlocks** along with the planet. Deliberate, easy to change.
 - **The island rearranges tiles**, so it is a portrait of your world, not a map of it. If the
   team wants geography preserved, the alternative is changing how land grows on the planet so
   it forms a blob there too.

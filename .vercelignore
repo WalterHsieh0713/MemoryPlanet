@@ -5,12 +5,17 @@ tools/
 docs/
 .claude/
 CLAUDE.md
+# The asset contact sheet: a local tool, and its folder listing comes from server.js, which is
+# not deployed either. See /asset-sheet/ before cataloguing a model from a pack.
+asset-sheet/
 
 # Asset packs no code loads yet — kept out so deploys stay small. DELETE A LINE HERE the
 # moment code starts loading that pack, or it will 404 in production while working locally.
 # Currently loaded: kenney-hexagon-kit (buildings/terrain), assets/standalone/animals/cube-pets
-# (walking pets) and assets/standalone/characters/mini-characters (residents and your avatar),
-# via src/world/walkers.js. Those sorted folders are deliberately absent below.
+# (walking pets), assets/standalone/characters/mini-characters (residents and your avatar) and
+# assets/standalone/ships/pirate-kit (the pirate fleet), all via src/world/walkers.js, plus
+# assets/standalone/buildings/pirate-kit (the pirate towers PACKS in world.js plants). Those
+# sorted folders are deliberately absent below. The retired fantasy-town rotor parts stay ignored.
 assets/kenney_castle-kit/
 assets/kenney_cube-pets_1.0/
 assets/kenney_factory-kit_3.0/
@@ -18,11 +23,10 @@ assets/kenney_fantasy-town-kit_2.0/
 assets/kenney_holiday-kit/
 assets/kenney_mini-characters/
 assets/kenney_pirate-kit/
-assets/standalone/buildings/
+assets/standalone/buildings/fantasy-town-kit/
 assets/standalone/decor/
 assets/standalone/holiday-decor/
 assets/standalone/machinery/
 assets/standalone/nature/
-assets/standalone/ships/
 assets/standalone/siege-weapons/
 assets/standalone/vehicles/

@@ -68,6 +68,23 @@
         'female-e': 'character-female-e.glb',
         'female-f': 'character-female-f.glb'
       }
+    },
+    // Ships sail the ocean instead of walking the land, which took no new movement code at
+    // all: world.js hands the same FSM the water tiles rather than the land ones. They are
+    // slow and never really stop — a ship becalmed mid-ocean for four seconds looks broken,
+    // where a resident standing on a path looks like a resident standing on a path.
+    ship: {
+      pack: 'assets/standalone/ships/pirate-kit/',
+      step: [7, 11],
+      pause: [0, 0.6],
+      models: {
+        'ship-pirate-small.glb': 'ship-pirate-small.glb',
+        'ship-pirate-medium.glb': 'ship-pirate-medium.glb',
+        'ship-pirate-large.glb': 'ship-pirate-large.glb',
+        'ship-small.glb': 'ship-small.glb',
+        'ship-medium.glb': 'ship-medium.glb',
+        'ship-large.glb': 'ship-large.glb'
+      }
     }
   };
 
@@ -267,6 +284,21 @@
     });
   }
 
+  // One instance rather than a pair, for something that only ever appears in one view: the
+  // ships sail the planet's ocean and the island has no sea around it to sail on, so a flat
+  // copy would be a model loaded, cloned and animated for nothing.
+  function makeWalkerSolo(id) {
+    var kind = kindOf(id);
+    if (!kind) return Promise.resolve(null);
+    return loadTemplate(id).then(function (template) {
+      if (!template) return null;
+      var walker = newWalker(KINDS[kind]);
+      walker.group = cloneModel(template);
+      walker.animator = makeAnimator(walker.group, Math.random());
+      return walker;
+    });
+  }
+
   // --- Wander FSM, shared by both views -------------------------------------------------
 
   function inRange(range) {
@@ -330,10 +362,14 @@
   }
 
   // --- Sphere view ------------------------------------------------------------------------
-  // ctx: { isLand(id), neighborsOf(id) -> [ids], findAnchor() -> id|null, height, scale }.
+  // ctx: { isLand(id), neighborsOf(id) -> [ids], findAnchor() -> id|null, height, scale, hop }.
   // height/scale mirror how world.js sizes/places its other sphere props (state.spacing-
   // derived, RADIUS + LAND_LIFT) — these groups live inside the `planet` Group, which already
   // applies worldScale, so positions here stay in that same pre-scale unit-sphere space.
+  //
+  // `hop` overrides HOP_HEIGHT, the little bob that stands in for a walk cycle on a model with
+  // no clips. A ship has no clips either, but a ship that bobs between tiles is a ship
+  // skipping over the sea, so it passes 0 and rides the swell instead.
 
   function updateSphere(walker, dt, ctx) {
     if (!walker.group) return;
@@ -344,7 +380,8 @@
     if (!fromDir || !toDir) return;
     var ease = easeInOut(walker.t);
     var dir = fromDir.clone().lerp(toDir, ease).normalize();
-    var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
+    var bob = ctx.hop === undefined ? HOP_HEIGHT : ctx.hop;
+    var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * bob;
     var was = walker.group.position.clone();
     walker.group.position.copy(dir).multiplyScalar(ctx.height + hop);
     // Stand beside the middle of the tile rather than on it, the same trick spawnPerson uses:
@@ -419,6 +456,7 @@
     makeAnimator: makeAnimator,
     isShown: isShown,
     makeWalkerPair: makeWalkerPair,
+    makeWalkerSolo: makeWalkerSolo,
     updateSphere: updateSphere,
     updateFlat: updateFlat
   };

@@ -1,4 +1,4 @@
-// MI.economy — shards: earned by journaling, spent on themes, pets, satellites and skins.
+// MI.economy — coins: earned by journaling, spent on themes, pets, satellites and skins.
 // Reads and writes the wallet/unlocks/equipped fields of the stored world (MI.store); it
 // never touches the scene. Applying a purchase to the planet is MI.app.equip's job.
 (function () {
@@ -125,7 +125,7 @@
     return !!list && list.indexOf(id) !== -1;
   }
 
-  // -> { ok: true, item } | { ok: false, reason: 'unknown' | 'short', short: shardsMissing }
+  // -> { ok: true, item } | { ok: false, reason: 'unknown' | 'short', short: coinsMissing }
   function buy(kind, id) {
     var item = find(kind, id);
     if (!item) return { ok: false, reason: 'unknown' };
