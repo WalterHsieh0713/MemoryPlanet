@@ -25,7 +25,11 @@
     var created = [];
 
     (classified.people || []).forEach(function (candidate) {
-      var existing = MI.store.findPerson(candidate.name);
+      // A candidate picked from the tag row carries the person it means, so there is nothing
+      // to match on and no chance of two Sams. A typed name still falls back to the name.
+      var existing = candidate.personId
+        ? world.people.filter(function (p) { return p.id === candidate.personId; })[0]
+        : MI.store.findPerson(candidate.name);
       if (existing) {
         if (existing.memoryIds.indexOf(memoryId) === -1) existing.memoryIds.push(memoryId);
         ids.push(existing.id);
@@ -141,11 +145,26 @@
 
   // The planet grows when enough of it is land (MI.growth.shouldGrow). Before growing it
   // gets a beat to finish building the new memory, so you see it land first.
+  // What the memory is actually filed as. The tag row beside the entry box wins wherever the
+  // writer touched it; the keyword guess only fills the gaps. No network, so this can never
+  // hang or need a key.
+  function fieldsFor(text, tags) {
+    var guess = MI.ai.guess(text);
+    if (!tags) return guess;
+    return {
+      title: guess.title,
+      category: tags.category || guess.category,
+      mood: tags.mood || guess.mood,
+      people: tags.people && tags.people.length ? tags.people : guess.people,
+      importance: tags.importance || guess.importance
+    };
+  }
+
   function addEntry(text, options) {
     var opts = options || {};
     var animated = opts.animate !== false;
 
-    return MI.ai.classify(text).then(function (classified) {
+    return Promise.resolve(fieldsFor(text, opts.tags)).then(function (classified) {
       var placement = chooseSlot(MI.store.get());
       if (placement !== null) return placeMemory(text, classified, placement, opts);
       // Out of room before the planet had a chance to grow — grow first, then place.

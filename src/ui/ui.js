@@ -32,7 +32,11 @@
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
       'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
-      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items']
+      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
+      'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
+      'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
+      'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
+      'tag-mood', 'tag-cat', 'tag-big']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -59,6 +63,351 @@
     setTimeout(function () { el['stats-chip'].classList.remove('bump'); }, 400);
     refreshWallet();
     refreshPlanet();
+    renderBook();
+    refreshPersonList();
+  }
+
+  // --- The tag row ------------------------------------------------------------------------
+  // Who was there, how it felt, what kind of day: asked rather than guessed. The keyword
+  // guess pre-selects as you type, so the fast path is still type-and-enter, but a control
+  // you have touched is never overwritten by a later guess.
+
+  // Faces map onto the same mood shape the rest of the app stores.
+  var MOODS = [
+    { key: 'rough', emoji: '😞', label: 'rough', valence: -0.8, intensity: 0.8 },
+    { key: 'low', emoji: '😕', label: 'low', valence: -0.35, intensity: 0.5 },
+    { key: 'steady', emoji: '😐', label: 'steady', valence: 0.05, intensity: 0.3 },
+    { key: 'good', emoji: '🙂', label: 'good', valence: 0.45, intensity: 0.5 },
+    { key: 'joyful', emoji: '😄', label: 'joyful', valence: 0.9, intensity: 0.85 }
+  ];
+  var CATEGORIES = ['achievement', 'everyday', 'travel', 'home', 'social', 'other'];
+
+  // people: [{ name, personId? }] — personId set when picked from the people you already have.
+  var tags = { people: [], mood: null, category: null, big: false };
+  var touched = {};   // controls the writer has set by hand; guesses leave these alone
+  var guessTimer = null;
+
+  function moodFor(key) {
+    return MOODS.filter(function (m) { return m.key === key; })[0] || null;
+  }
+
+  // The stored mood label comes from thresholds in classify.js, so a guess arrives as a
+  // label rather than one of our keys.
+  function moodKeyFromLabel(label) {
+    return moodFor(label) ? label : 'steady';
+  }
+
+  function buildTagRow() {
+    MOODS.forEach(function (mood) {
+      var button = document.createElement('button');
+      button.className = 'tag-opt';
+      button.textContent = mood.emoji;
+      button.title = mood.label;
+      button.setAttribute('aria-label', mood.label);
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', function () {
+        touched.mood = true;
+        tags.mood = tags.mood === mood.key ? null : mood.key;
+        paintTagRow();
+      });
+      el['tag-mood'].appendChild(button);
+    });
+
+    CATEGORIES.forEach(function (category) {
+      var flavor = CATEGORY_FLAVOR[category] || CATEGORY_FLAVOR.other;
+      var button = document.createElement('button');
+      button.className = 'tag-opt';
+      button.textContent = flavor.emoji;
+      button.title = category;
+      button.setAttribute('aria-label', category);
+      button.setAttribute('aria-pressed', 'false');
+      button.addEventListener('click', function () {
+        touched.category = true;
+        tags.category = tags.category === category ? null : category;
+        paintTagRow();
+      });
+      el['tag-cat'].appendChild(button);
+    });
+
+    el['tag-big'].addEventListener('click', function () {
+      touched.importance = true;
+      tags.big = !tags.big;
+      paintTagRow();
+    });
+
+    el['tag-person-input'].addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitPerson(); }
+      if (e.key === 'Backspace' && !el['tag-person-input'].value && tags.people.length) {
+        tags.people.pop();
+        paintTagRow();
+      }
+    });
+    // Picking from the datalist fires input, not change, in some browsers; both are cheap.
+    el['tag-person-input'].addEventListener('change', commitPerson);
+    el['tag-person-input'].addEventListener('blur', commitPerson);
+  }
+
+  function commitPerson() {
+    var name = el['tag-person-input'].value.trim();
+    if (!name) return;
+    touched.people = true;
+    el['tag-person-input'].value = '';
+    addPersonTag(name);
+  }
+
+  function addPersonTag(name, personId) {
+    var key = name.trim().toLowerCase();
+    if (!key) return;
+    var already = tags.people.filter(function (p) { return p.name.toLowerCase() === key; });
+    if (already.length) return;
+    // Typing a name you already have is the same person — no need to ask.
+    var known = personId ? null : MI.store.findPerson(name);
+    tags.people.push({ name: name.trim(), personId: personId || (known && known.id) || null });
+    paintTagRow();
+  }
+
+  function paintTagRow() {
+    el['tag-people'].innerHTML = '';
+    tags.people.forEach(function (entry, index) {
+      var person = entry.personId
+        ? MI.store.get().people.filter(function (p) { return p.id === entry.personId; })[0]
+        : null;
+      var chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      if (person && person.appearance && person.appearance.color !== undefined) {
+        var dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = '#' + person.appearance.color.toString(16).padStart(6, '0');
+        chip.appendChild(dot);
+      }
+      chip.appendChild(document.createTextNode(entry.name));
+      var remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Remove ' + entry.name);
+      remove.addEventListener('click', function () {
+        touched.people = true;
+        tags.people.splice(index, 1);
+        paintTagRow();
+      });
+      chip.appendChild(remove);
+      el['tag-people'].appendChild(chip);
+    });
+
+    Array.prototype.forEach.call(el['tag-mood'].children, function (button, i) {
+      button.setAttribute('aria-pressed', String(MOODS[i].key === tags.mood));
+    });
+    Array.prototype.forEach.call(el['tag-cat'].children, function (button, i) {
+      button.setAttribute('aria-pressed', String(CATEGORIES[i] === tags.category));
+    });
+    el['tag-big'].setAttribute('aria-pressed', String(tags.big));
+  }
+
+  // Offer the people this world already knows, so the same name means the same person.
+  function refreshPersonList() {
+    el['tag-person-list'].innerHTML = '';
+    MI.store.get().people.forEach(function (person) {
+      var option = document.createElement('option');
+      option.value = person.name;
+      el['tag-person-list'].appendChild(option);
+    });
+  }
+
+  function guessTags() {
+    var text = el['entry-input'].value.trim();
+    if (!text) { resetTags(); return; }
+    var guess = MI.ai.guess(text);
+    if (!touched.category) tags.category = guess.category;
+    if (!touched.mood) tags.mood = moodKeyFromLabel(guess.mood.label);
+    if (!touched.people) {
+      tags.people = (guess.people || []).map(function (p) {
+        var known = MI.store.findPerson(p.name);
+        return { name: p.name, personId: known ? known.id : null };
+      });
+    }
+    paintTagRow();
+  }
+
+  function resetTags() {
+    tags = { people: [], mood: null, category: null, big: false };
+    touched = {};
+    el['tag-person-input'].value = '';
+    paintTagRow();
+  }
+
+  function currentTags() {
+    var mood = moodFor(tags.mood);
+    return {
+      people: tags.people.slice(),
+      category: tags.category,
+      mood: mood ? { label: mood.label, valence: mood.valence, intensity: mood.intensity } : null,
+      importance: tags.big ? 4 : null
+    };
+  }
+
+  // --- Opening the book ---------------------------------------------------------------------
+
+  var bookOpener = null;
+  var bookFocusTimer = null;
+
+  function selectBookPage(page) {
+    el.book.dataset.page = page;
+    el['book-write-tab'].setAttribute('aria-selected', String(page === 'write'));
+    el['book-memories-tab'].setAttribute('aria-selected', String(page === 'memories'));
+    if (page === 'write' && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
+  }
+
+  function openBook(event) {
+    if (isBookOpen()) return;
+    clearTimeout(toastTimer);
+    el.toast.classList.remove('show');
+    bookOpener = event && event.currentTarget || document.activeElement;
+    var rect = el['book-btn'].querySelector('.mini-book').getBoundingClientRect();
+    el.book.style.setProperty('--book-from-x', (rect.left + rect.width / 2 - window.innerWidth / 2) + 'px');
+    el.book.style.setProperty('--book-from-y', (rect.top + rect.height / 2 - window.innerHeight / 2) + 'px');
+    el.book.style.setProperty('--book-from-scale', rect.width / el.book.querySelector('.spread').offsetWidth);
+    // Apply the miniature's measured starting pose before beginning the expansion.
+    void el.book.offsetWidth;
+    refreshPersonList();
+    renderBook();
+    el['write-date'].textContent = new Date().toLocaleDateString(undefined,
+      { weekday: 'long', month: 'long', day: 'numeric' });
+    selectBookPage('write');
+    el.book.classList.add('open');
+    el['book-btn'].setAttribute('aria-expanded', 'true');
+    // Wait for the book to become visible before moving keyboard focus inside it.
+    bookFocusTimer = setTimeout(function () {
+      if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
+    }, 530);
+  }
+
+  function closeBook() {
+    clearTimeout(bookFocusTimer);
+    el.book.classList.remove('open');
+    el['book-btn'].setAttribute('aria-expanded', 'false');
+    if (bookOpener && bookOpener.isConnected) bookOpener.focus();
+  }
+
+  function isBookOpen() {
+    return el.book.classList.contains('open');
+  }
+
+  // --- The book ---------------------------------------------------------------------------
+  // Every entry, newest first, two-way linked with the planet: hovering a row marks its tile,
+  // clicking one opens it, and clicking the tile flashes the row.
+
+  var rowBySlot = {};
+
+  function dayLabel(iso) {
+    var today = new Date().toISOString().slice(0, 10);
+    if (iso === today) return 'today';
+    try {
+      return new Date(iso + 'T12:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric' });
+    } catch (e) {
+      return iso;
+    }
+  }
+
+  function renderBook() {
+    var world = MI.store.get();
+    var count = world.memories.length;
+    el['book-count'].textContent = count ? count : '';
+    el['book-note'].textContent = count ? plural(count, 'memory').replace('memorys', 'memories') : '';
+    el['book-list'].innerHTML = '';
+    rowBySlot = {};
+
+    if (!count) {
+      var blank = document.createElement('div');
+      blank.className = 'empty-page';
+      blank.textContent = 'Nothing written yet. Whatever you put on the right becomes a building on your planet.';
+      el['book-list'].appendChild(blank);
+      return;
+    }
+
+    // Memories are stored in the order they were written, so the book sorts for itself.
+    var entries = world.memories.slice().sort(function (a, b) {
+      var byDate = String(b.occurredOn || '').localeCompare(String(a.occurredOn || ''));
+      return byDate !== 0 ? byDate : String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+
+    var day = null;
+    entries.forEach(function (memory) {
+      var on = (memory.occurredOn || memory.createdAt || '').slice(0, 10);
+      if (on !== day) {
+        day = on;
+        var heading = document.createElement('div');
+        heading.className = 'day';
+        heading.textContent = dayLabel(on);
+        el['book-list'].appendChild(heading);
+      }
+      el['book-list'].appendChild(buildRow(memory, world));
+    });
+  }
+
+  function buildRow(memory, world) {
+    var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
+    var row = document.createElement('button');
+    row.className = 'entry';
+
+    var emoji = document.createElement('span');
+    emoji.className = 'entry-emoji';
+    emoji.textContent = flavor.emoji;
+
+    var body = document.createElement('span');
+    body.className = 'entry-body';
+    var name = document.createElement('span');
+    name.className = 'entry-name';
+    name.textContent = memory.title;
+    body.appendChild(name);
+
+    var people = (memory.people || []).map(function (id) {
+      return world.people.filter(function (p) { return p.id === id; })[0];
+    }).filter(Boolean);
+    if (people.length) {
+      var who = document.createElement('span');
+      who.className = 'entry-who';
+      people.forEach(function (person) {
+        var dot = document.createElement('span');
+        dot.className = 'who-dot';
+        var color = (person.appearance && person.appearance.color) || 0x7fa3ae;
+        dot.style.background = '#' + color.toString(16).padStart(6, '0');
+        who.appendChild(dot);
+      });
+      who.appendChild(document.createTextNode(people.map(function (p) { return p.name; }).join(', ')));
+      body.appendChild(who);
+    }
+
+    row.appendChild(emoji);
+    row.appendChild(body);
+
+    var slot = memory.placement && memory.placement.slot;
+    if (slot !== undefined && slot !== null) {
+      rowBySlot[slot] = row;
+      if (slot === openSlot) row.classList.add('current');
+      row.addEventListener('mouseenter', function () {
+        if (openSlot === null) MI.world.highlightSlot(slot, { soft: true });
+      });
+      row.addEventListener('mouseleave', function () {
+        if (openSlot === null) MI.world.clearHighlight();
+      });
+      row.addEventListener('click', function () {
+        closeBook(); // the card and the planet are behind the book
+        showDetail(memory);
+        MI.world.focus(slot);
+      });
+    }
+    return row;
+  }
+
+  // Keep the list in step with whatever is open, and bring that row into view.
+  function markOpenRow(scrollTo) {
+    Object.keys(rowBySlot).forEach(function (slot) {
+      rowBySlot[slot].classList.toggle('current', Number(slot) === openSlot);
+    });
+    var row = openSlot === null ? null : rowBySlot[openSlot];
+    if (!row || !scrollTo) return;
+    row.scrollIntoView({ block: 'nearest' });
+    bump(row, 'flash');
   }
 
   // --- Shards + planet size ------------------------------------------------------------
@@ -126,6 +475,7 @@
       showToast(event.memory, event.reward);
       refreshStats(); // counts, wallet and planet bar, the moment the memory lands
       bump(el.wallet, 'bump');
+      bump(el['book-btn'], 'nudge'); // the book just got another page
       floatShards(event.reward.total);
     } else if (event.type === 'grew') {
       syncViewButton(); // growing always returns to the planet view
@@ -254,8 +604,16 @@
     }
   }
 
+  // The tile whose entry is open, so hovering elsewhere and coming back restores its mark.
+  var openSlot = null;
+
   function showDetail(memory) {
     var world = MI.store.get();
+    openSlot = memory.placement ? memory.placement.slot : null;
+    openMemory = memory;
+    if (openSlot !== null) MI.world.highlightSlot(openSlot);
+    markOpenRow(true);
+    el['title-suggest'].hidden = claudeAvailable === false;
     el['detail-cat'].textContent = memory.category + ' · ' + (memory.mood && memory.mood.label || '');
     el['detail-title'].textContent = memory.title;
     el['detail-date'].textContent = formatDate(memory.occurredOn || memory.createdAt);
@@ -301,34 +659,92 @@
     });
   }
 
+  // --- Renaming an entry -------------------------------------------------------------------
+  // A title is a guess until someone says otherwise, so it is editable in place. Claude can
+  // offer a nicer one when a key is configured; the button hides itself when it can't.
+
+  var openMemory = null;
+  var claudeAvailable = null; // unknown until the first attempt
+
+  function saveTitle() {
+    if (!openMemory) return;
+    var next = el['detail-title'].textContent.trim().replace(/\s+/g, ' ');
+    if (!next) { el['detail-title'].textContent = openMemory.title; return; }
+    if (next === openMemory.title) return;
+    openMemory.title = next;
+    MI.store.save();
+    renderBook();
+    markOpenRow(false);
+  }
+
+  function suggestTitle() {
+    if (!openMemory) return;
+    var memory = openMemory;
+    el['title-suggest'].disabled = true;
+    el['title-suggest'].textContent = 'thinking…';
+    MI.ai.classify(memory.text).then(function (result) {
+      el['title-suggest'].disabled = false;
+      el['title-suggest'].textContent = '✨ suggest a title';
+      // classify() falls back to the local guess when Claude is unreachable, and that would
+      // just hand back the title we already have.
+      if (result.source !== 'claude') {
+        claudeAvailable = false;
+        el['title-suggest'].hidden = true;
+        toast('🔌', 'No title suggestions', 'Claude is not configured for this planet.', 0, 3000);
+        return;
+      }
+      claudeAvailable = true;
+      if (memory !== openMemory) return; // they moved on while it was thinking
+      memory.title = result.title;
+      el['detail-title'].textContent = result.title;
+      MI.store.save();
+      renderBook();
+      markOpenRow(false);
+    });
+  }
+
   function hideDetail() {
+    saveTitle(); // a rename in progress counts, even if they click away
     el.detail.classList.remove('show');
+    openSlot = null;
+    openMemory = null;
+    MI.world.clearHighlight();
+    markOpenRow(false);
   }
 
   function setBusy(busy) {
     el['submit-btn'].disabled = busy;
-    el['submit-btn'].textContent = busy ? '·' : '→';
+    el['submit-btn'].textContent = busy ? 'planting…' : 'Plant it on my planet ✨';
   }
 
   function submitEntry() {
+    if (el['submit-btn'].disabled) return;
     var text = el['entry-input'].value.trim();
     if (!text) return;
+    commitPerson(); // a name still sitting in the box counts
+    var entryTags = currentTags();
     setBusy(true);
-    el['entry-input'].value = '';
     hideDetail();
+    closeBook(); // out of the way, so the building is the thing you see appear
 
     // The memory's toast comes from the app's 'reward' event as it lands, and a growth toast
     // from 'grew' — this only has to handle the end of the whole thing.
-    MI.app.addEntry(text).then(function (memory) {
+    MI.app.addEntry(text, { tags: entryTags }).then(function (memory) {
       setBusy(false);
       if (!memory) {
+        openBook();
         toast('🌊', 'Your planet is full!', 'Every buildable tile has a memory on it.', 0, 4200);
         return;
+      }
+      if (el['entry-input'].value.trim() === text) {
+        el['entry-input'].value = '';
+        resetTags();
       }
       refreshStats();
     }, function (err) {
       setBusy(false);
       console.error('[MI.ui] addEntry failed', err);
+      openBook(); // keep the writing available to retry
     });
   }
 
@@ -404,10 +820,37 @@
 
     el['submit-btn'].addEventListener('click', submitEntry);
     el['entry-input'].addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') submitEntry();
+      // It is a page in a book, so Enter is a new line; Ctrl/Cmd+Enter puts it on the planet.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEntry(); }
     });
+
+    el['book-btn'].addEventListener('click', openBook);
+    el['book-close'].addEventListener('click', closeBook);
+    el['book-write-tab'].addEventListener('click', function () { selectBookPage('write'); });
+    el['book-memories-tab'].addEventListener('click', function () { selectBookPage('memories'); });
+    el.book.addEventListener('click', function (e) {
+      if (e.target === el.book) closeBook(); // the cover around the pages, not the pages
+    });
+
+    buildTagRow();
+    paintTagRow();
+    el['entry-input'].addEventListener('input', function () {
+      clearTimeout(guessTimer);
+      guessTimer = setTimeout(guessTags, 220); // after the typing pauses, not on every key
+    });
+    el['entry-input'].addEventListener('focus', refreshPersonList);
     el['demo-btn'].addEventListener('click', loadDemoPlanet);
     el['detail-close'].addEventListener('click', hideDetail);
+
+    el['detail-title'].addEventListener('blur', saveTitle);
+    el['detail-title'].addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); el['detail-title'].blur(); }
+      if (e.key === 'Escape' && openMemory) {
+        el['detail-title'].textContent = openMemory.title;
+        el['detail-title'].blur();
+      }
+    });
+    el['title-suggest'].addEventListener('click', suggestTitle);
 
     MI.app.onEvent(handleAppEvent);
     el['shop-btn'].addEventListener('click', openShop);
@@ -422,7 +865,20 @@
       });
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && el.shop.classList.contains('open')) closeShop();
+      if (e.key === 'Tab' && isBookOpen()) {
+        var focusable = Array.prototype.filter.call(
+          el.book.querySelectorAll('button:not([disabled]), textarea:not([disabled]), input:not([disabled])'),
+          function (node) { return node.getClientRects().length > 0; }
+        );
+        if (focusable.length) {
+          var first = focusable[0], last = focusable[focusable.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+      if (e.key !== 'Escape') return;
+      if (el.shop.classList.contains('open')) closeShop();
+      else if (isBookOpen()) closeBook();
     });
 
     MI.world.onPick(function (slot) {
@@ -434,6 +890,16 @@
       } else {
         hideDetail();
       }
+    });
+
+    // Pointer cursor only over tiles that open something, and a light mark under it. When
+    // the pointer leaves, the open entry's own mark comes back.
+    MI.world.onHover(function (slot) {
+      var memory = slot === null || slot === undefined ? null : MI.store.findMemoryBySlot(slot);
+      if (memory) MI.world.highlightSlot(slot, { soft: true });
+      else if (openSlot === null) MI.world.clearHighlight();
+      else MI.world.highlightSlot(openSlot);
+      return !!memory;
     });
 
     refreshStats();
