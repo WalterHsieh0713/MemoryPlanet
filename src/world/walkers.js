@@ -594,12 +594,75 @@
     }
   }
 
+  // One off-screen renderer for picker portraits. Copying pixels out (the asset-sheet
+  // trick) means each card is a plain image and we never burn a WebGL context per look.
+  var portraitGpu = null;
+  var portraitUrls = {};
+
+  function getPortraitGpu() {
+    if (!portraitGpu) {
+      var canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 192;
+      portraitGpu = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+      portraitGpu.setClearColor(0x000000, 0);
+      portraitGpu.outputEncoding = THREE.sRGBEncoding;
+      portraitGpu.setPixelRatio(1);
+      portraitGpu.setSize(192, 192, false);
+    }
+    return portraitGpu;
+  }
+
+  function portraitUrl(id) {
+    if (portraitUrls[id]) return Promise.resolve(portraitUrls[id]);
+    return loadTemplate(id).then(function (template) {
+      if (!template) return null;
+      if (portraitUrls[id]) return portraitUrls[id];
+      var model = cloneModel(template);
+      var animator = makeAnimator(model, 0.12);
+      if (animator) {
+        animator.update(0.08, 0);
+        animator.dispose();
+      }
+      var gpu = getPortraitGpu();
+      var scene = new THREE.Scene();
+      scene.add(new THREE.HemisphereLight(0xfff4e8, 0x8aa0b0, 1.15));
+      var sun = new THREE.DirectionalLight(0xffffff, 0.85);
+      sun.position.set(3.2, 6.5, 4.2);
+      scene.add(sun);
+
+      var box = new THREE.Box3().setFromObject(model);
+      var size = box.getSize(new THREE.Vector3());
+      var centre = box.getCenter(new THREE.Vector3());
+      var span = Math.max(size.x, size.y, size.z, 0.001);
+      model.position.set(-centre.x, -box.min.y, -centre.z);
+      var holder = new THREE.Group();
+      holder.add(model);
+      holder.scale.setScalar(1 / span);
+      holder.rotation.y = Math.PI * 0.16;
+      scene.add(holder);
+
+      var fov = 26;
+      var camera = new THREE.PerspectiveCamera(fov, 1, 0.01, 20);
+      var distance = 0.82 / Math.tan(Math.PI * fov / 360);
+      camera.position.set(distance * 0.1, distance * 0.22, distance * 0.7);
+      camera.lookAt(0, 0.42, 0);
+      gpu.render(scene, camera);
+
+      var copy = document.createElement('canvas');
+      copy.width = copy.height = 192;
+      copy.getContext('2d').drawImage(gpu.domElement, 0, 0);
+      portraitUrls[id] = copy.toDataURL('image/png');
+      return portraitUrls[id];
+    });
+  }
+
   MI.world.walkers = {
     isPet: isPet,
     isResident: isResident,
     residentModelFor: residentModelFor,
     makeModel: function (id) { return loadTemplate(id).then(function (model) { return model && cloneModel(model); }); },
     makeAnimator: makeAnimator,
+    portraitUrl: portraitUrl,
     isShown: isShown,
     pickLoiterSpot: pickLoiterSpot,
     stepSpot: stepSpot,

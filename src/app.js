@@ -8,6 +8,10 @@
     return new Date().toISOString();
   }
 
+  function photoData(value) {
+    return typeof value === 'string' && value.indexOf('data:image/') === 0 ? value : null;
+  }
+
   // Everything random-ish is decided ONCE here and persisted on the record, so replaying a
   // stored world reproduces it exactly instead of re-rolling (CLAUDE.md).
   function makePlacement(slot, seed) {
@@ -316,8 +320,13 @@
     memory.importance = classified.importance;
     memory.people = resolved.ids;
     memory.asset = assetFor(memory, oldCategory, memory.category);
+    if (opts.photo !== undefined) memory.photo = photoData(opts.photo);
     memory.editedAt = nowISO();
-    MI.store.save();
+    var saved = MI.store.save();
+    if (!saved && opts.photo) {
+      memory.photo = null;
+      MI.store.save();
+    }
 
     var jobs = [];
     // The building only goes up again if it actually changed — a swap animation for an edit
@@ -363,6 +372,7 @@
       importance: classified.importance,
       placement: makePlacement(slot, seed),
       asset: MI.world.pickAssetFor(classified.category, slot),
+      photo: photoData(opts.photo),
       source: opts.source || 'user'
     };
 
@@ -373,7 +383,10 @@
 
     MI.store.addMemory(memory);
     var seeded = seedLandscape(memory, placement.via);
-    MI.store.save();
+    if (!MI.store.save() && memory.photo) {
+      memory.photo = null;
+      MI.store.save();
+    }
     emit({ type: 'reward', memory: memory,
       reward: MI.economy.rewardMemory(memory, { newPeople: people.created.length }) });
 
@@ -623,10 +636,25 @@
     return rebuildScene();
   }
 
+  // Attach or clear a photo on an already-written memory (the detail card, not a rewrite).
+  function setMemoryPhoto(memoryId, photo) {
+    var world = MI.store.get();
+    var memory = world.memories.filter(function (m) { return m.id === memoryId; })[0];
+    if (!memory) return { ok: false, reason: 'missing' };
+    var previous = memory.photo || null;
+    memory.photo = photoData(photo);
+    if (!MI.store.save() && memory.photo) {
+      memory.photo = previous;
+      MI.store.save();
+      return { ok: false, reason: 'quota', memory: memory };
+    }
+    return { ok: true, memory: memory };
+  }
+
   MI.app = {
     addEntry: addEntry, updateEntry: updateEntry, restore: restore, growPlanet: growPlanet,
     equip: equip, feedPet: feedPet, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
-    ensureHub: ensureHub,
+    ensureHub: ensureHub, setMemoryPhoto: setMemoryPhoto,
     rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
     claimShip: claimShip, checkShips: checkShips
   };

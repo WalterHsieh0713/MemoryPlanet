@@ -10,6 +10,7 @@ Memory = {
   category: 'achievement'|'everyday'|'travel'|'home'|'social'|'other',
   mood: { label, valence /*-1..1*/, intensity /*0..1*/ },
   people: [personId], importance /*1..5*/,
+  photo: dataURL|null,                                                  // optional jpeg; omitted on older saves
   placement: { slot /*tile index in the hex grid*/, dir: [x,y,z] /*unit vector on sphere*/, rotY, scale },   // persisted
   asset: { pack, key },                                                       // persisted
   source: 'user'|'seed'
@@ -124,15 +125,16 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
   what the character is standing on, once or twice a frame.
 
 ## MI.app  (owner: D)
-- `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.
+- `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`, `photo` (jpeg data URL).
 - `restore() -> Promise` replays the stored world (landscape, memories, people, ships) without animation, then rebuilds roads.
 - `addEntry` also pays coins and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
 - `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `feedPet(foodId, petId) -> { ok, item, petId } | { ok: false, reason: 'no-pet'|'empty' }` (spends pantry; `petId` must be owned, and falls back to the equipped pet), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
+- `setMemoryPhoto(id, photo|null) -> { ok, memory, reason? }` — attach or clear a photo on an existing memory from the detail card. `reason` is `'missing'` or `'quota'` when save fails.
 - `enterJournal(id, { keepCamera }) -> Promise<bool>`, `createJournal({ name, character, keepCamera }) -> Promise<bool>`, `rebuildScene({ keepCamera }) -> Promise` — swap the live planet to the stored world (grid, cosmetics, character, restore). `keepCamera` is for the galaxy dive, so the zoom-in is not reset.
 - `ensureHome()`, `ensureHub()` — claim the house tile and the village-hall hub tile on a new world. Existing worlds keep theirs.
 - `claimShip(shipId) -> bool`, `checkShips()` — ships are won by writing; a toast points at one that is ready, claiming is the player's click.
 - `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`; `{ type: 'ship-ready', ship, progress }`; `{ type: 'ship-claimed', ship }`.
-- `opts.tags = { people: [{ name, personId? }], category, mood, importance }` from the tag row; each field falls back to `MI.ai.guess`. A `personId` is reused directly, so there is no name matching and no "same person?" prompt.
+- `opts.tags = { people: [{ name, personId? }], category, mood, importance }` from the tag row; each field falls back to `MI.ai.guess`. A `personId` is reused directly, so there is no name matching and no "same person?" prompt. `opts.photo` is the optional jpeg for the scrapbook clip.
 
 ## Rules
 - One owner per file; need a change in someone else's file? Ask them (or open a small PR to them).
