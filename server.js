@@ -53,10 +53,29 @@ async function classify(req, res) {
   return json(out.status, out.body);
 }
 
+// GET /api/assets?dir=<path under the repo> -> { dir, files: [...] }, the .glb names in it.
+// Dev-only, and deliberately so: it exists for /asset-sheet/, the contact sheet that renders a
+// pack so you can see what a model actually is before cataloguing it. server.js is not
+// deployed, so this adds nothing to production. Guarded like the static handler below —
+// resolved under ROOT, and anything that escapes is refused.
+function listAssets(url, res) {
+  const dir = path.normalize(path.join(ROOT, decodeURIComponent(url.searchParams.get('dir') || '')));
+  if (!dir.startsWith(ROOT)) { res.writeHead(403); return res.end('Forbidden'); }
+  fs.readdir(dir, (err, names) => {
+    res.writeHead(err ? 404 : 200, { 'Content-Type': 'application/json; charset=utf-8' });
+    if (err) return res.end(JSON.stringify({ error: 'no such folder' }));
+    res.end(JSON.stringify({
+      dir: path.relative(ROOT, dir).replace(/\\/g, '/'),
+      files: names.filter((n) => n.toLowerCase().endsWith('.glb')).sort()
+    }));
+  });
+}
+
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     if (req.method === 'POST' && url.pathname === '/api/classify') return await classify(req, res);
+    if (req.method === 'GET' && url.pathname === '/api/assets') return listAssets(url, res);
 
     let rel = decodeURIComponent(url.pathname);
     if (rel.endsWith('/')) rel += 'index.html';
