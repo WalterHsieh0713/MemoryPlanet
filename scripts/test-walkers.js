@@ -41,5 +41,17 @@ walkers.makeWalkerPair(model, function () { return new THREE.Group(); }).then(fu
   });
   assert.strictEqual(pair.flat.targetId, 1);
   assert(Math.abs(pair.flat.group.position.x - 1) < 1e-6);
+  pair.flat.tileId = pair.flat.targetId = 0;
+  pair.flat.pause = 0;
+  pair.flat.t = 1;
+  walkers.updateFlat(pair.flat, 0.1, {
+    isLand: function (id) { return id >= 0 && id <= 2; },
+    neighborsOf: function () { return [1, 2]; },
+    chooseNext: function () { return 2; },
+    findAnchor: function () { return 0; },
+    centres: { 0: { x: 0, z: 0 }, 1: { x: 1, z: 0 }, 2: { x: 0, z: 1 } },
+    baseY: 2, scale: 1
+  });
+  assert.strictEqual(pair.flat.targetId, 2, 'resident route chooses a stop over a random branch');
   console.log('--- walker checks passed ---');
 }).catch(function (err) { console.error(err); process.exitCode = 1; });

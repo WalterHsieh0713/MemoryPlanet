@@ -304,6 +304,7 @@
     var retitle = titleWasDerived(memory);
     var oldCategory = memory.category;
     var oldAsset = memory.asset && memory.asset.key;
+    var oldPeople = (memory.people || []).slice();
 
     var resolved = peopleForEdit(classified.people, memory);
     var departed = refilePeople(memory, resolved.ids);
@@ -327,6 +328,10 @@
     });
 
     return Promise.all(jobs).then(function () {
+      if (oldPeople.slice().sort().join('|') !== resolved.ids.slice().sort().join('|')) {
+        return MI.world.refreshRoads();
+      }
+    }).then(function () {
       // Editing never pays: shards are for writing something down, not for going back over
       // it. `departed` and `arrived` let the UI say what quietly changed on the planet.
       emit({ type: 'edited', memory: memory, departed: departed, arrived: resolved.created });

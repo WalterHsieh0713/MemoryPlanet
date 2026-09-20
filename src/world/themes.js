@@ -78,11 +78,8 @@
         'stone.glb': 0xa7a9a4, 'stone-hill.glb': 0x9c9e99, 'stone-rocks.glb': 0xa3a59f,
         'stone-mountain.glb': 0xb9bab4, 'dirt.glb': 0xb58a6a, 'dirt-lumber.glb': 0xa47c5e
       },
-      // True reds (roofs, flags) turn sakura pink; orange and brown (dirt roads) stay put.
-      atlas: function (h, s, l) {
-        if (s > 0.25 && (h < 0.035 || h > 0.94)) return [0.94, s * 0.62, Math.min(0.9, l * 0.7 + 0.3), 0];
-        return [h, s, l, 0];
-      }
+      // Keep the kit's roof and sign colours intact. The pink canopy is applied to
+      // foliage geometry separately; shifting the shared atlas also pinked buildings.
     },
 
     starlight: {

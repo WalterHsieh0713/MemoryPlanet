@@ -449,6 +449,38 @@
   // Placeholder gathering hall for the friend hub. Village-kit piece, distinct from the
   // main house, so it reads as a place people meet rather than a second home.
   var HUB_SCALE = 1.32;
+  var hubSignTexture = null;
+
+  function addHubSign(building, tileSize) {
+    if (!hubSignTexture) {
+      var canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 160;
+      var ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff8e8';
+      ctx.strokeStyle = '#7e553c';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.roundRect(12, 12, 488, 136, 34);
+      ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#274f58';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 54px Quicksand, sans-serif';
+      ctx.fillText('Character Hub', 256, 78);
+      ctx.font = 'bold 30px Quicksand, sans-serif';
+      ctx.fillText('click or walk up to enter', 256, 124);
+      hubSignTexture = new THREE.CanvasTexture(canvas);
+    }
+    var sign = new THREE.Sprite(new THREE.SpriteMaterial({ map: hubSignTexture, transparent: true }));
+    building.updateWorldMatrix(true, true);
+    var box = new THREE.Box3().setFromObject(building);
+    var above = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y + tileSize * 0.35,
+      (box.min.z + box.max.z) / 2);
+    var scale = building.getWorldScale(new THREE.Vector3()).x;
+    sign.position.copy(building.worldToLocal(above));
+    sign.scale.set(tileSize * 1.45 / scale, tileSize * 0.45 / scale, 1);
+    building.add(sign);
+  }
 
   function spawnHub(hub, options) {
     if (!state || !hub || typeof hub.slot !== 'number') return Promise.resolve();
@@ -459,6 +491,9 @@
       animate: opts.animate !== false,
       rotY: Math.PI / 3,
       tag: { type: 'hub', slot: hub.slot }
+    }).then(function (obj) {
+      if (obj) addHubSign(obj, state.spacing * state.planet.scale.x);
+      return obj;
     });
   }
 
@@ -754,6 +789,56 @@
     return pairs;
   }
 
+  function residentStops(person, world) {
+    var slots = {};
+    world.memories.forEach(function (m) {
+      if (m.placement) slots[m.id] = m.placement.slot;
+    });
+    return (person.memoryIds || []).map(function (id) { return slots[id]; })
+      .filter(function (slot, index, all) { return slot !== undefined && all.indexOf(slot) === index; });
+  }
+
+  function residentRoute(stops, neighborsOf) {
+    var route = new Set(stops);
+    for (var i = 1; i < stops.length; i++) {
+      var from = stops[i - 1], to = stops[i];
+      var seen = new Set([from]), previous = {}, queue = [from];
+      for (var at = 0; at < queue.length && !seen.has(to); at++) {
+        neighborsOf(queue[at]).forEach(function (next) {
+          if (seen.has(next)) return;
+          seen.add(next);
+          previous[next] = queue[at];
+          queue.push(next);
+        });
+      }
+      if (!seen.has(to)) continue;
+      for (var slot = to; slot !== from; slot = previous[slot]) route.add(slot);
+      route.add(from);
+    }
+    return route;
+  }
+
+  // A resident's route is a shortest path on the roads already visible in the town.
+  function residentSphereRoutes(world) {
+    var edges = state.roadEdgesCache || computeRoadEdges();
+    state.roadEdgesCache = edges;
+    var routes = {};
+    state.residentStopsCache = {};
+    world.people.forEach(function (person) {
+      var stops = residentStops(person, world);
+      state.residentStopsCache[person.id] = stops;
+      var route = residentRoute(stops, function (slot) {
+        var tile = state.tiles[slot];
+        return tile && edges[slot] ? Array.from(edges[slot]).map(function (k) {
+          return tile.neighbors[k];
+        }) : [];
+      });
+      if (person.placement) route.add(person.placement.slot);
+      routes[person.id] = route;
+    });
+    return routes;
+  }
+
   // Walk the real hex grid between two tiles, staying on claimed land.
   function routeOnSphere(from, to, landSlots, allTiles) {
     var tiles = allTiles || state.tiles;
@@ -807,7 +892,10 @@
 
   function rebuildRoads() {
     if (!state) return;
-    state.roadSlotsCache = null; // the network is changing; characters re-read it next frame
+    // The network changed; residents rebuild their personal routes on the next frame.
+    state.residentRoutesCache = null;
+    state.residentStopsCache = null;
+    state.roadEdgesCache = null;
     if (state.roadGroup) {
       state.planet.remove(state.roadGroup);
       state.roadGroup = null;
@@ -818,6 +906,7 @@
     world.memories.forEach(function (m) { if (m.placement) buildingSlots.add(m.placement.slot); });
 
     var edges = computeRoadEdges();
+    state.roadEdgesCache = edges;
     // Each tile paves only its OWN half of every shared edge, out to the midpoint. Two
     // landscape tiles meeting there make a continuous road; a tile facing a building paves
     // up to the boundary and stops — which is exactly what the flat view does.
@@ -974,9 +1063,8 @@
     state.flatGroup.scale.setScalar(1);
     state.flatGroup.rotation.set(0, angle, 0);
     // Kept for the planet <-> island animation (makeFoldRig).
-    // roadSlots: the island's road route, the flat-view counterpart of roadSlots() on the
-    // planet. Keyed off roadEdges rather than `roads` so the buildings a road runs through
-    // stay in — see the note on roadSlots() for why dropping them strands every road tile.
+    // roadSlots includes building cells that paths run through, even though those cells
+    // draw the building rather than a road mesh.
     // blockers: a circle per building, filled in as its model loads — what the character
     // cannot walk through (see footprintBox). canopy: the same for tiles of trees, which stop
     // the camera but not the character.
@@ -989,7 +1077,30 @@
       var top = tileTopOf(assetBySlot[id]) + (roads[id] ? ROAD_THICKNESS : 0);
       groundY[id] = FLAT_BASE_Y + top * FLAT_MODEL_SCALE;
     });
-    state.island = { cells: cells, centres: centres, roadSlots: Object.keys(roadEdges).map(Number),
+    var cellAt = {}, walkerAdjacency = {}, roadAdjacency = {};
+    ids.forEach(function (id) { cellAt[cells[id].i + ',' + cells[id].j] = Number(id); });
+    ids.forEach(function (id) {
+      walkerAdjacency[id] = MI.island.DIRS.map(function (dir) {
+        var cell = cells[id];
+        return cellAt[(cell.i + dir[0]) + ',' + (cell.j + dir[1])];
+      }).filter(function (slot) { return slot !== undefined; });
+    });
+    Object.keys(roadEdges).forEach(function (id) {
+      roadAdjacency[id] = roadEdges[id].map(function (k) {
+        var dir = MI.island.DIRS[k], cell = cells[id];
+        return cellAt[(cell.i + dir[0]) + ',' + (cell.j + dir[1])];
+      }).filter(function (slot) { return slot !== undefined; });
+    });
+    var residentRoutes = {};
+    world.people.forEach(function (person) {
+      residentRoutes[person.id] = residentRoute(residentStops(person, world), function (slot) {
+        return roadAdjacency[slot] || [];
+      });
+    });
+    state.island = { cells: cells, centres: centres, roadEdges: roadEdges,
+      roadSlots: Object.keys(roadEdges).map(Number),
+      walkerAdjacency: walkerAdjacency, roadAdjacency: roadAdjacency,
+      residentRoutes: residentRoutes,
       blockers: blockers, canopy: canopy, groundY: groundY };
 
     // How far the island reaches from its middle, and how deep its rock hangs.
@@ -1069,6 +1180,7 @@
         obj.userData.restY = FLAT_BASE_Y;
         obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
         state.flatGroup.add(obj);
+        if (world.hub && Number(id) === world.hub.slot) addHubSign(obj, FLAT_SPACING);
         if (parts.some(function (part) { return part.spin; })) state.spinners.push(obj);
 
         var after = [];
@@ -2362,6 +2474,9 @@
     while (state.residentGroup.children.length) state.residentGroup.remove(state.residentGroup.children[0]);
     Object.keys(state.residentWalkers).forEach(function (id) { disposeWalkerPair(state.residentWalkers[id]); });
     state.residentWalkers = {};
+    state.residentRoutesCache = null;
+    state.residentStopsCache = null;
+    state.roadEdgesCache = null;
     clearShips();
   }
 
@@ -2599,28 +2714,9 @@
     });
   }
 
-  // The road route, which is where characters are allowed to walk: every slot a road passes
-  // through, buildings included.
-  //
-  // Buildings have to be in it. A memory lands two tiles from the last one, so a road segment
-  // is usually a SINGLE tile with a building either side — drop the buildings and every road
-  // tile is stranded with no road neighbour at all, and a character can never take a step
-  // (measured on a 9-memory world: 5 road tiles, all 5 isolated). Keeping them makes the route
-  // connected, which is what a path is for. The road only stops at a door because the building
-  // owns that tile; the way through it is still the way through.
-  //
-  // Cached because computeRoadEdges runs a BFS per memory pair and this is read every frame;
-  // rebuildRoads() clears the cache whenever the network actually changes.
-  function roadSlots() {
-    if (!state.roadSlotsCache) {
-      state.roadSlotsCache = new Set(Object.keys(computeRoadEdges()).map(Number));
-    }
-    return state.roadSlotsCache;
-  }
-
   // Every real hexagon neighbour of a tile on the PLANET grid — sphere-view only. The flat
   // view's island is a coiled layout (MI.island), where a planet neighbour isn't necessarily
-  // an adjacent cell any more (see flatWalkerNeighbors below) — using this for both views,
+  // an adjacent cell any more — using this for both views,
   // as an earlier version did, is what let the pet occasionally "hop" across an unrelated cell.
   function walkerNeighbors(tileId) {
     var tile = MI.world.sphere.tile(tileId);
@@ -2629,22 +2725,6 @@
       var n = MI.world.sphere.tile(id);
       return n && n.sides === 6;
     });
-  }
-
-  // The flat view's real visual neighbours: other tiles whose coiled {i,j} cell is actually
-  // adjacent to this one (MI.island.adjacent), not whichever tiles happen to be neighbours on
-  // the planet grid the coiling was computed from.
-  function flatWalkerNeighbors(cells) {
-    return function (tileId) {
-      var cell = cells[tileId];
-      if (!cell) return [];
-      var out = [];
-      Object.keys(cells).forEach(function (otherId) {
-        if (Number(otherId) === tileId) return;
-        if (MI.island.adjacent(cell, cells[otherId])) out.push(Number(otherId));
-      });
-      return out;
-    };
   }
 
   // Walkers tick here instead of animateSatellite's sky loop, since their movement is a
@@ -2665,17 +2745,29 @@
     }
     var residentIds = Object.keys(state.residentWalkers);
     if (!residentIds.length) return;
-    var roads = roadSlots();
-    var islandRoads = state.island && state.island.roadSlots
-      ? new Set(state.island.roadSlots) : new Set();
+    if (!state.residentRoutesCache) state.residentRoutesCache = residentSphereRoutes(MI.store.get());
     residentIds.forEach(function (personId) {
       var pair = state.residentWalkers[personId];
+      var route = state.residentRoutesCache[personId] || new Set();
+      var islandRoute = state.island && state.island.residentRoutes
+        ? state.island.residentRoutes[personId] : null;
+      var stops = state.residentStopsCache[personId] || [];
       // A new resident can walk their own land even before a second memory makes a road.
       driveWalkers(pair, dt, {
         anchor: pair.person.placement.slot,
-        canStand: function (id) { return !state.waterTileIds.has(id) && (!roads.size || roads.has(id)); },
+        sphereNeighbors: function (id) {
+          var tile = state.tiles[id], edges = state.roadEdgesCache[id];
+          return tile && edges ? Array.from(edges).map(function (k) { return tile.neighbors[k]; }) : [];
+        },
+        flatNeighbors: function (id) {
+          return state.island && state.island.roadAdjacency[id] || [];
+        },
+        chooseNext: function (walker, neighborsOf, canStand) {
+          return residentNextTile(walker, stops, neighborsOf, canStand);
+        },
+        canStand: function (id) { return !state.waterTileIds.has(id) && route.has(id); },
         islandCanStand: function (centres) { return function (id) {
-          return !!centres[id] && (!islandRoads.size || islandRoads.has(id));
+          return !!centres[id] && !!islandRoute && islandRoute.has(id);
         }; },
         sphereScale: RESIDENT_SPHERE_SCALE,
         flatScale: RESIDENT_FLAT_SCALE,
@@ -2876,6 +2968,28 @@
     return out;
   }
 
+  function residentNextTile(walker, stops, neighborsOf, canStand) {
+    if (stops.length < 2) return walker.tileId;
+    if (walker.stopIndex === undefined) walker.stopIndex = 1;
+    if (walker.tileId === stops[walker.stopIndex]) {
+      walker.stopIndex = (walker.stopIndex + 1) % stops.length;
+    }
+    var goal = stops[walker.stopIndex];
+    var seen = new Set([walker.tileId]), previous = {}, queue = [walker.tileId];
+    for (var i = 0; i < queue.length && !seen.has(goal); i++) {
+      neighborsOf(queue[i]).forEach(function (next) {
+        if (!canStand(next) || seen.has(next)) return;
+        seen.add(next);
+        previous[next] = queue[i];
+        queue.push(next);
+      });
+    }
+    if (!seen.has(goal)) return walker.tileId;
+    var step = goal;
+    while (previous[step] !== walker.tileId) step = previous[step];
+    return step;
+  }
+
   function driveWalkers(walkers, dt, spec) {
     var canStand = spec.canStand;
     var findAnchor = function () {
@@ -2888,7 +3002,8 @@
       return null;
     };
     MI.world.walkers.updateSphere(walkers.sphere, dt, {
-      isLand: canStand, neighborsOf: walkerNeighbors, findAnchor: findAnchor,
+      isLand: canStand, neighborsOf: spec.sphereNeighbors || walkerNeighbors, findAnchor: findAnchor,
+      chooseNext: spec.chooseNext,
       dirOf: function (id) { var t = MI.world.sphere.tile(id); return t ? new THREE.Vector3().fromArray(t.dir) : null; },
       height: RADIUS + LAND_LIFT, scale: state.spacing * spec.sphereScale,
       offset: spec.offset ? state.spacing * 0.3 : 0 // matches spawnPerson's "beside the building"
@@ -2908,7 +3023,11 @@
         return found;
       };
       MI.world.walkers.updateFlat(walkers.flat, dt, {
-        isLand: islandCanStand, neighborsOf: flatWalkerNeighbors(state.island.cells),
+        isLand: islandCanStand, neighborsOf: function (id) {
+          return spec.flatNeighbors
+            ? spec.flatNeighbors(id) : state.island.walkerAdjacency[id] || [];
+        },
+        chooseNext: spec.chooseNext,
         findAnchor: flatFindAnchor, centres: centres,
         baseY: FLAT_DEFAULT_Y,
         baseYOf: function (id) {
@@ -2983,8 +3102,11 @@
   // converted into the character's own group's space because that is where it walks.
   function cameraAxes(p, up) {
     var group = playerGroupFor();
-    var dir = state.camera.getWorldDirection(new THREE.Vector3());
-    dir.applyQuaternion(group.getWorldQuaternion(new THREE.Quaternion()).invert());
+    // In follow view the eye moves to avoid roofs. Steering from that temporary eye angle
+    // makes W veer sideways whenever the camera is pulled in.
+    var dir = state.camMode === 'ground' ? state.groundForward.clone()
+      : state.camera.getWorldDirection(new THREE.Vector3())
+        .applyQuaternion(group.getWorldQuaternion(new THREE.Quaternion()).invert());
     var forward = MI.world.player.tangent(dir, up);
     // Looking straight down at the character gives no usable heading; fall back to the
     // direction the ground camera is holding rather than snapping to an arbitrary axis.
@@ -3026,7 +3148,7 @@
 
   // Where the follow camera wants to be: eye, look-at and up, without touching the camera —
   // the zoom-in tween and the per-frame follow both read it.
-  function groundPose() {
+  function groundPose(dt) {
     var p = activePlayer();
     if (!p || !p.group || !p.placed) return null;
     var target = p.group.getWorldPosition(new THREE.Vector3());
@@ -3045,20 +3167,29 @@
     var shoulder = new THREE.Vector3().crossVectors(forward, up).normalize()
       .multiplyScalar(FOLLOW_SHOULDER * p.group.getWorldScale(new THREE.Vector3()).x);
     target.add(shoulder);
-    // Pull the camera in toward the character rather than let it sit inside a building.
-    var eye = new THREE.Vector3();
-    for (var pull = 1; pull >= 0.25; pull -= 0.125) {
-      var d = state.groundDistance * pull;
-      eye.copy(target)
-        .addScaledVector(forward, -d * Math.cos(state.groundPitch))
-        .addScaledVector(up, d * Math.sin(state.groundPitch));
-      if (!eyeBlocked(eye)) break;
+    // Sweep the full target-to-eye segment so a roof cannot sit between the two. The
+    // previous fixed pull steps snapped the view by an eighth of its distance at a time.
+    var desired = target.clone()
+      .addScaledVector(forward, -state.groundDistance * Math.cos(state.groundPitch))
+      .addScaledVector(up, state.groundDistance * Math.sin(state.groundPitch));
+    var clear = 1;
+    for (var fraction = 0.16; fraction <= 1.001; fraction += 0.04) {
+      if (eyeBlocked(target.clone().lerp(desired, Math.min(1, fraction)))) {
+        clear = Math.max(0.12, fraction - 0.06);
+        break;
+      }
     }
+    if (state.followClearance === undefined || !dt) state.followClearance = clear;
+    else {
+      var rate = clear < state.followClearance ? 22 : 5;
+      state.followClearance += (clear - state.followClearance) * (1 - Math.exp(-rate * dt));
+    }
+    var eye = target.clone().lerp(desired, state.followClearance);
     return { eye: eye, target: target, up: up };
   }
 
-  function updateGroundCamera() {
-    var pose = groundPose();
+  function updateGroundCamera(dt) {
+    var pose = groundPose(dt);
     if (!pose) return;
     state.camera.up.copy(pose.up);
     state.camera.position.copy(pose.eye);
@@ -3263,7 +3394,7 @@
       if (p.lastAngle) state.groundForward.applyAxisAngle(p.lastAxis, p.lastAngle);
     }
 
-    if (state.camMode === 'ground') updateGroundCamera();
+    if (state.camMode === 'ground') updateGroundCamera(dt);
   }
 
   // One avatar per view, since each view keeps its own position. The shared loader falls
@@ -3373,6 +3504,7 @@
       state.groundForward = new THREE.Vector3(Math.sin(p.heading), 0, Math.cos(p.heading));
       state.groundPitch = FOLLOW_PITCH;
       state.groundDistance = FOLLOW_DIST * groundTileSize();
+      state.followClearance = undefined;
       clearKeys();
       // Grabbing the mouse needs a user gesture, which the button click that got us here is.
       // If the browser refuses, middle-drag still turns the camera.
@@ -3541,11 +3673,11 @@
       kitMaterials: [], foliageGeometries: [], atlasCache: {},
       themeId: null, skin: opts.skin || 'classic',
       satelliteId: null, satellite: null, satelliteGroup: satelliteGroup,
-      // Walkers: pets roam any land, residents follow the roads. roadSlotsCache is that
-      // road route, rebuilt when the network changes.
+      // Walkers: pets roam any land; residents patrol their own memory routes.
       petId: null, petGroup: petWalkerGroup, petWalkers: null,
       residentGroup: residentGroup, residentWalkers: {},
-      roadSlotsCache: null,
+      residentRoutesCache: null, residentStopsCache: null,
+      roadEdgesCache: null,
       // The pirate fleet, keyed by ship id: { model, walker, ship, tile }. Planet-only.
       shipGroup: shipGroup, shipWalkers: {},
       // camMode is 'orbit' or 'ground'; orbitRestore is the orbit camera stashed on the
@@ -5149,7 +5281,8 @@
     var p = state.players && state.players.flat;
     if (!c || !p || !p.placed) return false;
     var dx = p.x - c.x, dz = p.z - c.z;
-    var reach = FLAT_SPACING * 1.15;
+    // Near the hall's wall, but reachable outside its solid footprint.
+    var reach = FLAT_SPACING * 0.72;
     return dx * dx + dz * dz < reach * reach;
   }
 
@@ -5169,8 +5302,11 @@
     if (state.galaxy && state.galaxy.on) return Promise.resolve(false);
     if (state.transition || state.camMode === 'tween') return Promise.resolve(false);
     state.hub.busy = true;
-    var ready = isGroundView() ? setGroundView(false) : Promise.resolve();
-    return ready.then(function () {
+    var cover = MI.ui && MI.ui.beginTravel ? MI.ui.beginTravel('Entering the Character Hub…')
+      : Promise.resolve();
+    return cover.then(function () {
+      return isGroundView() ? setGroundView(false) : Promise.resolve();
+    }).then(function () {
       if (!state) return false;
       state.hub.saved = {
         flatMode: state.flatMode,
@@ -5199,9 +5335,11 @@
       if (!state) return false;
       updateHubCamera();
       state.hub.busy = false;
+      if (MI.ui && MI.ui.endTravel) MI.ui.endTravel();
       return true;
     }).catch(function (err) {
       console.error('[hub] failed to enter', err);
+      if (MI.ui && MI.ui.endTravel) MI.ui.endTravel();
       if (state) {
         state.hub.busy = false;
         state.hub.on = false;
@@ -5216,6 +5354,13 @@
   function leaveHub(options) {
     if (!state || !state.hub || !state.hub.on) return Promise.resolve();
     var opts = options || {};
+    if (!opts.instant && MI.ui && MI.ui.beginTravel) {
+      return MI.ui.beginTravel('Returning to your planet…').then(function () {
+        return leaveHub({ instant: true });
+      }).then(function () {
+        MI.ui.endTravel();
+      });
+    }
     var saved = state.hub.saved || {};
     state.hub.on = false;
     state.hub.busy = false;
@@ -5341,6 +5486,10 @@
   // Exposed because they're pure and worth testing without a GPU.
   MI.world.computeRoadEdges = computeRoadEdges;
   MI.world.rebuildRoads = rebuildRoads;
+  MI.world.refreshRoads = function () {
+    rebuildRoads();
+    return state && state.flatMode ? refreshFlatView() : Promise.resolve();
+  };
   MI.world.roadConnections = roadConnections;
   MI.world.clear = clear;
   MI.world.pickAssetFor = pickAssetFor;

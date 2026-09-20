@@ -53,6 +53,7 @@
     daily: 5,             // first entry of a calendar day...
     perStreakDay: 2,      // ...plus this per consecutive day already written
     dailyCap: 20,
+    streakMilestone: 15, // every tenth consecutive journaling day
     growth: 25            // per size step when the planet grows (x the new size's index)
   };
 
@@ -107,6 +108,9 @@
         label: wallet.streak > 1 ? wallet.streak + '-day streak' : 'first today',
         amount: Math.min(REWARD.dailyCap, REWARD.daily + REWARD.perStreakDay * (wallet.streak - 1))
       });
+      if (wallet.streak % 10 === 0) {
+        lines.push({ label: wallet.streak + '-day milestone', amount: REWARD.streakMilestone });
+      }
     }
     return pay(lines);
   }

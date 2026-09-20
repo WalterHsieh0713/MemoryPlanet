@@ -333,7 +333,7 @@
   // grid, so old tile ids no longer apply, or the view just switched to one whose layout
   // doesn't include this tile yet) by re-anchoring via `findAnchor()`. Returns false when
   // there's nowhere land to stand at all yet.
-  function advance(walker, dt, isLand, neighborsOf, findAnchor) {
+  function advance(walker, dt, isLand, neighborsOf, findAnchor, chooseNext) {
     if (walker.tileId === null || !isLand(walker.tileId)) {
       walker.tileId = (walker.tileId !== null && isLand(walker.tileId)) ? walker.tileId : findAnchor();
       walker.targetId = walker.tileId;
@@ -351,7 +351,12 @@
       var previous = walker.tileId;
       if (walker.targetId !== null && walker.targetId !== walker.tileId) walker.tileId = walker.targetId;
       walker.fromTileId = previous;
-      walker.targetId = pickNextTile(walker, neighborsOf, isLand);
+      walker.targetId = chooseNext ? chooseNext(walker, neighborsOf, isLand)
+        : pickNextTile(walker, neighborsOf, isLand);
+      if (walker.targetId === walker.tileId) {
+        walker.pause = randomPauseDuration(walker);
+        return true;
+      }
       walker.t = 0;
       walker.duration = randomStepDuration(walker);
     }
@@ -373,7 +378,7 @@
 
   function updateSphere(walker, dt, ctx) {
     if (!walker.group) return;
-    if (!advance(walker, dt, ctx.isLand, ctx.neighborsOf, ctx.findAnchor)) return;
+    if (!advance(walker, dt, ctx.isLand, ctx.neighborsOf, ctx.findAnchor, ctx.chooseNext)) return;
 
     var fromDir = ctx.dirOf(walker.tileId);
     var toDir = ctx.dirOf(walker.targetId);
@@ -428,7 +433,7 @@
 
   function updateFlat(walker, dt, ctx) {
     if (!walker.group) return;
-    if (!advance(walker, dt, ctx.isLand, ctx.neighborsOf, ctx.findAnchor)) return;
+    if (!advance(walker, dt, ctx.isLand, ctx.neighborsOf, ctx.findAnchor, ctx.chooseNext)) return;
 
     var from = ctx.centres[walker.tileId], to = ctx.centres[walker.targetId];
     if (!from || !to) return;

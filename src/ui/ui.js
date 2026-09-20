@@ -934,7 +934,15 @@
 
   function showToast(memory, reward) {
     var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
-    toast(flavor.emoji, flavor.line, memory.title, reward && reward.total);
+    var daily = reward && reward.lines.filter(function (line) {
+      return line.label === 'first today' || line.label.indexOf('-day streak') !== -1;
+    })[0];
+    var milestone = reward && reward.lines.filter(function (line) {
+      return line.label.indexOf('-day milestone') !== -1;
+    })[0];
+    toast(flavor.emoji, milestone ? milestone.label + '!' : flavor.line,
+      daily ? memory.title + ' · ' + daily.label + ' +' + daily.amount : memory.title,
+      reward && reward.total, milestone ? 4800 : 3200);
   }
 
   function handleAppEvent(event) {
@@ -1679,12 +1687,13 @@
     setGateBusy(true);
     hideGalaxyHud();
     var same = MI.store.currentId() === id;
-    MI.world.selectGalaxyPlanet(id).then(function () {
+    beginTravel('Opening your planet…').then(function () { return MI.world.selectGalaxyPlanet(id); }).then(function () {
       if (same) return true;
       return MI.app.enterJournal(id, { keepCamera: true });
     }).then(function (ok) {
       if (!ok) {
         setGateBusy(false);
+        endTravel();
         showGalaxyHud();
         refreshGalaxy();
         return;
@@ -1692,9 +1701,11 @@
       return MI.world.leaveGalaxy({ fit: !same }).then(function () {
         setGateBusy(false);
         finishEnter();
+        endTravel();
       });
     }).catch(function () {
       setGateBusy(false);
+      endTravel();
       showGalaxyHud();
       refreshGalaxy();
     });
@@ -1711,17 +1722,18 @@
     el.gate.classList.remove('open');
     hideGalaxyHud();
     var fromGalaxy = MI.world.isGalaxy();
-    MI.app.createJournal({
+    beginTravel('Making your planet…').then(function () { return MI.app.createJournal({
       name: name,
       character: gateAvatar,
       keepCamera: fromGalaxy
-    }).then(function () {
+    }); }).then(function () {
       return fromGalaxy ? MI.world.leaveGalaxy({ fit: true }) : Promise.resolve();
     }).then(function () {
       el['gate-name'].value = '';
       setGateBusy(false);
       finishEnter();
-    }).catch(function () { setGateBusy(false); });
+      endTravel();
+    }).catch(function () { setGateBusy(false); endTravel(); });
   }
 
   function returnToShelf() {
@@ -2670,8 +2682,23 @@
     el.loading.classList.add('hide');
   }
 
+  function beginTravel(message) {
+    var label = document.getElementById('loading-text');
+    if (label) label.textContent = message || 'Loading…';
+    el.loading.classList.add('travel');
+    el.loading.classList.remove('hide');
+    return new Promise(function (resolve) {
+      setTimeout(resolve, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 440);
+    });
+  }
+
+  function endTravel() {
+    el.loading.classList.add('hide');
+  }
+
   MI.ui = {
     init: init, refreshStats: refreshStats, hideLoading: hideLoading,
+    beginTravel: beginTravel, endTravel: endTravel,
     showGate: showGate,
     // The settings menu opens this; it is the only way to change who you are.
     openCharacterPicker: openHub

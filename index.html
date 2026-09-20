@@ -1738,10 +1738,28 @@
 
   #loading {
     position: fixed; inset: 0; display: grid; place-items: center; z-index: 30;
-    background: #dff1f7; font-size: 15px; font-weight: 600; color: var(--ink-soft);
-    transition: opacity .5s ease;
+    overflow: hidden; background: #dff1f7; font-size: 17px; font-weight: 700;
+    color: #285968; transition: opacity .45s ease, visibility .45s;
   }
-  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading.hide { opacity: 0; visibility: hidden; pointer-events: none; }
+  #loading.travel { background: rgba(223, 241, 247, .35); }
+  #loading::before, #loading::after {
+    content: ''; position: absolute; top: -25%; bottom: -25%; width: 66%;
+    background: radial-gradient(circle at 18% 18%, #fff 0 23%, transparent 24%),
+      radial-gradient(circle at 65% 48%, #f9fdff 0 32%, transparent 33%),
+      radial-gradient(circle at 28% 83%, #eaf7fb 0 28%, transparent 29%), #eef9fc;
+    filter: drop-shadow(0 10px 18px rgba(55, 112, 131, .15));
+    transition: transform .42s cubic-bezier(.16, .8, .25, 1);
+  }
+  #loading::before { left: -16%; transform: translateX(0); }
+  #loading::after { right: -16%; transform: translateX(0) scaleX(-1); }
+  #loading.hide::before { transform: translateX(-110%); }
+  #loading.hide::after { transform: translateX(110%) scaleX(-1); }
+  #loading span { position: relative; z-index: 1; padding: 12px 20px;
+    border-radius: 12px; background: #fff9ed; box-shadow: 0 8px 25px rgba(55,112,131,.16); }
+  @media (prefers-reduced-motion: reduce) {
+    #loading, #loading::before, #loading::after { transition-duration: .01ms; }
+  }
 </style>
 </head>
 <body class="gated">
@@ -2052,7 +2070,7 @@
   </div>
 </div>
 
-<div id="loading">spinning up your planet…</div>
+<div id="loading" role="status" aria-live="polite"><span id="loading-text">spinning up your planet…</span></div>
 
 <script src="three-r128.min.js"></script>
 <script src="vendor/GLTFLoader.js"></script>
