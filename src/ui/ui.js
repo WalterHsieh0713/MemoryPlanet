@@ -49,7 +49,9 @@
       'gate-create-kicker', 'gate-create-title', 'gate-create-blurb',
       'galaxy-ui', 'galaxy-count', 'galaxy-count-text', 'galaxy-hint', 'galaxy-labels',
       'galaxy-card', 'galaxy-card-name', 'galaxy-card-meta', 'galaxy-open', 'galaxy-delete',
-      'galaxy-new']
+      'galaxy-new',
+      'ship-card', 'ship-close', 'ship-flag', 'ship-name', 'ship-ask', 'ship-bar', 'ship-fill',
+      'ship-count', 'ship-claim']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -940,6 +942,14 @@
       toast('🪐', 'Your planet grew!',
         'Size ' + event.size + ' of ' + event.sizes + ' · ' + event.tiles + ' tiles of room',
         event.reward.total, 4200);
+    } else if (event.type === 'ship-ready') {
+      // Claiming is the player's to do, so this points at the ship rather than taking it.
+      toast('🏴', event.ship.name + ' will hear you out',
+        'You gave them what they asked. Click the ship to take her.', 0, 5200);
+      MI.world.focusShip(event.ship.id);
+    } else if (event.type === 'ship-claimed') {
+      toast('⛵', event.ship.name + ' sails with you',
+        'Their black flag is down, and they keep to your coast now.', 0, 4200);
     }
   }
 
@@ -1576,7 +1586,8 @@
       button.textContent = file.replace(/^building-/, '').replace(/\.glb$/, '').replace(/-/g, ' ');
       if (file !== current) {
         button.addEventListener('click', function () {
-          memory.asset = { pack: 'kenney-hexagon-kit', key: file };
+          // Which pack a building comes from is world.js's to know, not ours.
+          memory.asset = MI.world.assetFor(file);
           MI.store.save();
           MI.world.respawnMemory(memory);
           renderSwaps(memory);
@@ -1637,6 +1648,47 @@
     openMemory = null;
     MI.world.clearHighlight();
     markOpenRow(false);
+  }
+
+  // --- Ships ------------------------------------------------------------------------------
+  // A ship is the one thing here you cannot buy: it asks for something written, and until you
+  // write it the ship keeps its distance. The card is the only place that says what it wants,
+  // so it has to say it plainly.
+
+  var openShipId = null;
+
+  function showShip(shipId) {
+    var world = MI.store.get();
+    var ship = MI.ships.find(world, shipId);
+    if (!ship) return;
+    hideDetail(); // the two cards share a corner
+    openShipId = shipId;
+    var progress = MI.ships.progressFor(world, ship);
+
+    el['ship-card'].classList.toggle('claimed', !!ship.claimed);
+    el['ship-flag'].textContent = ship.claimed ? 'sails with you' : 'flies a black flag';
+    el['ship-name'].textContent = ship.name;
+    el['ship-ask'].textContent = ship.claimed
+      ? 'Yours. They keep to your coast now, and they will not trouble you again.'
+      : progress.ask + ', and they will hear you out.';
+    el['ship-bar'].hidden = !!ship.claimed;
+    el['ship-count'].textContent = ship.claimed
+      ? ''
+      : progress.done + ' of ' + progress.target + ' ' + progress.unit;
+    el['ship-fill'].style.width = Math.round((progress.done / progress.target) * 100) + '%';
+    el['ship-claim'].hidden = !!ship.claimed || !progress.complete;
+    el['ship-card'].classList.add('show');
+  }
+
+  function hideShip() {
+    openShipId = null;
+    el['ship-card'].classList.remove('show');
+  }
+
+  function claimOpenShip() {
+    if (!openShipId) return;
+    var id = openShipId;
+    if (MI.app.claimShip(id)) showShip(id); // the same card, now saying it is yours
   }
 
   function setBusy(busy) {
@@ -2162,8 +2214,16 @@
       else if (isBookBusy()) closeBook();
     });
 
+    MI.world.onShipPick(function (shipId) {
+      if (document.body.classList.contains('gated')) return;
+      showShip(shipId);
+    });
+    el['ship-close'].addEventListener('click', hideShip);
+    el['ship-claim'].addEventListener('click', claimOpenShip);
+
     MI.world.onPick(function (slot) {
       if (document.body.classList.contains('gated')) return;
+      hideShip(); // clicked away from the ocean
       if (slot === null || slot === undefined) { hideDetail(); return; }
       var memory = MI.store.findMemoryBySlot(slot);
       if (memory) {
