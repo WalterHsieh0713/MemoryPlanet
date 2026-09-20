@@ -33,6 +33,7 @@
       'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
+      'walk-btn', 'walk-label', 'walk-icon', 'picker', 'picker-grid', 'picker-play',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
@@ -55,7 +56,8 @@
         + (people ? ' · ' + plural(people, 'friend') : '');
 
     el['empty-hint'].classList.toggle('show', memories === 0);
-    // Neither button means anything on an empty planet.
+    // Neither button means anything on an empty planet. Walk mode does: the house is
+    // there from the start, so its button is always available.
     el['reset-btn'].classList.toggle('show', memories > 0);
     el['view-btn'].classList.toggle('show', memories > 0);
 
@@ -587,6 +589,74 @@
     });
   }
 
+  // --- Walk mode ------------------------------------------------------------------------
+  // The button opens the character picker; Play is what actually drops you into the world.
+  // Leaving is the same button again, or Escape.
+
+  var pickerChoice = null;
+  var pickerOpener = null;
+
+  function openPicker() {
+    pickerOpener = document.activeElement;
+    var saved = MI.store.get().player;
+    pickerChoice = MI.world.currentCharacter() || (saved && saved.character) || null;
+    renderPicker();
+    el.picker.classList.add('open');
+    el['picker-play'].focus();
+  }
+
+  function closePicker() {
+    el.picker.classList.remove('open');
+    if (pickerOpener && pickerOpener.focus) pickerOpener.focus();
+  }
+
+  function renderPicker() {
+    var characters = MI.world.characters();
+    if (!pickerChoice) pickerChoice = characters[0] && characters[0].id;
+    el['picker-grid'].innerHTML = '';
+    characters.forEach(function (character) {
+      var card = document.createElement('button');
+      card.className = 'card';
+      card.type = 'button';
+      card.setAttribute('role', 'radio');
+      card.setAttribute('aria-checked', String(character.id === pickerChoice));
+      var tint = '#' + ('000000' + character.color.toString(16)).slice(-6);
+      card.innerHTML = '<span class="figure" style="--tint: ' + tint + '">' +
+        '<span class="head"></span><span class="body"></span><span class="legs"></span></span>' +
+        '<span class="name"></span>';
+      card.querySelector('.name').textContent = character.name;
+      card.addEventListener('click', function () {
+        pickerChoice = character.id;
+        renderPicker();
+      });
+      el['picker-grid'].appendChild(card);
+    });
+  }
+
+  function startWalking() {
+    var world = MI.store.get();
+    world.player = world.player || { character: null };
+    world.player.character = pickerChoice;
+    MI.store.save();
+    closePicker();
+    return MI.world.setCharacter(pickerChoice)
+      .then(function () { return MI.world.setWalkMode(true); })
+      .then(syncWalkButton);
+  }
+
+  function stopWalking() {
+    return Promise.resolve(MI.world.setWalkMode(false)).then(syncWalkButton);
+  }
+
+  function syncWalkButton() {
+    var walking = MI.world.isWalkMode();
+    el['walk-label'].textContent = walking ? 'stop walking' : 'walk around';
+    el['walk-icon'].textContent = walking ? '🧭' : '🚶';
+    // Swapping views mid-walk would need the character re-placed in the other view, which is
+    // not built; keeping the view toggle out of reach while walking avoids the question.
+    el['view-btn'].disabled = walking;
+  }
+
   function buy(kind, item) {
     var result = MI.economy.buy(kind, item.id);
     if (!result.ok) return;
@@ -853,6 +923,15 @@
     el['title-suggest'].addEventListener('click', suggestTitle);
 
     MI.app.onEvent(handleAppEvent);
+    el['walk-btn'].addEventListener('click', function () {
+      if (MI.world.isWalkMode()) stopWalking();
+      else openPicker();
+    });
+    el['picker-play'].addEventListener('click', startWalking);
+    el.picker.addEventListener('click', function (e) {
+      if (e.target === el.picker) closePicker(); // the backdrop, not the sheet
+    });
+    syncWalkButton();
     el['shop-btn'].addEventListener('click', openShop);
     el['shop-close'].addEventListener('click', closeShop);
     el.shop.addEventListener('click', function (e) {
@@ -877,6 +956,8 @@
         }
       }
       if (e.key !== 'Escape') return;
+      if (el.picker.classList.contains('open')) { closePicker(); return; }
+      if (MI.world.isWalkMode()) { stopWalking(); return; }
       if (el.shop.classList.contains('open')) closeShop();
       else if (isBookOpen()) closeBook();
     });

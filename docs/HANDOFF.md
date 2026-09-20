@@ -11,6 +11,7 @@ pushed.
 node server.js                 # http://localhost:8000  (static files + /api/classify)
 node scripts/test-growth.js    # planet size ladder + slot remap, no browser needed
 node scripts/test-island.js    # island layout + road routing, no browser needed
+node scripts/test-player.js    # walk mode: great-circle movement, coastlines, sliding
 ```
 
 - `/size-test` (a separate page) compares 42 / 92 / 162-tile spheres. It was used to settle
@@ -27,6 +28,7 @@ headless Chrome over the DevTools Protocol from Node (Node 24 has a global `WebS
 packages), evaluate `MI.*` calls in the page, assert on returned state, and capture
 screenshots to actually look at the result. Those drivers lived in the session scratchpad, not
 the repo. Test hooks exist for it: `MI.world.__island()`, `__scale()`, `__camera(phi)`,
+`__player()` (walk mode: position, tile, facing and camera; null when not walking),
 `__satellite()` (the sky orbiter), `__pet()` (the walking pet, `{ sphere, flat }` — one entry
 per view, each with its current tile) and `__screen({x,y,z})`, which projects a world point to
 canvas pixels so a screenshot can be cropped in on something small. The pets are only a few

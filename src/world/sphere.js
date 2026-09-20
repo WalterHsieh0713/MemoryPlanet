@@ -23,6 +23,21 @@
     return RADIUS; // flat sphere for now — hex tiles define the surface, no elevation yet
   }
 
+  // Which tile contains this direction. The grid's tiles are the Voronoi cells of their
+  // own centres, so "nearest centre" is not an approximation here — it is exactly the tile
+  // you are standing on. Used by walk mode (src/world/player.js) to ask whether the ground
+  // under the character is land, once or twice a frame.
+  function nearestSlot(dir) {
+    if (!grid) throw new Error('MI.world.sphere: setGrid() must be called first');
+    var best = -1, bestDot = -Infinity;
+    for (var i = 0; i < grid.tiles.length; i++) {
+      var d = grid.tiles[i].dir;
+      var dot = dir.x * d[0] + dir.y * d[1] + dir.z * d[2];
+      if (dot > bestDot) { bestDot = dot; best = grid.tiles[i].id; }
+    }
+    return best;
+  }
+
   function tile(slot) {
     if (!grid) throw new Error('MI.world.sphere: setGrid() must be called first');
     return grid.tiles[slot] || null;
@@ -140,6 +155,7 @@
     terrainHeight: terrainHeight,
     orientToSurface: orientToSurface,
     tile: tile,
+    nearestSlot: nearestSlot,
     firstHexagon: firstHexagon,
     nextFreeSlot: nextFreeSlot,
     RADIUS: RADIUS

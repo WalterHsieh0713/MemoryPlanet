@@ -335,6 +335,22 @@
     return 1 + Math.floor(hash(seed * 13) * 2) + (importance >= 4 ? 1 : 0);
   }
 
+  // The main house stands on the home tile in both views. Drawn larger than a memory's
+  // building so it reads as the middle of your world rather than one more thing on it.
+  var HOUSE_SCALE = 1.45;
+
+  function spawnHouse(house, options) {
+    if (!state || !house || typeof house.slot !== 'number') return Promise.resolve();
+    var opts = options || {};
+    setTileLand(house.slot);
+    if (opts.animate !== false) popTile(house.slot);
+    return placeProp(HEX_PACK + house.asset, { slot: house.slot, scale: HOUSE_SCALE }, {
+      animate: opts.animate !== false,
+      rotY: 0,
+      tag: { type: 'house', slot: house.slot }
+    });
+  }
+
   function spawnLandscape(entry, options) {
     if (!state || typeof entry.slot !== 'number') return;
     // Remembered so a theme change can repaint this tile in place.
@@ -680,6 +696,12 @@
       buildingSlots.add(m.placement.slot);
       assetBySlot[m.placement.slot] = (m.asset && m.asset.key) || 'grass.glb';
     });
+    // The main house last, so it wins its tile even if a memory ever lands on top of it.
+    if (world.house && typeof world.house.slot === 'number') {
+      landSlots.add(world.house.slot);
+      buildingSlots.add(world.house.slot);
+      assetBySlot[world.house.slot] = world.house.asset;
+    }
     if (!landSlots.size) {
       state.flatRadius = 3;
       state.island = null;
@@ -797,6 +819,7 @@
     // Pets (src/world/pets.js) aren't stored data, so nothing above
     // re-adds them — this group got wiped at the top of this function like everything else.
     if (state.petWalkers) state.flatGroup.add(state.petWalkers.flat.group);
+    if (state.players && state.players.flat.group) state.flatGroup.add(state.players.flat.group);
 
     state.flatGroup.add(buildIslandUnderside(ids, centres, spread));
 
@@ -2278,6 +2301,256 @@
     }
   }
 
+  // --- Walk mode (the character you embody; movement in src/world/player.js) --------------
+  // A second camera mode, not a replacement: everything orbit mode does — click a tile,
+  // hover-highlight, the book's two-way linking — is left intact and simply suspended while
+  // you are walking, and restored on the way out.
+
+  var WALK_PERSON_SCALE = 0.55;   // matches spawnPerson, so you are the size of your friends
+  var WALK_EYE = 0.55;            // the camera looks this far above the character's feet, in
+                                  // character-heights, so it frames the head not the shoes
+  // Camera distance, like walking speed, is in TILES rather than world units — a tile is a
+  // different size on every planet in the ladder, and different again on the island, so an
+  // absolute distance frames the character differently at each size.
+  var WALK_DIST = 2.0, WALK_DIST_MIN = 0.9, WALK_DIST_MAX = 6.0;
+
+  // What one tile measures in WORLD units in the view on screen. state.spacing is in the
+  // planet group's own units and that group is scaled by frequency/10, so a tile's world
+  // size is smaller than `spacing` says — the camera lives in world space and has to use
+  // this, not the raw figure. The island hangs in the scene unscaled, so FLAT_SPACING is
+  // already a world measurement.
+  function walkTileSize() {
+    return state.flatMode ? FLAT_SPACING : state.spacing * state.planet.scale.x;
+  }
+  var WALK_PITCH_MIN = 0.08, WALK_PITCH_MAX = 1.15;
+  var WALK_LOOK_SPEED = 0.006;
+
+  // The instance for whichever view is on screen. Each view keeps its own position, the way
+  // the pets do — the sphere's is a direction, the island's is an XZ point, and there is no
+  // meaningful way to carry one across to the other.
+  function activePlayer() {
+    if (!state || !state.players) return null;
+    return state.flatMode ? state.players.flat : state.players.sphere;
+  }
+
+  // A tangent at `up` that varies smoothly and never degenerates. Must match the one in
+  // player.js, or the character's facing and the camera's azimuth would disagree.
+  function refTangent(up) {
+    var axis = Math.abs(up.y) < 0.9 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(1, 0, 0);
+    return new THREE.Vector3().crossVectors(axis, up).normalize();
+  }
+
+  // Where the camera is looking, flattened onto the ground the character stands on. This is
+  // what makes W mean "away from the camera" rather than "toward +Z".
+  function walkAxes(up) {
+    var ref = refTangent(up);
+    var side = new THREE.Vector3().crossVectors(up, ref);
+    var forward = ref.multiplyScalar(Math.cos(state.walkYaw))
+      .addScaledVector(side, Math.sin(state.walkYaw)).normalize();
+    var right = new THREE.Vector3().crossVectors(forward, up).normalize();
+    return { forward: forward, right: right };
+  }
+
+  // The character's up: on the planet it is wherever you are standing, on the island it is
+  // plain world up. This is the whole reason walk mode cannot reuse the orbit camera, whose
+  // eye position assumes +Y is up everywhere.
+  function walkUp(worldPos) {
+    if (state.flatMode) return new THREE.Vector3(0, 1, 0);
+    var centre = state.planet.getWorldPosition(new THREE.Vector3());
+    return worldPos.clone().sub(centre).normalize();
+  }
+
+  function updateWalkCamera() {
+    var p = activePlayer();
+    if (!p || !p.group || !p.placed) return;
+    var target = p.group.getWorldPosition(new THREE.Vector3());
+    var up = walkUp(target);
+    // Frame the head rather than the feet. Read the group's WORLD scale: the sphere avatar
+    // sits inside the scaled planet group and the island one does not, so its own
+    // .scale.x means different things in the two views.
+    var worldScale = p.group.getWorldScale(new THREE.Vector3()).x;
+    target.addScaledVector(up, WALK_EYE * worldScale);
+
+    var axes = walkAxes(up);
+    var eye = target.clone()
+      .addScaledVector(axes.forward, -state.walkDistance * Math.cos(state.walkPitch))
+      .addScaledVector(up, state.walkDistance * Math.sin(state.walkPitch));
+    state.camera.up.copy(up);
+    state.camera.position.copy(eye);
+    state.camera.lookAt(target);
+  }
+
+  // Is the ground under this point land? The sphere grid's tiles are the Voronoi cells of
+  // their own centres, so nearestSlot is the tile you are actually standing on, not a guess.
+  function sphereIsLand(dir) {
+    var slot = MI.world.sphere.nearestSlot(dir);
+    return slot >= 0 && !state.waterTileIds.has(slot);
+  }
+
+  // The island is a loose set of hex cells, so "on the island" is "inside the nearest cell".
+  // Comparing against the hexagon's circumradius rounds the corners very slightly, which is
+  // invisible and stops you catching on them.
+  var ISLAND_REACH = 0.58; // circumradius / centre spacing, near enough
+  function flatIsLand(p) {
+    var centres = state.island && state.island.centres;
+    if (!centres) return false;
+    var reach = FLAT_SPACING * ISLAND_REACH;
+    var limit = reach * reach;
+    var ids = Object.keys(centres);
+    for (var i = 0; i < ids.length; i++) {
+      var c = centres[ids[i]];
+      var dx = p.x - c.x, dz = p.z - c.z;
+      if (dx * dx + dz * dz < limit) return true;
+    }
+    return false;
+  }
+
+  function firstLandSlot() {
+    if (!state.tiles) return null;
+    for (var i = 0; i < state.tiles.length; i++) {
+      if (!state.waterTileIds.has(state.tiles[i].id)) return state.tiles[i].id;
+    }
+    return null;
+  }
+
+  // Put a player instance on its view's home tile. Falls back to any land at all, so walk
+  // mode still works on a world whose home was never set.
+  var SPAWN_CLEARANCE = 0.34; // of a tile, so the house is in front of you rather than on you
+
+  function placePlayer(p, view) {
+    var world = MI.store.get();
+    if (view === 'sphere') {
+      var slot = typeof world.home === 'number' && !state.waterTileIds.has(world.home)
+        ? world.home : firstLandSlot();
+      if (slot === null) return false;
+      p.dir.fromArray(MI.world.sphere.tile(slot).dir).normalize();
+      // Step clear of the house, AGAINST the camera's forward axis. The camera starts at
+      // yaw 0, which looks along refTangent, and sits behind the player along it — so
+      // offsetting the other way puts the house in front of you instead of between you and
+      // the camera. The tile is wide enough that this stays on it.
+      p.dir.copy(MI.world.player.stepSphere(
+        p.dir, refTangent(p.dir), -state.spacing * SPAWN_CLEARANCE, RADIUS));
+    } else {
+      var centres = state.island && state.island.centres;
+      if (!centres) return false;
+      var c = centres[world.home] || centres[Object.keys(centres)[0]];
+      if (!c) return false;
+      // Same reasoning as the sphere branch: at yaw 0 the island camera looks along +Z, so
+      // stepping back along -Z leaves the house ahead of you and the camera behind you.
+      p.x = c.x;
+      p.z = c.z - FLAT_SPACING * SPAWN_CLEARANCE;
+    }
+    p.heading = 0;
+    p.placed = true;
+    return true;
+  }
+
+  function updatePlayer(dt) {
+    var p = activePlayer();
+    if (!p || !p.group || !p.placed) return;
+    var input = { forward: 0, strafe: 0 };
+    if (state.walkKeys.w) input.forward += 1;
+    if (state.walkKeys.s) input.forward -= 1;
+    if (state.walkKeys.d) input.strafe += 1;
+    if (state.walkKeys.a) input.strafe -= 1;
+
+    if (state.flatMode) {
+      var axes = walkAxes(new THREE.Vector3(0, 1, 0));
+      MI.world.player.updateFlat(p, dt, {
+        forward: axes.forward, right: axes.right, input: input, isLandAt: flatIsLand,
+        speed: MI.world.player.TILES_PER_SECOND * FLAT_SPACING,
+        baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * WALK_PERSON_SCALE
+      });
+    } else {
+      var sAxes = walkAxes(p.dir.clone());
+      MI.world.player.updateSphere(p, dt, {
+        forward: sAxes.forward, right: sAxes.right, input: input, isLandAt: sphereIsLand,
+        // state.spacing is a tile's width on THIS planet, so a step covers the same share
+        // of a hexagon whatever size the planet has grown to.
+        speed: MI.world.player.TILES_PER_SECOND * state.spacing,
+        height: RADIUS + LAND_LIFT, radius: RADIUS, scale: state.spacing * WALK_PERSON_SCALE
+      });
+    }
+    updateWalkCamera();
+  }
+
+  // One avatar per view, since each view keeps its own position. A character with no .glb
+  // yet falls back to the same minifigure the journal's people use, so walk mode needs no
+  // new assets to work at all.
+  function setCharacter(id) {
+    if (!state) return Promise.resolve();
+    var wanted = MI.world.player.isCharacter(id) ? id : MI.world.player.defaultId();
+    state.characterId = wanted;
+    clearAvatars();
+    return Promise.all(['sphere', 'flat'].map(function (view) {
+      return MI.world.player.makeAvatar(wanted, makePersonModel).then(function (model) {
+        // They may have picked somebody else while this was loading.
+        if (!state || state.characterId !== wanted || !model) return;
+        var holder = new THREE.Group();
+        holder.add(model);
+        state.players[view].group = holder;
+        (view === 'sphere' ? state.playerGroup : state.flatGroup).add(holder);
+        holder.visible = state.camMode === 'walk';
+      });
+    }));
+  }
+
+  function clearAvatars() {
+    ['sphere', 'flat'].forEach(function (view) {
+      var p = state.players[view];
+      if (!p.group) return;
+      if (p.group.parent) p.group.parent.remove(p.group);
+      p.group = null;
+      p.placed = false;
+    });
+  }
+
+  function isWalkMode() {
+    return !!state && state.camMode === 'walk';
+  }
+
+  // Entering stashes the orbit camera, so leaving puts it back exactly where it was.
+  function setWalkMode(on) {
+    if (!state || state.transition) return Promise.resolve(isWalkMode());
+    var want = !!on;
+    if (want === isWalkMode()) return Promise.resolve(want);
+
+    if (!want) {
+      state.camMode = 'orbit';
+      state.walkKeys = { w: false, a: false, s: false, d: false };
+      ['sphere', 'flat'].forEach(function (v) {
+        if (state.players[v].group) state.players[v].group.visible = false;
+      });
+      state.camera.up.set(0, 1, 0);
+      if (state.orbitRestore) {
+        state.camPhi = state.orbitRestore.phi;
+        state.camTheta = state.orbitRestore.theta;
+        state.camDistance = state.orbitRestore.dist;
+        state.camTarget.copy(state.orbitRestore.target);
+      }
+      state.updateCamera();
+      return Promise.resolve(false);
+    }
+
+    var ready = state.characterId ? Promise.resolve() : setCharacter(MI.world.player.defaultId());
+    return ready.then(function () {
+      var view = state.flatMode ? 'flat' : 'sphere';
+      var p = state.players[view];
+      if (!p.group || !placePlayer(p, view)) return false;
+      state.orbitRestore = {
+        phi: state.camPhi, theta: state.camTheta,
+        dist: state.camDistance, target: state.camTarget.clone()
+      };
+      state.camMode = 'walk';
+      state.walkYaw = 0;
+      state.walkPitch = 0.45;
+      state.walkDistance = WALK_DIST * walkTileSize();
+      p.group.visible = true;
+      updateWalkCamera();
+      return true;
+    });
+  }
+
   var SIDEWAYS = new THREE.Vector3(1, 0, 0);
   var satPlanetPos = new THREE.Vector3(), satIslandPos = new THREE.Vector3();
   var satPlanetQuat = new THREE.Quaternion(), satIslandQuat = new THREE.Quaternion();
@@ -2399,6 +2672,9 @@
     // inherits the island's fold rotation.
     var petGroup = new THREE.Group();
     planet.add(petGroup);
+    // Walk mode's avatar, one instance per view, parented for the same reasons as petGroup.
+    var playerGroup = new THREE.Group();
+    planet.add(playerGroup);
 
     var manager = new THREE.LoadingManager();
     manager.setURLModifier(function (url) {
@@ -2424,7 +2700,13 @@
       // what's already on screen; one recoloured atlas per theme.
       kitMaterials: [], foliageGeometries: [], atlasCache: {},
       themeId: null, skin: opts.skin || 'classic', satelliteId: null, satellite: null, satelliteGroup: satelliteGroup,
-      petId: null, petGroup: petGroup, petWalkers: null
+      petId: null, petGroup: petGroup, petWalkers: null,
+      // Walk mode. camMode is 'orbit' or 'walk'; orbitRestore is the orbit camera stashed on
+      // the way in, so leaving walk mode puts the view back exactly as it was.
+      camMode: 'orbit', characterId: null, playerGroup: playerGroup,
+      players: { sphere: MI.world.player.newPlayer(), flat: MI.world.player.newPlayer() },
+      walkKeys: { w: false, a: false, s: false, d: false },
+      walkYaw: 0, walkPitch: 0.45, walkDistance: 2.6, orbitRestore: null
     };
     state.stars = makeStars();
     scene.add(state.stars);
@@ -2446,11 +2728,30 @@
     state.updateCamera();
 
     var dragging = false, dragMoved = false, lastX = 0, lastY = 0;
+    var looking = false; // walk mode: middle button held, dragging the camera around
     canvasEl.addEventListener('mousedown', function (e) {
-      dragging = true; dragMoved = false; lastX = e.clientX; lastY = e.clientY;
+      lastX = e.clientX; lastY = e.clientY;
+      if (state.camMode === 'walk') {
+        // Middle button only. Left is left alone so it stays free for clicking on things.
+        if (e.button !== 1) return;
+        e.preventDefault(); // or the browser opens its autoscroll widget
+        looking = true;
+        canvasEl.style.cursor = 'move';
+        return;
+      }
+      if (e.button !== 0) return;
+      dragging = true; dragMoved = false;
       canvasEl.style.cursor = 'grabbing';
     });
-    window.addEventListener('mouseup', function () { dragging = false; canvasEl.style.cursor = hoverCursor; });
+    // Chrome fires auxclick after a middle release; without this it can still autoscroll.
+    canvasEl.addEventListener('auxclick', function (e) {
+      if (e.button === 1) e.preventDefault();
+    });
+    window.addEventListener('mouseup', function () {
+      dragging = false;
+      looking = false;
+      canvasEl.style.cursor = state.camMode === 'walk' ? 'default' : hoverCursor;
+    });
 
     // Hover: a pointer over anything you can actually open, plus a light mark on the tile.
     // One raycast per frame at most — picking on the planet walks the whole merged mesh.
@@ -2468,6 +2769,7 @@
     });
     state.pollHover = function () {
       if (!hoverPending || dragging || state.transition) return;
+      if (state.camMode === 'walk') { hoverPending = null; return; }
       var event = hoverPending;
       hoverPending = null;
       // Always tell the listener, including about leaving a tile, so it can put its own
@@ -2478,8 +2780,17 @@
       canvasEl.style.cursor = hoverCursor;
     };
     window.addEventListener('mousemove', function (e) {
-      if (!dragging || state.transition) return;
+      if (state.transition) return;
       var dx = e.clientX - lastX, dy = e.clientY - lastY;
+      if (looking) {
+        state.walkYaw -= dx * WALK_LOOK_SPEED;
+        state.walkPitch = Math.max(WALK_PITCH_MIN,
+          Math.min(WALK_PITCH_MAX, state.walkPitch + dy * WALK_LOOK_SPEED));
+        lastX = e.clientX; lastY = e.clientY;
+        updateWalkCamera();
+        return;
+      }
+      if (!dragging) return;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
       state.camTheta -= dx * 0.006;
       state.camPhi = clampPhi(state.camPhi - dy * 0.006);
@@ -2489,6 +2800,13 @@
     canvasEl.addEventListener('wheel', function (e) {
       e.preventDefault();
       if (state.transition) return;
+      if (state.camMode === 'walk') {
+        var tile = walkTileSize();
+        state.walkDistance = Math.max(WALK_DIST_MIN * tile,
+          Math.min(WALK_DIST_MAX * tile, state.walkDistance * (1 + e.deltaY * 0.001)));
+        updateWalkCamera();
+        return;
+      }
       // The flat layout is much smaller than the planet, so it needs its own zoom range.
       var range = cameraRange();
       var min = state.flatMode ? 2.5 : range.min;
@@ -2498,8 +2816,35 @@
     }, { passive: false });
     canvasEl.style.cursor = 'grab';
 
+    var WALK_KEYS = { KeyW: 'w', KeyA: 'a', KeyS: 's', KeyD: 'd',
+      ArrowUp: 'w', ArrowLeft: 'a', ArrowDown: 's', ArrowRight: 'd' };
+
+    function typingSomewhere() {
+      var el = document.activeElement;
+      if (!el) return false;
+      var tag = el.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable;
+    }
+
+    window.addEventListener('keydown', function (e) {
+      if (state.camMode !== 'walk' || typingSomewhere() || e.ctrlKey || e.metaKey || e.altKey) return;
+      var key = WALK_KEYS[e.code];
+      if (!key) return;
+      e.preventDefault(); // arrows would otherwise scroll the page
+      state.walkKeys[key] = true;
+    });
+    window.addEventListener('keyup', function (e) {
+      var key = WALK_KEYS[e.code];
+      if (key) state.walkKeys[key] = false;
+    });
+    // A lost focus (alt-tab mid-stride) would otherwise leave a key stuck down forever.
+    window.addEventListener('blur', function () {
+      state.walkKeys = { w: false, a: false, s: false, d: false };
+    });
+
     canvasEl.addEventListener('click', function (e) {
       if (dragMoved || state.transition) return; // a camera drag or mid-unfold, not a pick
+      if (state.camMode === 'walk') return;      // walking: nothing to pick yet
       var slot = pickSlot(e, canvasEl);
       pickListeners.forEach(function (cb) { cb(slot); });
     });
@@ -2657,6 +3002,7 @@
       animateWater(now / 1000);
       animateSatellite(now / 1000);
       if (!state.transition) updatePet(dt);
+      if (state.camMode === 'walk' && !state.transition) updatePlayer(dt);
       if (state.pollHover) state.pollHover();
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
       for (var i = animations.length - 1; i >= 0; i--) {
@@ -2737,6 +3083,7 @@
   MI.world.pickTerrainFor = pickTerrainFor;
   MI.world.landscapeCountFor = landscapeCountFor;
   MI.world.spawnLandscape = spawnLandscape;
+  MI.world.spawnHouse = spawnHouse;
   MI.world.personColor = personColor;
   // Test hooks (scripts/ and the browser console): the island layout, the planet scale
   // and a way to swing the camera without a mouse.
@@ -2772,6 +3119,21 @@
     var c = state.renderer.domElement;
     return { x: (v.x * 0.5 + 0.5) * c.clientWidth, y: (-v.y * 0.5 + 0.5) * c.clientHeight, depth: v.z };
   };
+  // Walk mode: where the character is, in world space, and what it is standing on.
+  MI.world.__player = function () {
+    if (!state || state.camMode !== 'walk') return null;
+    var p = activePlayer();
+    if (!p || !p.group || !p.placed) return null;
+    var w = p.group.getWorldPosition(new THREE.Vector3());
+    return {
+      x: w.x, y: w.y, z: w.z, heading: p.heading, moving: p.moving,
+      view: state.flatMode ? 'flat' : 'sphere',
+      slot: state.flatMode ? null : MI.world.sphere.nearestSlot(p.dir),
+      onLand: state.flatMode ? flatIsLand({ x: p.x, z: p.z }) : sphereIsLand(p.dir),
+      character: state.characterId,
+      cam: { yaw: state.walkYaw, pitch: state.walkPitch, dist: state.walkDistance }
+    };
+  };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
   MI.world.__camera = function (phi) { state.camPhi = clampPhi(phi); state.updateCamera(); };
   MI.world.setPlanet = setPlanet;
@@ -2781,5 +3143,10 @@
   MI.world.setTheme = setTheme;
   MI.world.setSatellite = setSatellite;
   MI.world.setPet = setPet;
+  MI.world.setWalkMode = setWalkMode;
+  MI.world.isWalkMode = isWalkMode;
+  MI.world.setCharacter = setCharacter;
+  MI.world.characters = function () { return MI.world.player.list(); };
+  MI.world.currentCharacter = function () { return state && state.characterId; };
   MI.world.setSkin = setSkin;
 })();

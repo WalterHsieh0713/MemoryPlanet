@@ -21,6 +21,11 @@
       // the chain keeps heading the same way across reloads.
       heading: null,
       memories: [], people: [],
+      // Who you walk around as (src/world/player.js). null until you pick.
+      player: { character: null },
+      // The main house: the tile you spawn on in walk mode, claimed at world creation so a
+      // brand-new planet has somewhere to stand. { slot, asset } once MI.app.ensureHome runs.
+      house: null,
       // Plain terrain seeded around memories so the island reads as a landscape with
       // buildings in it, rather than a solid block of buildings.
       landscape: [],
@@ -68,6 +73,8 @@
     if (!w.memories) w.memories = [];
     if (!w.people) w.people = [];
     if (!w.landscape) w.landscape = []; // worlds saved before landscape existed
+    if (!w.player) w.player = { character: null }; // worlds saved before walk mode
+    if (w.house === undefined) w.house = null;
     if (!w.planet) {
       // Every v2 world was built on the original 1002-tile grid (frequency 10).
       w.planet = { frequency: w.version >= 3 ? fresh.planet.frequency : 10 };

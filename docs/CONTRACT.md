@@ -21,6 +21,8 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
            memories: [], people: [], landscape: [],
            planet: { frequency },                       // on MI.growth.LADDER; every slot indexes this grid
            wallet: { shards, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
+           house: { slot, asset } | null,            // the main house; walk mode spawns here
+           player: { character: id|null },           // who you walk around as
            unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
            equipped: { theme: id, pet: id|null, satellite: id|null, skin: id } }
 // localStorage key memory-planet.world.v4. Older saves are migrated on load and their own keys
@@ -51,6 +53,13 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `roads(cells, pairs, buildingSlots) -> {slot: [direction indices]}` — cheapest paths joining each memory pair, reusing already-paved cells and staying off other buildings
 - `toXZ(cell, spacing)`, `adjacent(a, b)`, `DIRS`
 
+## MI.world.player  (`src/world/player.js`)
+- Walk mode's avatar and movement maths. Pure: world.js passes it an `isLandAt` test and the camera's tangent axes each frame. `node scripts/test-player.js`.
+- `list()`, `get(id)`, `isCharacter(id)`, `defaultId()`, `makeAvatar(id, fallbackBuilder) -> Promise<Object3D>`
+- `newPlayer()`, `updateSphere(player, dt, ctx)`, `updateFlat(player, dt, ctx)`
+- `stepSphere(pos, move, distance, radius)`, `moveSphere(...)`, `moveFlat(...)`, `TILES_PER_SECOND`
+- `ctx.speed` is WORLD UNITS per second: the caller multiplies `TILES_PER_SECOND` by a tile's size in that view.
+
 ## MI.economy  (`src/game/economy.js`)
 - `CATALOG = { themes, pets, satellites, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
 - **pets** walk on the land (GLB models, `src/world/pets.js`); **satellites** orbit in the sky (procedural, `src/world/cosmetics.js`). Separate slots — a world can have one of each.
@@ -63,7 +72,8 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/pets.js` (pets).
   - A **satellite** lives in the scene, not on the planet: `animateSatellite` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
   - A **pet** stands on the tiles, so it is parented to the planet (sphere view) and to the island group (flat view), one wandering instance each. `updatePet` steps it tile to tile and is skipped mid-transition.
-- `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`
+- `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`, `spawnHouse(house, { animate })`
+- Walk mode: `setWalkMode(on) -> Promise<bool>`, `isWalkMode()`, `setCharacter(id) -> Promise`, `characters()`, `currentCharacter()`. A second camera mode, not a replacement — orbit's controls are suspended while walking and restored on exit.
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
 - `onPick(cb(slot | null))`
 - `clear()`
@@ -72,10 +82,14 @@ World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - Dropped (never built, not planned): `highlight`, `setTimeCutoff`, `onHover`.
 - `highlightSlot(slot, { soft })` / `clearHighlight()` / `highlightedSlot()` — marks one tile: a vertex tint on the planet, a gold rim and a lift on the island. Survives theme changes and the fold.
 - `onHover(cb(slot | null) -> bool)` — one raycast per frame; return true for tiles that open something and the cursor becomes a pointer.
-- **Planned:** wandering people (walkers) on person-linked roads.
+- **Planned:** wandering people (walkers) on person-linked roads; clicking one shows who
+  they are and the memories they appear in.
 - Sphere math (owner A, `src/world/sphere.js`, pure functions, no THREE scene state):
   `slotToDir(slot, homeDir) -> [x,y,z]`, `orientToSurface(object3d, dir, rotY, height)`,
-  `terrainHeight(dir) -> radius at that direction` (terrain.js)
+  `terrainHeight(dir) -> radius at that direction` (terrain.js),
+  `nearestSlot(dir) -> slot` — the tile containing that direction. Exact, not an
+  approximation: the grid's tiles are the Voronoi cells of their own centres. Walk mode
+  asks it what the character is standing on, once or twice a frame.
 
 ## MI.app  (owner: D)
 - `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.

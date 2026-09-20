@@ -17,6 +17,8 @@ assets/kenney_factory-kit_3.0/
 assets/kenney_fantasy-town-kit_2.0/
 assets/kenney_holiday-kit/
 assets/kenney_pirate-kit/
+# assets/standalone/characters/ is deliberately absent: walk mode loads from there, and
+# the folder does not exist yet. Create it with a .glb and it deploys — do not add it here.
 assets/standalone/buildings/
 assets/standalone/decor/
 assets/standalone/holiday-decor/

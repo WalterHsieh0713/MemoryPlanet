@@ -235,7 +235,27 @@
   }
 
   // Replays everything already stored — used on page load, with no animation or camera moves.
+  // The main house. A brand-new planet is all ocean, so walk mode would have nowhere to
+  // put you: this claims one hexagon up front, as land with a house on it, and points
+  // `home` at it. Worlds that already have a home (their first memory set it) are left
+  // alone, so this never moves an existing island.
+  var HOUSE_ASSET = 'building-house.glb';
+
+  function ensureHome() {
+    var world = MI.store.get();
+    if (world.home !== null && world.home !== undefined) return false;
+    var slot = MI.world.sphere.firstHexagon();
+    if (typeof slot !== 'number') return false;
+    world.home = slot;
+    // Terrain first, so the tile is raised out of the sea and themed like any other land.
+    MI.store.addLandscape({ slot: slot, asset: 'grass.glb', fromMemoryId: null, source: 'home' });
+    world.house = { slot: slot, asset: HOUSE_ASSET };
+    MI.store.save();
+    return true;
+  }
+
   function restore() {
+    ensureHome();
     var world = MI.store.get();
     world.landscape.forEach(function (entry) {
       MI.world.spawnLandscape(entry, { animate: false });
@@ -243,6 +263,7 @@
     var spawns = world.memories.map(function (memory) {
       return MI.world.spawnMemory(memory, { animate: false });
     });
+    if (world.house) spawns.push(MI.world.spawnHouse(world.house, { animate: false }));
     world.people.forEach(function (person) {
       if (person.placement) spawns.push(MI.world.spawnPerson(person, { animate: false }));
     });
@@ -313,6 +334,6 @@
 
   MI.app = {
     addEntry: addEntry, restore: restore, growPlanet: growPlanet,
-    equip: equip, startOver: startOver, onEvent: onEvent
+    equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome
   };
 })();
