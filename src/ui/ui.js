@@ -30,13 +30,15 @@
     ['stats-chip', 'stats-text', 'entry-input', 'submit-btn', 'empty-hint', 'demo-btn',
       'toast', 'toast-emoji', 'toast-headline', 'toast-sub', 'detail', 'detail-close',
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
-      'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
+      'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
-      'tag-mood', 'tag-cat', 'tag-big', 'mic-btn']
+      'tag-mood', 'tag-cat', 'tag-big', 'mic-btn', 'settings-btn', 'settings',
+      'book-tabs-left', 'book-tabs-right', 'book-write-panel', 'book-right-body',
+      'book-heading', 'book-mobile-tabs']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -55,9 +57,8 @@
         + (people ? ' · ' + plural(people, 'friend') : '');
 
     el['empty-hint'].classList.toggle('show', memories === 0);
-    // Neither button means anything on an empty planet.
-    el['reset-btn'].classList.toggle('show', memories > 0);
     el['view-btn'].classList.toggle('show', memories > 0);
+    if (el['reset-btn']) el['reset-btn'].disabled = memories === 0;
 
     el['stats-chip'].classList.add('bump');
     setTimeout(function () { el['stats-chip'].classList.remove('bump'); }, 400);
@@ -251,10 +252,30 @@
   var bookFocusTimer = null;
 
   function selectBookPage(page) {
-    el.book.dataset.page = page;
-    el['book-write-tab'].setAttribute('aria-selected', String(page === 'write'));
-    el['book-memories-tab'].setAttribute('aria-selected', String(page === 'memories'));
-    if (page === 'write' && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
+    setBookView(page === 'memories' ? { kind: 'toc' } : { kind: 'write' });
+  }
+
+  var bookView = { kind: 'write' };
+  var MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  var CLIP = {
+    achievement: '#c9a46a', everyday: '#8fbf7a', travel: '#6aa7c9',
+    home: '#d4a574', social: '#c989b0', other: '#9aa7b0'
+  };
+
+  function isNarrowBook() {
+    return window.matchMedia('(max-width: 680px)').matches;
+  }
+
+  function setBookView(view) {
+    bookView = view || { kind: 'write' };
+    var writing = bookView.kind === 'write';
+    el.book.dataset.page = writing ? 'write' : 'read';
+    el['book-write-tab'].setAttribute('aria-selected', String(writing));
+    el['book-memories-tab'].setAttribute('aria-selected', String(bookView.kind === 'toc'));
+    el['book-write-panel'].hidden = !writing;
+    el['book-right-body'].hidden = writing;
+    renderBook();
+    if (writing && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
   }
 
   function openBook(event) {
@@ -294,10 +315,14 @@
   }
 
   // --- The book ---------------------------------------------------------------------------
-  // Every entry, newest first, two-way linked with the planet: hovering a row marks its tile,
-  // clicking one opens it, and clicking the tile flashes the row.
+  // Tabbed scrapbook: TOC + years on the left, a tab per person on the right. Pages are
+  // two-way linked with the planet: hovering a diary entry marks its tile.
 
   var rowBySlot = {};
+
+  function memoryOn(memory) {
+    return (memory.occurredOn || memory.createdAt || '').slice(0, 10);
+  }
 
   function dayLabel(iso) {
     var today = new Date().toISOString().slice(0, 10);
@@ -309,77 +334,352 @@
     }
   }
 
+  function personHex(person) {
+    var color = (person && person.appearance && person.appearance.color) || 0x7fa3ae;
+    return '#' + color.toString(16).padStart(6, '0');
+  }
+
+  function mixPaper(hex) {
+    var n = parseInt(String(hex).replace('#', ''), 16);
+    if (isNaN(n)) return '#e8dcc8';
+    var r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    return 'rgb(' + Math.round(r * 0.4 + 247 * 0.6) + ',' +
+      Math.round(g * 0.4 + 241 * 0.6) + ',' +
+      Math.round(b * 0.4 + 228 * 0.6) + ')';
+  }
+
+  function sortMemories(list) {
+    return list.slice().sort(function (a, b) {
+      var byDate = String(b.occurredOn || '').localeCompare(String(a.occurredOn || ''));
+      return byDate !== 0 ? byDate : String(b.createdAt).localeCompare(String(a.createdAt));
+    });
+  }
+
+  function memoriesWithPerson(world, personId) {
+    return sortMemories(world.memories.filter(function (m) {
+      return (m.people || []).indexOf(personId) !== -1;
+    }));
+  }
+
+  function dateTree(world) {
+    var tree = {};
+    world.memories.forEach(function (memory) {
+      var on = memoryOn(memory);
+      if (on.length < 10) return;
+      var y = on.slice(0, 4), mo = on.slice(5, 7), d = on.slice(8, 10);
+      tree[y] = tree[y] || {};
+      tree[y][mo] = tree[y][mo] || {};
+      tree[y][mo][d] = tree[y][mo][d] || [];
+      tree[y][mo][d].push(memory);
+    });
+    return tree;
+  }
+
+  function yearsOf(world) {
+    var years = {};
+    world.memories.forEach(function (m) {
+      var y = memoryOn(m).slice(0, 4);
+      if (y) years[y] = true;
+    });
+    return Object.keys(years).sort().reverse();
+  }
+
+  function memoriesInRange(world, prefix) {
+    return sortMemories(world.memories.filter(function (m) {
+      return memoryOn(m).indexOf(prefix) === 0;
+    }));
+  }
+
+  function makeTab(label, className, selected, onClick) {
+    var tab = document.createElement('button');
+    tab.type = 'button';
+    tab.className = 'book-tab' + (className ? ' ' + className : '');
+    tab.textContent = label;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-selected', String(!!selected));
+    tab.addEventListener('click', onClick);
+    return tab;
+  }
+
+  function renderSideTabs(world) {
+    el['book-tabs-left'].innerHTML = '';
+    el['book-tabs-right'].innerHTML = '';
+    var years = yearsOf(world);
+
+    el['book-tabs-left'].appendChild(makeTab('contents', 'toc', bookView.kind === 'toc', function () {
+      setBookView({ kind: 'toc' });
+    }));
+    el['book-tabs-left'].appendChild(makeTab('write', 'write', bookView.kind === 'write', function () {
+      setBookView({ kind: 'write' });
+    }));
+    years.forEach(function (year) {
+      el['book-tabs-left'].appendChild(makeTab(year, 'year', bookView.kind === 'date' && bookView.prefix === year, function () {
+        setBookView({ kind: 'date', prefix: year });
+      }));
+    });
+
+    world.people.forEach(function (person) {
+      var tab = makeTab(person.name, 'person', bookView.kind === 'person' && bookView.id === person.id, function () {
+        setBookView({ kind: 'person', id: person.id });
+      });
+      tab.style.background = mixPaper(personHex(person));
+      tab.style.color = '#2a241c';
+      el['book-tabs-right'].appendChild(tab);
+    });
+
+    // Extra people tabs on the phone strip (Write / Contents stay in the markup).
+    Array.prototype.slice.call(el['book-mobile-tabs'].querySelectorAll('[data-dynamic="1"]'))
+      .forEach(function (node) { node.parentNode.removeChild(node); });
+    years.forEach(function (year) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.dynamic = '1';
+      btn.textContent = year;
+      btn.setAttribute('aria-selected', String(bookView.kind === 'date' && bookView.prefix === year));
+      btn.addEventListener('click', function () { setBookView({ kind: 'date', prefix: year }); });
+      el['book-mobile-tabs'].appendChild(btn);
+    });
+    world.people.forEach(function (person) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.dataset.dynamic = '1';
+      btn.textContent = person.name;
+      btn.setAttribute('aria-selected', String(bookView.kind === 'person' && bookView.id === person.id));
+      btn.addEventListener('click', function () { setBookView({ kind: 'person', id: person.id }); });
+      el['book-mobile-tabs'].appendChild(btn);
+    });
+  }
+
   function renderBook() {
     var world = MI.store.get();
     var count = world.memories.length;
     el['book-count'].textContent = count ? count : '';
-    el['book-note'].textContent = count ? plural(count, 'memory').replace('memorys', 'memories') : '';
-    el['book-list'].innerHTML = '';
     rowBySlot = {};
+    renderSideTabs(world);
 
-    if (!count) {
+    el['book-list'].innerHTML = '';
+    el['book-right-body'].innerHTML = '';
+
+    if (bookView.kind === 'write') {
+      el['book-heading'].textContent = 'scene list';
+      el['book-note'].textContent = count ? plural(count, 'memory').replace('memorys', 'memories') : 'blank pages';
+      renderSceneList(world, el['book-list']);
+      return;
+    }
+    if (bookView.kind === 'toc') {
+      renderToc(world);
+      return;
+    }
+    if (bookView.kind === 'person') {
+      renderPersonPages(world, bookView.id);
+      return;
+    }
+    renderDatePages(world, bookView.prefix || '');
+  }
+
+  function kicker(text) {
+    var node = document.createElement('div');
+    node.className = 'toc-kicker';
+    node.textContent = text;
+    return node;
+  }
+
+  function renderSceneList(world, into) {
+    if (!world.memories.length) {
       var blank = document.createElement('div');
       blank.className = 'empty-page';
       blank.textContent = 'Nothing written yet. Whatever you put on the right becomes a building on your planet.';
-      el['book-list'].appendChild(blank);
+      into.appendChild(blank);
       return;
     }
-
-    // Memories are stored in the order they were written, so the book sorts for itself.
-    var entries = world.memories.slice().sort(function (a, b) {
-      var byDate = String(b.occurredOn || '').localeCompare(String(a.occurredOn || ''));
-      return byDate !== 0 ? byDate : String(b.createdAt).localeCompare(String(a.createdAt));
-    });
-
-    var day = null;
-    entries.forEach(function (memory) {
-      var on = (memory.occurredOn || memory.createdAt || '').slice(0, 10);
-      if (on !== day) {
-        day = on;
-        var heading = document.createElement('div');
-        heading.className = 'day';
-        heading.textContent = dayLabel(on);
-        el['book-list'].appendChild(heading);
-      }
-      el['book-list'].appendChild(buildRow(memory, world));
+    into.appendChild(kicker('recent'));
+    sortMemories(world.memories).slice(0, 8).forEach(function (memory) {
+      into.appendChild(buildDiaryEntry(memory, world, true));
     });
   }
 
-  function buildRow(memory, world) {
+  function renderToc(world) {
+    el['book-heading'].textContent = 'contents';
+    el['book-note'].textContent = 'years · months · days';
+    var left = el['book-list'];
+    var right = el['book-right-body'];
+    var tree = dateTree(world);
+
+    left.appendChild(kicker('table of contents'));
+    var years = Object.keys(tree).sort().reverse();
+    if (!years.length) {
+      var blank = document.createElement('div');
+      blank.className = 'empty-page';
+      blank.textContent = 'Dates will gather here as you write.';
+      left.appendChild(blank);
+    }
+    years.forEach(function (year) {
+      var yh = document.createElement('button');
+      yh.type = 'button';
+      yh.className = 'toc-year';
+      yh.textContent = year;
+      yh.addEventListener('click', function () { setBookView({ kind: 'date', prefix: year }); });
+      left.appendChild(yh);
+      Object.keys(tree[year]).sort().reverse().forEach(function (mo) {
+        var mh = document.createElement('div');
+        mh.className = 'toc-month';
+        mh.textContent = MONTHS[Number(mo) - 1] || mo;
+        left.appendChild(mh);
+        Object.keys(tree[year][mo]).sort().reverse().forEach(function (d) {
+          var iso = year + '-' + mo + '-' + d;
+          var n = tree[year][mo][d].length;
+          var row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'toc-day';
+          var label = document.createElement('span');
+          label.textContent = Number(d) + '  ' + (tree[year][mo][d][0].title || '');
+          var dots = document.createElement('span');
+          dots.className = 'dots';
+          var countEl = document.createElement('span');
+          countEl.className = 'n';
+          countEl.textContent = n;
+          row.appendChild(label);
+          row.appendChild(dots);
+          row.appendChild(countEl);
+          row.addEventListener('click', function () { setBookView({ kind: 'date', prefix: iso }); });
+          left.appendChild(row);
+        });
+      });
+    });
+
+    var peopleHost = isNarrowBook() ? left : right;
+    peopleHost.appendChild(kicker('people'));
+    if (!world.people.length) {
+      var none = document.createElement('div');
+      none.className = 'empty-page';
+      none.textContent = 'Names you add while writing get a tab of their own, along this edge.';
+      peopleHost.appendChild(none);
+      return;
+    }
+    world.people.forEach(function (person) {
+      var n = memoriesWithPerson(world, person.id).length;
+      var row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'toc-person';
+      var who = document.createElement('span');
+      var dot = document.createElement('span');
+      dot.className = 'who-dot';
+      dot.style.background = personHex(person);
+      who.appendChild(dot);
+      who.appendChild(document.createTextNode(person.name));
+      row.appendChild(who);
+      var countEl = document.createElement('span');
+      countEl.className = 'n';
+      countEl.textContent = n;
+      row.appendChild(countEl);
+      row.addEventListener('click', function () { setBookView({ kind: 'person', id: person.id }); });
+      peopleHost.appendChild(row);
+    });
+  }
+
+  function splitAcrossPages(items, left, right) {
+    if (isNarrowBook() || !right) {
+      items.forEach(function (node) { left.appendChild(node); });
+      return;
+    }
+    var mid = Math.ceil(items.length / 2) || 0;
+    items.forEach(function (node, i) {
+      (i < mid ? left : right).appendChild(node);
+    });
+  }
+
+  function renderDatePages(world, prefix) {
+    var list = memoriesInRange(world, prefix);
+    var label = prefix.length === 10 ? dayLabel(prefix)
+      : prefix.length === 7 ? (MONTHS[Number(prefix.slice(5, 7)) - 1] + ' ' + prefix.slice(0, 4))
+      : prefix;
+    el['book-heading'].textContent = label || 'pages';
+    el['book-note'].textContent = list.length ? plural(list.length, 'memory').replace('memorys', 'memories') : '';
+    if (!list.length) {
+      var blank = document.createElement('div');
+      blank.className = 'empty-page';
+      blank.textContent = 'No memories on this page yet.';
+      el['book-list'].appendChild(blank);
+      return;
+    }
+    var nodes = list.map(function (memory) { return buildDiaryEntry(memory, world, false); });
+    splitAcrossPages(nodes, el['book-list'], el['book-right-body']);
+  }
+
+  function renderPersonPages(world, personId) {
+    var person = world.people.filter(function (p) { return p.id === personId; })[0];
+    var list = memoriesWithPerson(world, personId);
+    el['book-heading'].textContent = person ? person.name : 'someone';
+    el['book-note'].textContent = list.length ? plural(list.length, 'memory').replace('memorys', 'memories') : 'no pages yet';
+    var banner = document.createElement('div');
+    banner.className = 'person-banner';
+    var h = document.createElement('h3');
+    h.textContent = person ? person.name : '';
+    var p = document.createElement('p');
+    p.textContent = list.length
+      ? 'all the days written with them'
+      : 'write them into a memory and this chapter fills in';
+    banner.appendChild(h);
+    banner.appendChild(p);
+    el['book-list'].appendChild(banner);
+    if (!list.length) return;
+    var nodes = list.map(function (memory) { return buildDiaryEntry(memory, world, false); });
+    splitAcrossPages(nodes, el['book-list'], el['book-right-body']);
+  }
+
+  function buildDiaryEntry(memory, world, compact) {
     var flavor = CATEGORY_FLAVOR[memory.category] || CATEGORY_FLAVOR.other;
     var row = document.createElement('button');
-    row.className = 'entry';
+    row.type = 'button';
+    row.className = 'diary-entry';
 
-    var emoji = document.createElement('span');
-    emoji.className = 'entry-emoji';
-    emoji.textContent = flavor.emoji;
+    var date = document.createElement('span');
+    date.className = 'd-date';
+    date.textContent = dayLabel(memoryOn(memory));
+    row.appendChild(date);
 
-    var body = document.createElement('span');
-    body.className = 'entry-body';
-    var name = document.createElement('span');
-    name.className = 'entry-name';
-    name.textContent = memory.title;
-    body.appendChild(name);
+    if (!compact) {
+      var clip = document.createElement('span');
+      clip.className = 'd-clip';
+      clip.style.background = CLIP[memory.category] || CLIP.other;
+      clip.title = memory.category;
+      row.appendChild(clip);
+    }
+
+    var title = document.createElement('span');
+    title.className = 'd-title';
+    title.textContent = memory.title || flavor.line;
+    row.appendChild(title);
+
+    if (!compact && memory.text) {
+      var text = document.createElement('span');
+      text.className = 'd-text';
+      text.textContent = memory.text;
+      row.appendChild(text);
+    }
 
     var people = (memory.people || []).map(function (id) {
       return world.people.filter(function (p) { return p.id === id; })[0];
     }).filter(Boolean);
     if (people.length) {
       var who = document.createElement('span');
-      who.className = 'entry-who';
+      who.className = 'd-who';
       people.forEach(function (person) {
         var dot = document.createElement('span');
         dot.className = 'who-dot';
-        var color = (person.appearance && person.appearance.color) || 0x7fa3ae;
-        dot.style.background = '#' + color.toString(16).padStart(6, '0');
+        dot.style.background = personHex(person);
         who.appendChild(dot);
       });
       who.appendChild(document.createTextNode(people.map(function (p) { return p.name; }).join(', ')));
-      body.appendChild(who);
+      row.appendChild(who);
     }
 
-    row.appendChild(emoji);
-    row.appendChild(body);
+    if (!compact && memory.mood && memory.mood.label) {
+      var note = document.createElement('span');
+      note.className = 'd-note';
+      note.textContent = memory.mood.label;
+      row.appendChild(note);
+    }
 
     var slot = memory.placement && memory.placement.slot;
     if (slot !== undefined && slot !== null) {
@@ -392,7 +692,7 @@
         if (openSlot === null) MI.world.clearHighlight();
       });
       row.addEventListener('click', function () {
-        closeBook(); // the card and the planet are behind the book
+        closeBook();
         showDetail(memory);
         MI.world.focus(slot);
       });
@@ -426,7 +726,7 @@
     if (!tiles) return;
     var p = MI.growth.progress(world, tiles, world.planet.frequency);
     var size = MI.growth.tierIndex(p.frequency) + 1;
-    el['planet-size'].textContent = '🪐 Size ' + size + ' of ' + MI.growth.LADDER.length;
+    el['planet-size'].textContent = 'Size ' + size + ' of ' + MI.growth.LADDER.length;
     el['planet-tiles'].textContent = tiles.length + ' tiles';
     var pct = p.next === null ? 100 : Math.min(100, Math.round(100 * p.land / p.threshold));
     el['planet-bar'].firstElementChild.style.transform = 'scaleX(' + (pct / 100) + ')';
@@ -496,6 +796,7 @@
   var shopOpener = null;
 
   function openShop() {
+    closeSettings();
     shopOpener = document.activeElement;
     renderShop();
     el.shop.classList.add('open');
@@ -505,6 +806,17 @@
   function closeShop() {
     el.shop.classList.remove('open');
     if (shopOpener && shopOpener.focus) shopOpener.focus();
+  }
+
+  function openSettings() {
+    closeShop();
+    el.settings.classList.add('open');
+    el['settings-btn'].setAttribute('aria-expanded', 'true');
+  }
+  function closeSettings() {
+    el.settings.classList.remove('open');
+    el['settings-btn'].setAttribute('aria-expanded', 'false');
+    disarmReset();
   }
 
   function themeThumb(id) {
@@ -1061,6 +1373,7 @@
     disarmReset();
     hideDetail();
     closeShop();
+    closeSettings();
     el.toast.classList.remove('show');
     // Back to the smallest planet, with shards and unlocks wiped too.
     MI.app.startOver().then(function () {
@@ -1070,9 +1383,7 @@
   }
 
   function syncViewButton() {
-    var flat = MI.world.isFlatView();
-    el['view-icon'].textContent = flat ? '🪐' : '🏝️';
-    el['view-label'].textContent = flat ? 'planet view' : 'island view';
+    el['view-btn'].classList.toggle('is-island', MI.world.isFlatView());
   }
   function disarmReset() {
     clearTimeout(resetArmed);
@@ -1085,14 +1396,20 @@
     if (MI.store.get().memories.length === 0) return; // nothing to lay out yet
     if (MI.world.isTransitioning()) return; // let the fold finish before reversing it
     var goingFlat = !MI.world.isFlatView();
-    el['view-icon'].textContent = goingFlat ? '🪐' : '🏝️';
-    el['view-label'].textContent = goingFlat ? 'planet view' : 'island view';
+    el['view-btn'].classList.toggle('is-island', goingFlat);
     hideDetail();
     MI.world.setFlatView(goingFlat);
   }
 
   function init() {
     cacheElements();
+    el['settings-btn'].addEventListener('click', function () {
+      if (el.settings.classList.contains('open')) closeSettings();
+      else openSettings();
+    });
+    el.settings.addEventListener('click', function (e) {
+      if (e.target === el.settings) closeSettings();
+    });
     el['reset-btn'].addEventListener('click', handleReset);
     el['view-btn'].addEventListener('click', toggleView);
 
@@ -1157,6 +1474,7 @@
       }
       if (e.key !== 'Escape') return;
       if (el.shop.classList.contains('open')) closeShop();
+      else if (el.settings.classList.contains('open')) closeSettings();
       else if (isBookOpen()) closeBook();
     });
 
