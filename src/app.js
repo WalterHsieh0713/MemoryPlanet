@@ -118,7 +118,7 @@
     return created;
   }
 
-  // --- Progress events (shards earned, planet grew) for the UI -------------------------
+  // --- Progress events (coins earned, planet grew) for the UI -------------------------
   var listeners = [];
   function onEvent(cb) { listeners.push(cb); }
   function emit(event) { listeners.forEach(function (cb) { cb(event); }); }
@@ -348,7 +348,7 @@
     return rebuildScene({ keepCamera: !!opts.keepCamera }).then(function () { return true; });
   }
 
-  // Wipe this journal's memories, shards and unlocks — back to the smallest planet.
+  // Wipe this journal's memories, coins and unlocks — back to the smallest planet.
   // The journal's name and character stay; it is still the same book.
   function startOver() {
     MI.store.reset();

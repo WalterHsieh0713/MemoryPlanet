@@ -30,7 +30,7 @@
     ['stats-chip', 'stats-text', 'entry-input', 'submit-btn', 'empty-hint', 'demo-btn',
       'toast', 'toast-emoji', 'toast-headline', 'toast-sub', 'detail', 'detail-close',
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
-      'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
+      'reset-btn', 'view-btn', 'detail-swaps', 'toast-coins',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'shop-blurb',
@@ -863,12 +863,12 @@
     bump(row, 'flash');
   }
 
-  // --- Shards + planet size ------------------------------------------------------------
+  // --- Coins + planet size ------------------------------------------------------------
 
   function refreshWallet() {
-    var shards = MI.economy.balance();
-    el['wallet-count'].textContent = shards;
-    el['shop-balance'].textContent = shards;
+    var coins = MI.economy.balance();
+    el['wallet-count'].textContent = coins;
+    el['shop-balance'].textContent = coins;
     if (el.shop.classList.contains('open')) renderShop();
     renderThemeTray();
   }
@@ -896,24 +896,24 @@
     setTimeout(function () { node.classList.remove(className); }, 450);
   }
 
-  // A "+18 ✦" that drifts up off the wallet.
-  function floatShards(amount) {
+  // A "+18" that drifts up off the wallet.
+  function floatCoins(amount) {
     if (!amount) return;
     var rect = el.wallet.getBoundingClientRect();
     var tag = document.createElement('div');
-    tag.className = 'shard-float';
-    tag.textContent = '+' + amount + ' ✦';
+    tag.className = 'coin-float';
+    tag.textContent = '+' + amount;
     tag.style.left = (rect.left + 10) + 'px';
     tag.style.top = (rect.bottom + 6) + 'px';
     document.body.appendChild(tag);
     setTimeout(function () { tag.remove(); }, 1300);
   }
 
-  function toast(emoji, headline, sub, shards, holdMs) {
+  function toast(emoji, headline, sub, coins, holdMs) {
     el['toast-emoji'].textContent = emoji;
     el['toast-headline'].textContent = headline;
     el['toast-sub'].textContent = sub || '';
-    el['toast-shards'].textContent = shards ? '+' + shards + ' ✦' : '';
+    el['toast-coins'].textContent = coins ? '+' + coins : '';
     el.toast.classList.add('show');
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { el.toast.classList.remove('show'); }, holdMs || 3200);
@@ -930,13 +930,13 @@
       refreshStats(); // counts, wallet and planet bar, the moment the memory lands
       bump(el.wallet, 'bump');
       bump(el['book-btn'], 'nudge'); // the book just got another page
-      floatShards(event.reward.total);
+      floatCoins(event.reward.total);
     } else if (event.type === 'grew') {
       syncViewButton(); // growing always returns to the planet view
       refreshStats();
       bump(el['planet-card'], 'grew');
       bump(el.wallet, 'bump');
-      floatShards(event.reward.total);
+      floatCoins(event.reward.total);
       toast('🪐', 'Your planet grew!',
         'Size ' + event.size + ' of ' + event.sizes + ' · ' + event.tiles + ' tiles of room',
         event.reward.total, 4200);
@@ -1131,7 +1131,7 @@
 
       var sticker = document.createElement('span');
       sticker.className = 'sticker';
-      sticker.textContent = canBuy ? ('✦ ' + item.price) : ((item.price - balance) + ' short');
+      sticker.textContent = canBuy ? String(item.price) : ((item.price - balance) + ' short');
       card.appendChild(sticker);
 
       if (canBuy) card.addEventListener('click', function () { buy(kind, item); });
@@ -2033,7 +2033,7 @@
     closeShop();
     closeSettings();
     el.toast.classList.remove('show');
-    // Back to the smallest planet, with shards and unlocks wiped too.
+    // Back to the smallest planet, with coins and unlocks wiped too.
     MI.app.startOver().then(function () {
       syncViewButton();
       refreshStats();

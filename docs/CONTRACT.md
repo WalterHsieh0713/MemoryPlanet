@@ -20,7 +20,7 @@ Landscape = { slot, asset, fromMemoryId }   // plain terrain tiles around memori
 World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: tangent vec|null, seed,
            memories: [], people: [], landscape: [],
            planet: { frequency },                       // on MI.growth.LADDER; every slot indexes this grid
-           wallet: { shards, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
+           wallet: { shards /*shown as coins*/, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
            house: { slot, asset } | null,            // the main house; the character starts here
            player: { character: id|null },           // who your character is
            unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
@@ -42,7 +42,7 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 
 ## MI.store  (owner: C)
 - `boot() -> World` / `load() -> World` — migrate a lone v4/v3/v2 save onto the journal shelf, then return an unsaved empty ocean (no `id`) so the first-screen picker can sit over a quiet planet. `save()` no-ops until a journal has been created or opened.
-- `get()`, `save()`, `reset()` (wipes this journal's shards and unlocks, keeps its id/name/character), `newId(prefix)`
+- `get()`, `save()`, `reset()` (wipes this journal's coins and unlocks, keeps its id/name/character), `newId(prefix)`
 - `listJournals() -> [{ id, name, character, memories, people, theme, frequency, updatedAt }]`, `lastJournalId()`, `currentId()`, `createJournal({ name, character }) -> World`, `openJournal(id) -> World|null`, `deleteJournal(id) -> { ok, wasCurrent }`
 - `addMemory(m)`, `addPerson(p)`, `addLandscape(entry)`, `findPerson(name) -> Person|null` (case-insensitive), `findMemoryBySlot(slot)`, `takenSlots()`, `occupiedSlots()`
 - `exportJSON() -> string`, `importJSON(str)` (normalized to v4)
@@ -111,7 +111,7 @@ World  = { version: 4, id, name, nextSlot /*unused*/, home: slot|null, heading: 
 ## MI.app  (owner: D)
 - `addEntry(text, opts) -> Promise<Memory|null>` = classify -> resolve/create people -> assign slot/asset/placement -> store -> world.spawn* -> world.focus. `null` means the planet is full. Current opts: `occurredOn`, `source`, `animate`, `focus`, `instant`.
 - `restore() -> Promise` replays the stored world (landscape, memories, people) without animation, then rebuilds roads.
-- `addEntry` also pays shards and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
+- `addEntry` also pays coins and, once `MI.growth.shouldGrow`, calls `growPlanet()` (after a short beat so the new building lands first). A full planet grows before placing rather than returning `null`; `null` now only means the biggest planet is full.
 - `growPlanet({ animate, focus }) -> Promise<bool>`, `equip(kind, id)` (economy + world), `startOver() -> Promise` (reset this journal to the smallest planet, keep name and character).
 - `enterJournal(id, { keepCamera }) -> Promise<bool>`, `createJournal({ name, character, keepCamera }) -> Promise<bool>`, `rebuildScene({ keepCamera }) -> Promise` — swap the live planet to the stored world (grid, cosmetics, character, restore). `keepCamera` is for the galaxy dive, so the zoom-in is not reset.
 - `onEvent(cb)` — `{ type: 'reward', memory, reward }` as each memory lands; `{ type: 'grew', from, to, tiles, size, sizes, reward }`.

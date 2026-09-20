@@ -21,7 +21,7 @@ Live on Vercel from `main`: it serves the repo as static files and runs `api/` a
 ## Status (2026-09-19)
 Core loop is built and working: journal text -> classify -> people/slot/asset -> persist -> spawn on a 1002-tile hex-sphere (frequency 10), with terrain/landscape tiles, roads, procedural minifigure people, a flat-map view toggle, building swap in the detail panel, demo seed and reset. Persistence reproduces the world on reload.
 
-Progression (built 2026-09-19): worlds start on the smallest planet (42 tiles) and grow up the size ladder 42 -> 92 -> 162 -> 362 -> 642 -> 1002 once half the land is claimed (`src/world/growth.js`; grids in `data/grids/`, f=10 stays `data/hexgrid.json`). Growing remaps every saved slot and keeps tile size constant, so the island keeps its size while new ocean opens around it. Journaling earns shards (`src/game/economy.js`), spent in the shop on 4 themes, 8 pets, 4 satellites and 5 character skins (visuals in `src/world/themes.js`, `src/world/cosmetics.js` and `src/world/walkers.js`). Store is v4 (`memory-planet.world.v4`); a v3 save migrates by splitting its `pets` into pets and satellites, a v2 save additionally as frequency 10. Checks: `node scripts/test-growth.js`.
+Progression (built 2026-09-19): worlds start on the smallest planet (42 tiles) and grow up the size ladder 42 -> 92 -> 162 -> 362 -> 642 -> 1002 once half the land is claimed (`src/world/growth.js`; grids in `data/grids/`, f=10 stays `data/hexgrid.json`). Growing remaps every saved slot and keeps tile size constant, so the island keeps its size while new ocean opens around it. Journaling earns coins (`src/game/economy.js`), spent in the shop on 4 themes, 8 pets, 4 satellites and 5 character skins (visuals in `src/world/themes.js`, `src/world/cosmetics.js` and `src/world/walkers.js`). Store is v4 (`memory-planet.world.v4`); a v3 save migrates by splitting its `pets` into pets and satellites, a v2 save additionally as frequency 10. Checks: `node scripts/test-growth.js`.
 
 Island view (was the flat view): the planet's land is coiled into a compact floating island rather than unrolled tile-for-tile, because the land grows as a winding chain and pressing it flat gave a strip. `src/world/island.js` (pure, `node scripts/test-island.js`) places each tile outward from home beside a planet neighbour, on the free cell nearest the middle, and re-routes the roads across the island (cheapest path, reusing paved cells). The land sits on a block of sea built per tile in `buildIslandUnderside` (deepest in the middle, a thin band of earth under the grass, the rest running the planet’s own water shader with `aLand` 0), with a soft shadow far below. The island hangs in a painted sky dome (`makeSky`/`makeSkyTexture`, per-theme `skyTop`/`skyBottom`/`clouds`, drawn wider than the starfield) that fades in with the view. Switching views is animated: the camera turns to home, tiles lift off the sphere and gather into the island while the planet shrinks away, and the sea grows down once they land (`makeFoldRig`, `unfoldToFlat`/`foldToPlanet`); the dithered cross-fade, lighting blend and mid-flight input lock are unchanged. Buttons read "island view" / "planet view".
 
@@ -117,8 +117,8 @@ Known gaps:
 - Follow mode is sightseeing: you cannot open a memory by walking up to it. The camera only avoids sitting inside a building; a building can still stand between it and the character.
 - The planet has no character control at all (by design, for now).
 - The character's position is not persisted — a reload puts it back outside the house. Deliberate for now (it comes home), easy to change.
-- Input method is still being decided; shards currently pay per entry via `MI.app.addEntry`, so any new input path that goes through it earns automatically.
-- "Start over" wipes shards and unlocks along with the planet.
+- Input method is still being decided; coins currently pay per entry via `MI.app.addEntry`, so any new input path that goes through it earns automatically.
+- "Start over" wipes coins and unlocks along with the planet.
 - `docs/CONTRACT.md` was stale (listed `highlight/setTimeCutoff/onHover` that were never built); now corrected, with the planned APIs marked as planned.
 
 ## Planned (not built yet, in build order)
@@ -130,6 +130,6 @@ Known gaps:
 ## Decisions / open questions for later
 - **Next journal design request:** make the book UI feel like a cool, more fully three-dimensional book object, with a clear clickable **Write** control at the bottom of the book to start adding a journal entry. This is a follow-up design task, not yet implemented; keep the existing entry flow and mobile usability. The current rotating CSS miniature and storybook styling are the starting point.
 - ~~Planet radius per size~~: decided after the `/size-test` page — tile size is constant, so a bigger planet is a bigger ball (planet group scaled by frequency/10).
-- Growth threshold is "half the hexagons are land" (`GROW_AT`), which works out to growing at roughly 5-7, 12, 21, 48 and 89 memories. Shard prices and rewards are one table each in `src/game/economy.js`.
+- Growth threshold is "half the hexagons are land" (`GROW_AT`), which works out to growing at roughly 5-7, 12, 21, 48 and 89 memories. Coin prices and rewards are one table each in `src/game/economy.js`.
 - Whether to spend an API key on the Claude classifier for the demo, or ship heuristic-only.
 - Multiplayer (gates the 4002 planet) has no design yet.
