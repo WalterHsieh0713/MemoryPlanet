@@ -865,26 +865,21 @@
     return edges;
   }
 
-  // Which memories should be joined: the chronological spine, then a branch wherever the
-  // same person recurs.
+  // Which memories should be joined: only ones that share a person, in the order that
+  // person's memories were written. A memory with nobody in common with another gets no
+  // road at all -- there used to be a chronological spine joining everything, which drew
+  // paths between tiles that had nothing to do with each other.
   function roadConnections(world) {
     var pairs = [];
     var slotOf = {};
     world.memories.forEach(function (m) { if (m.placement) slotOf[m.id] = m.placement.slot; });
 
-    var chronological = world.memories.slice().sort(function (a, b) {
-      var byDate = String(a.occurredOn || '').localeCompare(String(b.occurredOn || ''));
-      return byDate !== 0 ? byDate : String(a.createdAt).localeCompare(String(b.createdAt));
-    }).map(function (m) { return m.placement && m.placement.slot; })
-      .filter(function (s) { return s !== undefined; });
-    for (var i = 1; i < chronological.length; i++) {
-      pairs.push([chronological[i - 1], chronological[i]]);
-    }
-
     world.people.forEach(function (person) {
       var stops = (person.memoryIds || []).map(function (id) { return slotOf[id]; })
         .filter(function (s) { return s !== undefined; });
-      for (var j = 1; j < stops.length; j++) pairs.push([stops[j - 1], stops[j]]);
+      for (var j = 1; j < stops.length; j++) {
+        if (stops[j - 1] !== stops[j]) pairs.push([stops[j - 1], stops[j]]);
+      }
     });
     return pairs;
   }
@@ -4047,6 +4042,34 @@
     try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) { /* not locked */ }
   }
 
+  // Follow mode stays on but hands the mouse and keyboard back, for a panel drawn over the
+  // world (the treat picker). Without it the captured mouse keeps steering the camera behind
+  // the panel, its cursor is hidden and its buttons cannot be clicked. Letting go must not
+  // read as leaving follow mode, so groundHadLock drops first, as in setGroundView(false).
+  function holdGroundControl(on) {
+    if (!state) return;
+    on = !!on;
+    if (on === !!state.groundHeld) return;
+    if (on && state.camMode !== 'ground') return;
+    state.groundHeld = on;
+    if (on) {
+      state.groundHadLock = false;
+      clearKeys();
+      releasePointer();
+      return;
+    }
+    // Closing the panel is a click or a key press, which is the gesture a lock needs. If it
+    // is refused anyway, a click on the world takes the mouse back.
+    if (state.camMode === 'ground') requestGroundLock();
+  }
+
+  function requestGroundLock() {
+    try {
+      var asked = state.renderer.domElement.requestPointerLock();
+      if (asked && asked.catch) asked.catch(function () {});
+    } catch (e) { /* no pointer lock here */ }
+  }
+
   function setGroundView(on) {
     if (!state || state.transition || state.camMode === 'tween') return Promise.resolve(isGroundView());
     if (state.hub && state.hub.on) return Promise.resolve(false);
@@ -4057,6 +4080,7 @@
       var restore = state.orbitRestore;
       state.camMode = 'tween';
       state.groundHadLock = false; // before releasing, so the lock change does not call us again
+      state.groundHeld = false;
       releasePointer();
       clearKeys();
       return new Promise(function (resolve) {
@@ -4287,7 +4311,7 @@
               arrows: { w: false, a: false, s: false, d: false } },
       groundForward: new THREE.Vector3(1, 0, 0),
       groundPitch: FOLLOW_PITCH, groundDistance: FOLLOW_DIST * FLAT_SPACING,
-      orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false,
+      orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false, groundHeld: false,
       galaxy: {
         on: false, mix: 0, group: null, planets: [], hoverId: null,
         liveId: null, liveHover: 0, liveBounce: 0, saved: null, busy: false,
@@ -4494,7 +4518,11 @@
     // The browser takes the mouse back on Esc and fires this instead of a keydown: that is
     // the way out of follow mode when the mouse is captured.
     document.addEventListener('pointerlockchange', function () {
-      if (document.pointerLockElement === canvasEl) return;
+      if (document.pointerLockElement === canvasEl) {
+        // A lock taken back after a hold: Esc means "leave follow" again from here on.
+        if (state.camMode === 'ground' && !state.groundHeld) state.groundHadLock = true;
+        return;
+      }
       if (state.groundHadLock && state.camMode === 'ground') {
         state.groundHadLock = false;
         setGroundView(false);
@@ -4557,6 +4585,7 @@
       }
       var key = MOVE_KEYS[e.code];
       if (!key) return;
+      if (state.groundHeld) return; // a panel has the keyboard: do not walk behind it
       // Arrows would scroll the page; in the hub both sets are walking, so neither should.
       if (key[0] === 'arrows' || (state.hub && state.hub.on)) e.preventDefault();
       state.keys[key[0]][key[1]] = true;
@@ -4582,6 +4611,8 @@
         return;
       }
       if (state.camMode === 'ground') {
+        // Follow mode without the mouse (a refused re-lock after a panel): click to take it back.
+        if (!state.groundHeld && document.pointerLockElement !== canvasEl) requestGroundLock();
         var groundSlot = pickSlot(e, canvasEl);
         if (isHubBuildingSlot(groundSlot)) enterHub();
         return;
@@ -6338,6 +6369,7 @@
   MI.world.setPets = setPets;
   MI.world.feedPet = feedPet;
   MI.world.setGroundView = setGroundView;
+  MI.world.holdGroundControl = holdGroundControl;
   MI.world.isGroundView = isGroundView;
   MI.world.onGroundView = onGroundView;
   MI.world.onLookMemory = function (cb) { lookMemoryListener = cb; };

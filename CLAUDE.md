@@ -135,7 +135,7 @@ Known limits of that pass, and the likely places to look:
 
 Known gaps:
 - Claude is no longer on the entry path: it only backs the detail card's "suggest a title" button, which hides itself when no key is configured. It has still never been seen answering — there is no local `.env` and the deployed key may not be set.
-- Roads currently link ALL memories chronologically; residents roam the network, but paths are not yet limited to memories that share a person. With the compact layout the chronological roads are short hops, so this matters less visually.
+- Roads only join memories that share a person (`roadConnections`, 2026-09-20; the chronological spine is gone). A memory with nobody in common with another has no road. Routes between two same-person memories can still pass over unrelated tiles on the way.
 - Follow mode is sightseeing: you cannot open a memory by walking up to it. The camera only avoids sitting inside a building; a building can still stand between it and the character.
 - The planet has no character control at all (by design, for now).
 - The character's position is not persisted — a reload puts it back outside the house. Deliberate for now (it comes home), easy to change.
@@ -145,7 +145,7 @@ Known gaps:
 
 ## Planned (not built yet, in build order)
 0. **Resident details.** Memory people now roam in both views. Clicking one should open who they are and the list of memories they appear in; ground view currently leaves the left mouse button free for this.
-1. **Person-specific paths.** Roads should only connect memories that share a person (delete the chronological chain in `roadConnections`), and each resident should follow their own connected memories. The tag row's chips already carry `personId`.
+1. ~~Person-specific paths.~~ **Roads built** (chronological chain deleted, 2026-09-20). Still open: each resident following only their own connected memories.
 2. ~~Flat island start, planet size ladder.~~ **Built**, starting on the 42-tile planet rather than a flat island (team call, 2026-09-19). If the flat-island start comes back, `MI.world.setFlatView(false)` already animates the island folding up into a planet. Still open: 1962 / 4002 tiles (the 4002 planet is multiplayer-only).
 3. ~~Whole-planet themes.~~ **Built** as shop unlocks (meadow, frostfall, blossom, starlight), and themes recolour the kit atlas at runtime. Per-category building style picks are still deferred.
 

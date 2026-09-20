@@ -2235,6 +2235,8 @@
     el['pet-feed'].classList.add('open');
     el['pet-feed'].setAttribute('aria-hidden', 'false');
     el['pet-prompt'].classList.remove('show');
+    // Give the mouse back so the treats can be clicked, and stop the world steering behind it.
+    if (MI.world.holdGroundControl) MI.world.holdGroundControl(true);
     var first = el['pet-feed-list'].querySelector('button:not(:disabled)');
     if (first) first.focus();
   }
@@ -2243,6 +2245,7 @@
     if (!el['pet-feed'].classList.contains('open')) return;
     el['pet-feed'].classList.remove('open');
     el['pet-feed'].setAttribute('aria-hidden', 'true');
+    if (MI.world.holdGroundControl) MI.world.holdGroundControl(false);
   }
 
   function givePetTreat(item, owner) {
