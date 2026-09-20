@@ -3323,6 +3323,10 @@
     MI.world.walkers.updateSphere(walkers.sphere, dt, {
       isLand: canStand, neighborsOf: spec.sphereNeighbors || walkerNeighbors, findAnchor: findAnchor,
       chooseNext: spec.chooseNext,
+      // Where this walker's journey ends. A friend stops at the memories on their own route
+      // and walks every tile between them without breaking stride; without this each tile was
+      // its own start and stop, and going somewhere read as a row of hops.
+      stopsAt: spec.loiter && spec.loiter.dwellsAt,
       loiter: spec.loiter && {
         tileWidth: state.spacing, rest: { x: spec.loiter.sphereRest, z: 0 },
         dwellsAt: spec.loiter.dwellsAt, blocked: spec.loiter.sphereBlocked
@@ -3351,6 +3355,7 @@
             ? spec.flatNeighbors(id) : state.island.walkerAdjacency[id] || [];
         },
         chooseNext: spec.chooseNext,
+        stopsAt: spec.loiter && spec.loiter.dwellsAt, // see updateSphere above
         loiter: spec.loiter && {
           tileWidth: FLAT_SPACING, rest: { x: spec.loiter.flatRest, z: 0 },
           dwellsAt: spec.loiter.dwellsAt, blocked: spec.loiter.flatBlocked
@@ -6060,11 +6065,31 @@
     var out = [];
     eachFigure(function (group, kind, view) {
       if (!group) return;
+      var at = group.getWorldPosition(new THREE.Vector3());
       out.push({ kind: kind, view: view, scale: +group.scale.x.toFixed(4),
+        x: at.x, y: at.y, z: at.z,
         own: group.visible, shown: MI.world.walkers.isShown(group) });
     });
     return { folding: !!state.folding, transition: !!state.transition,
       flatMode: !!state.flatMode, hidden: !!state.figuresHidden, figures: out };
+  };
+  // A resident's own movement state, per view. Differencing world positions cannot answer
+  // whether a walk is one walk -- the planet turns under the walker and a loitering stroll is
+  // movement too -- but its carried speed can: between two memories it should never fall back
+  // to zero, and `pause` should only ever be set on a tile it means to stop at.
+  MI.world.__walkers = function () {
+    if (!state) return null;
+    return Object.keys(state.residentWalkers).map(function (id) {
+      var pair = state.residentWalkers[id];
+      var out = { person: id };
+      ['sphere', 'flat'].forEach(function (view) {
+        var w = pair[view];
+        out[view] = { tile: w.tileId, target: w.targetId, t: +w.t.toFixed(4),
+          speed: +(w.speed || 0).toFixed(5), pause: +(w.pause || 0).toFixed(3),
+          stopAtEnd: !!w.stopAtEnd, shown: MI.world.walkers.isShown(w.group) };
+      });
+      return out;
+    });
   };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
   // Which tile each resident is standing on, per view — for checking that a friend actually
