@@ -940,10 +940,6 @@
   var PLAYER_HEAD = 0.19;     // the character's height, in a tile model's own units
   var MAX_FOOTPRINT = 1.1;    // world units: a building may fill its tile but not spill far
 
-  // Tiles whose model is a stand of trees: eight of them, spread right across the tile, with
-  // canopies from ankle height to well over the character. You may walk through (only
-  // buildings are solid), but the follow camera must not sit inside the leaves.
-  var CANOPY_TILES = { 'grass-forest.glb': true, 'dirt-lumber.glb': true };
   // The shape a building actually presents to someone walking into it: the box around every
   // part that is NOT the hex base plate and NOT clear above head height. Tracing the whole
   // model instead follows the ROOF, which overhangs the walls and holds you a step short of
@@ -1065,11 +1061,9 @@
     // Kept for the planet <-> island animation (makeFoldRig).
     // roadSlots includes building cells that paths run through, even though those cells
     // draw the building rather than a road mesh.
-    // blockers: a circle per building, filled in as its model loads — what the character
-    // cannot walk through (see footprintBox). canopy: the same for tiles of trees, which stop
-    // the camera but not the character.
+    // blockers: a solid footprint per building, filled in as its model loads — what the
+    // character cannot walk through (see footprintBox).
     var blockers = [];
-    var canopy = [];
     // groundY: the world height of each tile's walking surface — its slab, plus the path laid
     // on it. What the character and the residents stand on, instead of one height for all.
     var groundY = {};
@@ -1101,7 +1095,7 @@
       roadSlots: Object.keys(roadEdges).map(Number),
       walkerAdjacency: walkerAdjacency, roadAdjacency: roadAdjacency,
       residentRoutes: residentRoutes,
-      blockers: blockers, canopy: canopy, groundY: groundY };
+      blockers: blockers, groundY: groundY };
 
     // How far the island reaches from its middle, and how deep its rock hangs.
     var spread = 0;
@@ -1174,8 +1168,6 @@
         if (buildingSlots.has(Number(id)) && !foreign) {
           var box = footprintBox(parts, tileTopOf(groundKey) + PLAYER_HEAD);
           if (box) blockers.push(islandBlocker(x, z, obj.rotation.y, box));
-        } else if (CANOPY_TILES[groundKey]) {
-          canopy.push({ x: x, z: z, r: FLAT_TILE_RADIUS * 0.9 });
         }
         obj.userData.restY = FLAT_BASE_Y;
         obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
@@ -3108,7 +3100,7 @@
                                   // character-heights, so it frames the head not the shoes
   // Follow camera: third person, over the right shoulder, at a fixed distance. Distance is in
   // tiles, the shoulder offset in character-scales, so both hold at any planet size.
-  var FOLLOW_DIST = 1.15, FOLLOW_SHOULDER = 0.35, FOLLOW_PITCH = 0.32;
+  var FOLLOW_DIST = 1.6, FOLLOW_SHOULDER = 0.35, FOLLOW_PITCH = 0.62;
   var GROUND_PITCH_MIN = 0.02, GROUND_PITCH_MAX = 0.95;
   var GROUND_LOOK_SPEED = 0.006;  // middle-drag fallback, radians per pixel
   var MOUSE_LOOK_SPEED = 0.0025;  // pointer lock, radians per pixel of movement
@@ -3177,8 +3169,8 @@
     return MI.world.player.tangent(f, up) || anyTangent(up);
   }
 
-  // Is a world-space point inside a building or a stand of trees (with a margin), below its
-  // roofline? Follow mode is island-only, so this is only ever asked there.
+  // Only keep the eye out of solid buildings. Trees can pass across the view without
+  // changing the camera's distance or angle.
   var BUILDING_TOP = 1.5;
   function eyeBlocked(eye) {
     if (!state.flatMode || !state.island) return false;
@@ -3187,15 +3179,6 @@
     var boxes = state.island.blockers;
     for (var i = 0; boxes && i < boxes.length; i++) {
       if (MI.world.player.boxDepth(boxes[i], local, 0.12) > 0) return true;
-    }
-    return insideAny(local, state.island.canopy);
-  }
-
-  function insideAny(local, circles) {
-    if (!circles) return false;
-    for (var i = 0; i < circles.length; i++) {
-      var c = circles[i], dx = local.x - c.x, dz = local.z - c.z, reach = c.r + 0.12;
-      if (dx * dx + dz * dz < reach * reach) return true;
     }
     return false;
   }
@@ -3221,20 +3204,20 @@
     var shoulder = new THREE.Vector3().crossVectors(forward, up).normalize()
       .multiplyScalar(FOLLOW_SHOULDER * p.group.getWorldScale(new THREE.Vector3()).x);
     target.add(shoulder);
-    // Sweep the full target-to-eye segment so a roof cannot sit between the two. The
-    // previous fixed pull steps snapped the view by an eighth of its distance at a time.
+    // Check the camera half of the line. Nearby scenery can sit beside the character
+    // without pulling the camera down to their shoulder.
     var desired = target.clone()
       .addScaledVector(forward, -state.groundDistance * Math.cos(state.groundPitch))
       .addScaledVector(up, state.groundDistance * Math.sin(state.groundPitch));
     var clear = 1;
-    for (var fraction = 0.16; fraction <= 1.001; fraction += 0.04) {
+    for (var fraction = 0.7; fraction <= 1.001; fraction += 0.05) {
       if (eyeBlocked(target.clone().lerp(desired, Math.min(1, fraction)))) {
-        clear = Math.max(0.12, fraction - 0.06);
+        clear = Math.max(0.65, fraction - 0.06);
         break;
       }
     }
-    if (state.followClearance === undefined || !dt) state.followClearance = clear;
-    else {
+    if (state.followClearance === undefined) state.followClearance = clear;
+    else if (dt) {
       var rate = clear < state.followClearance ? 22 : 5;
       state.followClearance += (clear - state.followClearance) * (1 - Math.exp(-rate * dt));
     }
@@ -3742,7 +3725,8 @@
       players: { sphere: MI.world.player.newPlayer(), flat: MI.world.player.newPlayer() },
       keys: { wasd: { w: false, a: false, s: false, d: false },
               arrows: { w: false, a: false, s: false, d: false } },
-      groundForward: new THREE.Vector3(1, 0, 0), groundPitch: 0.45, groundDistance: 2.6,
+      groundForward: new THREE.Vector3(1, 0, 0),
+      groundPitch: FOLLOW_PITCH, groundDistance: FOLLOW_DIST * FLAT_SPACING,
       orbitRestore: null, lookTarget: new THREE.Vector3(), groundHadLock: false,
       galaxy: {
         on: false, mix: 0, group: null, planets: [], hoverId: null,
