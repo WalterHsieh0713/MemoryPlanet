@@ -8,7 +8,7 @@ Requires Node.js 18 or newer. From this folder, run `node server.js` and open ht
 
 The optional Claude classifier needs `ANTHROPIC_API_KEY` in a local `.env` file (see `.env.example`). Without it, entries use the built-in keyword classifier. The key stays on the server.
 
-Write a memory and press Enter. Click a land tile to read its memory and change its building. Use **see your land flat** for the map view. **Start over** clears browser storage after a second click.
+Open the journal with the rotating book labeled **Write a memory** on the left. Write on the lined page, add people and tags if you like, then choose **Plant it on my planet**. Enter adds a new line; Ctrl/Cmd+Enter submits. On a phone, switch between writing and past entries with the tabs in the book. Click a land tile to read its memory and change its building. Use **island view** for the flat map. **Start over** clears browser storage after a second click.
 
 You start on a small 42-tile planet. Once half of it is land, it grows to the next size, up to 1002 tiles. Every memory earns shards (✦). You get more for big days, new friends and daily streaks, plus a bonus each time the planet grows. Spend shards in the **Shop** on themes, pets and character skins.
 

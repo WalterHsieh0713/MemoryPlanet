@@ -33,7 +33,8 @@
       'reset-btn', 'view-btn', 'view-icon', 'view-label', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
-      'journal', 'book', 'book-list', 'title-suggest',
+      'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
+      'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
       'tag-mood', 'tag-cat', 'tag-big']
       .forEach(function (id) { el[id] = $(id); });
@@ -244,8 +245,51 @@
     };
   }
 
-  function showTagRow(on) {
-    el['tag-row'].classList.toggle('show', !!on);
+  // --- Opening the book ---------------------------------------------------------------------
+
+  var bookOpener = null;
+  var bookFocusTimer = null;
+
+  function selectBookPage(page) {
+    el.book.dataset.page = page;
+    el['book-write-tab'].setAttribute('aria-selected', String(page === 'write'));
+    el['book-memories-tab'].setAttribute('aria-selected', String(page === 'memories'));
+    if (page === 'write' && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
+  }
+
+  function openBook(event) {
+    if (isBookOpen()) return;
+    clearTimeout(toastTimer);
+    el.toast.classList.remove('show');
+    bookOpener = event && event.currentTarget || document.activeElement;
+    var rect = el['book-btn'].querySelector('.mini-book').getBoundingClientRect();
+    el.book.style.setProperty('--book-from-x', (rect.left + rect.width / 2 - window.innerWidth / 2) + 'px');
+    el.book.style.setProperty('--book-from-y', (rect.top + rect.height / 2 - window.innerHeight / 2) + 'px');
+    el.book.style.setProperty('--book-from-scale', rect.width / el.book.querySelector('.spread').offsetWidth);
+    // Apply the miniature's measured starting pose before beginning the expansion.
+    void el.book.offsetWidth;
+    refreshPersonList();
+    renderBook();
+    el['write-date'].textContent = new Date().toLocaleDateString(undefined,
+      { weekday: 'long', month: 'long', day: 'numeric' });
+    selectBookPage('write');
+    el.book.classList.add('open');
+    el['book-btn'].setAttribute('aria-expanded', 'true');
+    // Wait for the book to become visible before moving keyboard focus inside it.
+    bookFocusTimer = setTimeout(function () {
+      if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
+    }, 530);
+  }
+
+  function closeBook() {
+    clearTimeout(bookFocusTimer);
+    el.book.classList.remove('open');
+    el['book-btn'].setAttribute('aria-expanded', 'false');
+    if (bookOpener && bookOpener.isConnected) bookOpener.focus();
+  }
+
+  function isBookOpen() {
+    return el.book.classList.contains('open');
   }
 
   // --- The book ---------------------------------------------------------------------------
@@ -266,9 +310,19 @@
 
   function renderBook() {
     var world = MI.store.get();
-    el.book.classList.toggle('show', world.memories.length > 0);
+    var count = world.memories.length;
+    el['book-count'].textContent = count ? count : '';
+    el['book-note'].textContent = count ? plural(count, 'memory').replace('memorys', 'memories') : '';
     el['book-list'].innerHTML = '';
     rowBySlot = {};
+
+    if (!count) {
+      var blank = document.createElement('div');
+      blank.className = 'empty-page';
+      blank.textContent = 'Nothing written yet. Whatever you put on the right becomes a building on your planet.';
+      el['book-list'].appendChild(blank);
+      return;
+    }
 
     // Memories are stored in the order they were written, so the book sorts for itself.
     var entries = world.memories.slice().sort(function (a, b) {
@@ -337,6 +391,7 @@
         if (openSlot === null) MI.world.clearHighlight();
       });
       row.addEventListener('click', function () {
+        closeBook(); // the card and the planet are behind the book
         showDetail(memory);
         MI.world.focus(slot);
       });
@@ -420,6 +475,7 @@
       showToast(event.memory, event.reward);
       refreshStats(); // counts, wallet and planet bar, the moment the memory lands
       bump(el.wallet, 'bump');
+      bump(el['book-btn'], 'nudge'); // the book just got another page
       floatShards(event.reward.total);
     } else if (event.type === 'grew') {
       syncViewButton(); // growing always returns to the planet view
@@ -656,32 +712,37 @@
 
   function setBusy(busy) {
     el['submit-btn'].disabled = busy;
-    el['submit-btn'].textContent = busy ? '·' : '→';
+    el['submit-btn'].textContent = busy ? 'planting…' : 'Plant it on my planet ✨';
   }
 
   function submitEntry() {
+    if (el['submit-btn'].disabled) return;
     var text = el['entry-input'].value.trim();
     if (!text) return;
     commitPerson(); // a name still sitting in the box counts
     var entryTags = currentTags();
     setBusy(true);
-    el['entry-input'].value = '';
-    resetTags();
-    showTagRow(false);
     hideDetail();
+    closeBook(); // out of the way, so the building is the thing you see appear
 
     // The memory's toast comes from the app's 'reward' event as it lands, and a growth toast
     // from 'grew' — this only has to handle the end of the whole thing.
     MI.app.addEntry(text, { tags: entryTags }).then(function (memory) {
       setBusy(false);
       if (!memory) {
+        openBook();
         toast('🌊', 'Your planet is full!', 'Every buildable tile has a memory on it.', 0, 4200);
         return;
+      }
+      if (el['entry-input'].value.trim() === text) {
+        el['entry-input'].value = '';
+        resetTags();
       }
       refreshStats();
     }, function (err) {
       setBusy(false);
       console.error('[MI.ui] addEntry failed', err);
+      openBook(); // keep the writing available to retry
     });
   }
 
@@ -757,27 +818,25 @@
 
     el['submit-btn'].addEventListener('click', submitEntry);
     el['entry-input'].addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') submitEntry();
+      // It is a page in a book, so Enter is a new line; Ctrl/Cmd+Enter puts it on the planet.
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEntry(); }
+    });
+
+    el['book-btn'].addEventListener('click', openBook);
+    el['book-close'].addEventListener('click', closeBook);
+    el['book-write-tab'].addEventListener('click', function () { selectBookPage('write'); });
+    el['book-memories-tab'].addEventListener('click', function () { selectBookPage('memories'); });
+    el.book.addEventListener('click', function (e) {
+      if (e.target === el.book) closeBook(); // the cover around the pages, not the pages
     });
 
     buildTagRow();
     paintTagRow();
     el['entry-input'].addEventListener('input', function () {
-      showTagRow(!!el['entry-input'].value.trim());
       clearTimeout(guessTimer);
       guessTimer = setTimeout(guessTags, 220); // after the typing pauses, not on every key
     });
-    el['entry-input'].addEventListener('focus', function () {
-      refreshPersonList();
-      if (el['entry-input'].value.trim()) showTagRow(true);
-    });
-    // Leaving the whole journal area puts the row away, unless something is tagged.
-    el.journal.addEventListener('focusout', function () {
-      setTimeout(function () {
-        if (el.journal.contains(document.activeElement)) return;
-        if (!el['entry-input'].value.trim()) showTagRow(false);
-      }, 0);
-    });
+    el['entry-input'].addEventListener('focus', refreshPersonList);
     el['demo-btn'].addEventListener('click', loadDemoPlanet);
     el['detail-close'].addEventListener('click', hideDetail);
 
@@ -804,7 +863,20 @@
       });
     });
     document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && el.shop.classList.contains('open')) closeShop();
+      if (e.key === 'Tab' && isBookOpen()) {
+        var focusable = Array.prototype.filter.call(
+          el.book.querySelectorAll('button:not([disabled]), textarea:not([disabled]), input:not([disabled])'),
+          function (node) { return node.getClientRects().length > 0; }
+        );
+        if (focusable.length) {
+          var first = focusable[0], last = focusable[focusable.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+      if (e.key !== 'Escape') return;
+      if (el.shop.classList.contains('open')) closeShop();
+      else if (isBookOpen()) closeBook();
     });
 
     MI.world.onPick(function (slot) {
