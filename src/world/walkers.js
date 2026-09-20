@@ -37,6 +37,7 @@
       pack: 'assets/standalone/animals/cube-pets/',
       step: [1.5, 2.5],   // seconds per tile-to-tile walk, varied for less robotic pacing
       pause: [0.7, 1.8],  // seconds standing on a tile before moving on
+      rest: 1,            // stops at every tile: a pet potters, it is not going anywhere
       models: {
         bunny: 'animal-bunny.glb',
         pig: 'animal-pig.glb',
@@ -48,14 +49,17 @@
         elephant: 'animal-elephant.glb'
       }
     },
-    // People stroll rather than scurry, but they must keep visibly moving: a character is
-    // confined to the road route, and over half of that route is building tiles it stands
-    // *on*, so a long idle there reads as "it isn't working" rather than as calm. Step plus
-    // pause is kept to 3-5s so it hops to the next tile at roughly that rhythm.
+    // A friend walking from one memory to another is GOING somewhere, so they do not stop on
+    // the way: rest is 0, and the tiles between two memories are walked straight through at
+    // one pace. Where they stop is decided by the caller instead (ctx.stopsAt -- world.js
+    // passes the memories on their own route), and once there they loiter rather than stand.
+    // `pause` is what they spend on a tile of their own, a dwell at a time; `step` is a tile's
+    // worth of walking, which at ~0.7 tiles a second is the pace you walk at yourself.
     character: {
       pack: 'assets/standalone/characters/mini-characters/',
       step: [1.2, 1.8],
       pause: [2.0, 3.0],
+      rest: 0,
       models: {
         'male-a': 'character-male-a.glb',
         'male-b': 'character-male-b.glb',
@@ -78,7 +82,8 @@
     ship: {
       pack: 'assets/standalone/ships/pirate-kit/',
       step: [7, 11],
-      pause: [0, 0.6],
+      pause: [0, 0.6],   // only ever used at a dead end, since rest is 0
+      rest: 0,           // "never really stop", as above: a ship holds its way between tiles
       models: {
         'ship-pirate-small.glb': 'ship-pirate-small.glb',
         'ship-pirate-medium.glb': 'ship-pirate-medium.glb',
@@ -264,7 +269,10 @@
     return {
       group: null, animator: null, tileId: null, targetId: null, fromTileId: null,
       t: 1, duration: 1.6, pause: 0,
-      stepRange: spec.step, pauseRange: spec.pause
+      // speed is in tiles a second and is carried ACROSS tiles -- that is the whole of what
+      // makes a walk one walk. pace is the journey's seconds-per-tile, 0 between journeys.
+      speed: 0, pace: 0, stopAtEnd: true, facing: null,
+      rest: spec.rest, stepRange: spec.step, pauseRange: spec.pause
     };
   }
 
@@ -329,42 +337,106 @@
     return options[Math.floor(Math.random() * options.length)];
   }
 
-  // Keeps walker.tileId/targetId/t/pause valid and advancing: stand still at tileId for
-  // `pause` seconds, then walk to a freshly-chosen neighbour over `duration` seconds, repeat.
-  // Self-heals if the current tile stops being land (e.g. the planet just grew onto a new
-  // grid, so old tile ids no longer apply, or the view just switched to one whose layout
-  // doesn't include this tile yet) by re-anchoring via `findAnchor()`. Returns false when
-  // there's nowhere land to stand at all yet.
-  function advance(walker, dt, isLand, neighborsOf, findAnchor, chooseNext) {
-    if (walker.tileId === null || !isLand(walker.tileId)) {
-      walker.tileId = (walker.tileId !== null && isLand(walker.tileId)) ? walker.tileId : findAnchor();
+  // --- Getting there ----------------------------------------------------------------------
+  // A walker crossing four tiles to reach a memory should read as ONE walk. It used to read as
+  // four: every completed step set a fresh pause (for a friend, 2-3s of standing per 1.2-1.8s
+  // of walking), every step re-rolled its own duration, and every step eased in and out of a
+  // standstill at the tile boundary. Three separate reasons to stop dead in the middle of
+  // going somewhere.
+  //
+  // So speed is carried on the walker instead of being a curve fitted to each tile. It ramps
+  // up when the walker sets off, holds while there is another tile to cross -- straight
+  // through the boundary, since nothing there ends the journey -- and ramps down into the
+  // tile the walker actually means to stop at. `t` is still 0..1 across the current tile;
+  // it is simply integrated from the speed now rather than eased.
+  var ACCEL_SECONDS = 0.45; // standing to full pace, and full pace back to standing
+  var CRAWL = 0.06;         // of full pace: the slowest it will still close the last sliver of
+                            // a tile at, so arriving is never an asymptote
+
+  // Does a walker that reaches `tileId` stop there? The caller answers where it has an
+  // opinion -- world.js says a friend stops at the memories on their own route and nowhere
+  // else -- and otherwise it is the kind's own `rest` chance, which is what a pet's pottering
+  // from tile to tile is made of.
+  function stopsHere(walker, tileId, stopsAt) {
+    if (stopsAt) return !!stopsAt(tileId);
+    return Math.random() < (walker.rest === undefined ? 1 : walker.rest);
+  }
+
+  // Leave the tile just reached for the next one on the route. False when there is nowhere to
+  // go, in which case the walker is now pausing where it stands.
+  function setOff(walker, ctx) {
+    var previous = walker.tileId;
+    if (walker.targetId !== null && walker.targetId !== walker.tileId) walker.tileId = walker.targetId;
+    walker.fromTileId = previous;
+    walker.targetId = ctx.chooseNext
+      ? ctx.chooseNext(walker, ctx.neighborsOf, ctx.isLand)
+      : pickNextTile(walker, ctx.neighborsOf, ctx.isLand);
+    if (walker.targetId === walker.tileId) {
+      halt(walker);
+      return false;
+    }
+    // One pace for a whole journey. Re-rolling it per tile changed the walker's speed at
+    // every boundary, which on its own was enough to make a walk read as separate hops.
+    if (!walker.pace) walker.pace = randomStepDuration(walker);
+    walker.duration = walker.pace;
+    walker.stopAtEnd = stopsHere(walker, walker.targetId, ctx.stopsAt);
+    walker.t = 0;
+    return true;
+  }
+
+  function halt(walker) {
+    walker.pause = randomPauseDuration(walker);
+    walker.speed = 0;
+    walker.pace = 0; // the next journey picks its own pace
+  }
+
+  // Keeps walker.tileId/targetId/t/pause/speed valid and advancing. Self-heals if the current
+  // tile stops being land (e.g. the planet just grew onto a new grid, so old tile ids no longer
+  // apply, or the view just switched to one whose layout doesn't include this tile yet) by
+  // re-anchoring via ctx.findAnchor(). Returns false when there's nowhere land to stand yet.
+  function advance(walker, dt, ctx) {
+    if (walker.tileId === null || !ctx.isLand(walker.tileId)) {
+      walker.tileId = (walker.tileId !== null && ctx.isLand(walker.tileId))
+        ? walker.tileId : ctx.findAnchor();
       walker.targetId = walker.tileId;
       walker.fromTileId = null;
       walker.t = 1;
-      walker.pause = randomPauseDuration(walker);
+      walker.facing = null; // put down somewhere new: face the new way at once, don't turn to it
+      halt(walker);
     }
     if (walker.tileId === null) return false;
 
-    if (walker.t >= 1) {
-      if (walker.pause > 0) {
-        walker.pause -= dt;
-        return true; // standing still at walker.tileId (t=1 already renders exactly there)
+    // dt is spent down rather than applied once, so a walker that reaches a tile part-way
+    // through a frame carries the rest of that frame onto the next tile instead of standing
+    // on the boundary until the next one. The guard is only there so a zero duration cannot
+    // spin here forever.
+    var left = dt;
+    for (var guard = 0; guard < 8 && left > 0; guard++) {
+      if (walker.t >= 1) {
+        if (walker.pause > 0) { walker.pause -= left; walker.speed = 0; return true; }
+        if (!setOff(walker, ctx)) return true;
       }
-      var previous = walker.tileId;
-      if (walker.targetId !== null && walker.targetId !== walker.tileId) walker.tileId = walker.targetId;
-      walker.fromTileId = previous;
-      walker.targetId = chooseNext ? chooseNext(walker, neighborsOf, isLand)
-        : pickNextTile(walker, neighborsOf, isLand);
-      if (walker.targetId === walker.tileId) {
-        walker.pause = randomPauseDuration(walker);
-        return true;
+      var cruise = 1 / walker.duration;
+      var acc = cruise / ACCEL_SECONDS;
+      var wanted = cruise;
+      if (walker.stopAtEnd) {
+        // Start braking exactly one stopping-distance out, at the same rate it sets off at,
+        // so slowing down mirrors speeding up. Ramping the speed down with the distance
+        // LEFT instead looks the same but takes logarithmically long to cover the last
+        // sliver -- it doubled the time a pet took to cross a tile.
+        var togo = Math.max(0, 1 - walker.t);
+        if (togo <= (walker.speed * walker.speed) / (2 * acc)) wanted = 0;
       }
-      walker.t = 0;
-      walker.duration = randomStepDuration(walker);
+      walker.speed = wanted < walker.speed
+        ? Math.max(wanted, walker.speed - acc * left)
+        : Math.min(wanted, walker.speed + acc * left);
+      if (walker.t < 1) walker.speed = Math.max(walker.speed, cruise * CRAWL);
+      walker.t += walker.speed * left;
+      if (walker.t < 1) return true;
+      left = walker.speed > 0 ? (walker.t - 1) / walker.speed : 0;
+      walker.t = 1;
+      if (walker.stopAtEnd) { halt(walker); return true; }
     }
-
-    walker.t = Math.min(1, walker.t + dt / walker.duration);
-    if (walker.t >= 1) walker.pause = randomPauseDuration(walker);
     return true;
   }
 
@@ -477,6 +549,32 @@
     return { dwell: dwell, heading: heading };
   }
 
+  // --- Facing -------------------------------------------------------------------------------
+  // A road bends by up to 60 degrees at a tile boundary, and snapping to the new heading there
+  // spun the walker on the spot in the middle of a stride. Turn toward it at a limited rate
+  // instead, so a bend is taken rather than stepped through. Fast enough (7 rad/s takes a
+  // 60-degree bend in about 0.15s) that it never lags behind where the walker is actually
+  // going; the first frame snaps, or a walker would spin up from whatever way it was left.
+  var TURN_RATE = 7;
+
+  function turnFlat(walker, wanted, dt) {
+    if (!walker.facing) { walker.group.rotation.y = wanted; walker.facing = true; return; }
+    var from = walker.group.rotation.y;
+    var delta = Math.atan2(Math.sin(wanted - from), Math.cos(wanted - from));
+    var most = TURN_RATE * dt;
+    walker.group.rotation.y = from + Math.max(-most, Math.min(most, delta));
+  }
+
+  var turnQ = new THREE.Quaternion();
+  function turnSphere(walker, right, up, forward, dt) {
+    turnQ.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, forward));
+    if (!walker.facing) { walker.group.quaternion.copy(turnQ); walker.facing = true; return; }
+    // The shortest turn between the two, so the rate limit is in real radians.
+    var dot = Math.min(1, Math.abs(walker.group.quaternion.dot(turnQ)));
+    var angle = 2 * Math.acos(dot);
+    walker.group.quaternion.slerp(turnQ, angle > 1e-6 ? Math.min(1, TURN_RATE * dt / angle) : 1);
+  }
+
   // --- Sphere view ------------------------------------------------------------------------
   // ctx: { isLand(id), neighborsOf(id) -> [ids], findAnchor() -> id|null, height, scale, hop }.
   // ctx.loiter (residents): { tileWidth, rest: {x,z}, dwellsAt(id), blocked(id, x, z) } — see
@@ -491,13 +589,14 @@
 
   function updateSphere(walker, dt, ctx) {
     if (!walker.group) return;
-    if (!advance(walker, dt, ctx.isLand, ctx.neighborsOf, ctx.findAnchor, ctx.chooseNext)) return;
+    if (!advance(walker, dt, ctx)) return;
 
     var fromDir = ctx.dirOf(walker.tileId);
     var toDir = ctx.dirOf(walker.targetId);
     if (!fromDir || !toDir) return;
-    var ease = easeInOut(walker.t);
-    var dir = fromDir.clone().lerp(toDir, ease).normalize();
+    // Straight across the tile: the accelerating and slowing is in walker.speed now, and
+    // easing here as well would put it back at every boundary. See advance().
+    var dir = fromDir.clone().lerp(toDir, walker.t).normalize();
     var bob = ctx.hop === undefined ? HOP_HEIGHT : ctx.hop;
     var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * bob;
     var was = walker.group.position.clone();
@@ -543,7 +642,7 @@
         forward.normalize();
         var right = new THREE.Vector3().crossVectors(up, forward).normalize();
         forward.crossVectors(right, up).normalize();
-        walker.group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, forward));
+        turnSphere(walker, right, up, forward, dt);
       }
     }
   }
@@ -568,11 +667,11 @@
 
   function updateFlat(walker, dt, ctx) {
     if (!walker.group) return;
-    if (!advance(walker, dt, ctx.isLand, ctx.neighborsOf, ctx.findAnchor, ctx.chooseNext)) return;
+    if (!advance(walker, dt, ctx)) return;
 
     var from = ctx.centres[walker.tileId], to = ctx.centres[walker.targetId];
     if (!from || !to) return;
-    var ease = easeInOut(walker.t);
+    var ease = walker.t; // straight across the tile -- see updateSphere
     var x = from.x + (to.x - from.x) * ease;
     var z = from.z + (to.z - from.z) * ease;
     var hop = walker.animator ? 0 : Math.sin(Math.PI * walker.t) * HOP_HEIGHT;
@@ -588,9 +687,9 @@
     walker.group.scale.setScalar(ctx.scale);
     animateWalker(walker, dt, was, ctx.scale, loiter && loiter.heading);
     if (loiter && loiter.dwell) {
-      if (loiter.heading) walker.group.rotation.y = Math.atan2(loiter.heading.x, loiter.heading.z);
+      if (loiter.heading) turnFlat(walker, Math.atan2(loiter.heading.x, loiter.heading.z), dt);
     } else if (Math.abs(to.x - from.x) > 1e-6 || Math.abs(to.z - from.z) > 1e-6) {
-      walker.group.rotation.y = Math.atan2(to.x - from.x, to.z - from.z);
+      turnFlat(walker, Math.atan2(to.x - from.x, to.z - from.z), dt);
     }
   }
 

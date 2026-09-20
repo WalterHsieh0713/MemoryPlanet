@@ -33,17 +33,23 @@ walkers.makeWalkerPair(model, function () { return new THREE.Group(); }).then(fu
     dirOf: function (id) { return id ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0); },
     height: 5, scale: 1
   });
+  // It sets off toward the neighbour rather than arriving on it: a walker accelerates away
+  // from a standstill now instead of covering the tile on a fixed curve.
   assert.strictEqual(pair.sphere.targetId, 1);
-  assert(Math.abs(pair.sphere.group.position.z - 5) < 1e-6);
+  assert(pair.sphere.group.position.z > 0 && pair.sphere.group.position.z < 5,
+    'it is on its way to the neighbour, at z=' + pair.sphere.group.position.z);
   walkers.updateFlat(pair.flat, 0.1, {
     isLand: isLand, neighborsOf: neighborsOf, findAnchor: function () { return 0; },
     centres: { 0: { x: 0, z: 0 }, 1: { x: 1, z: 0 } }, baseY: 2, scale: 1
   });
   assert.strictEqual(pair.flat.targetId, 1);
-  assert(Math.abs(pair.flat.group.position.x - 1) < 1e-6);
+  assert(pair.flat.group.position.x > 0 && pair.flat.group.position.x < 1,
+    'and likewise in the flat view, at x=' + pair.flat.group.position.x);
   pair.flat.tileId = pair.flat.targetId = 0;
   pair.flat.pause = 0;
   pair.flat.t = 1;
+  pair.flat.speed = 0;
+  pair.flat.pace = 0;
   walkers.updateFlat(pair.flat, 0.1, {
     isLand: function (id) { return id >= 0 && id <= 2; },
     neighborsOf: function () { return [1, 2]; },
@@ -53,6 +59,50 @@ walkers.makeWalkerPair(model, function () { return new THREE.Group(); }).then(fu
     baseY: 2, scale: 1
   });
   assert.strictEqual(pair.flat.targetId, 2, 'resident route chooses a stop over a random branch');
+  // Going somewhere is ONE walk, not a hop per tile. Five tiles in a line and a friend walking
+  // 0 -> 4 with only tile 4 a stop: it has to cross 1, 2 and 3 without ever standing still on
+  // them, and hold one pace while it does. (It used to pause 2-3s on every tile it touched,
+  // and re-roll its speed for each, which is what made travel read as tile-at-a-time.)
+  var line = {}, chain = {};
+  for (var c = 0; c <= 4; c++) {
+    line[c] = { x: c, z: 0 };
+    chain[c] = [c - 1, c + 1].filter(function (n) { return n >= 0 && n <= 4; });
+  }
+  var road = {
+    isLand: function (id) { return line[id] !== undefined; },
+    neighborsOf: function (id) { return chain[id]; },
+    findAnchor: function () { return 0; },
+    chooseNext: function (w) { return w.tileId < 4 ? w.tileId + 1 : w.tileId; },
+    stopsAt: function (id) { return id === 4; },
+    centres: line, baseY: 0, scale: 1
+  };
+  var him = pair.flat;
+  him.tileId = him.targetId = 0; him.fromTileId = null;
+  him.t = 1; him.pause = 0; him.speed = 0; him.pace = 0;
+  him.stepRange = [1.5, 1.5]; him.pauseRange = [2, 2];
+  var stalled = 0, arrived = -1, was = 0, cruised = [];
+  for (var n = 0; n < 60 * 20 && arrived < 0; n++) {
+    walkers.updateFlat(him, 1 / 60, road);
+    var x = him.group.position.x;
+    if (x > 3.999) arrived = n;
+    else {
+      if (x > 0.05 && x - was < 1e-9) stalled++;
+      if (x > 0.6 && x < 3.4) cruised.push(x - was); // clear of setting off and slowing down
+    }
+    was = x;
+  }
+  assert(arrived > 0, 'the friend reaches the memory at the far end');
+  assert.strictEqual(stalled, 0, 'and never stands still on the way, ' + stalled + ' frames stalled');
+  var quickest = Math.max.apply(null, cruised), slowest = Math.min.apply(null, cruised);
+  assert((quickest - slowest) / quickest < 0.02,
+    'holding one pace across every boundary, ' + slowest.toFixed(5) + '..' + quickest.toFixed(5));
+  // It does stop once it gets there, though -- that is what makes it a destination.
+  for (var q = 0; q < 60; q++) walkers.updateFlat(him, 1 / 60, road);
+  // t of 1 means it is standing ON targetId; tileId only catches up when it next sets off.
+  assert.strictEqual(him.targetId, 4, 'it is at the far tile');
+  assert.strictEqual(him.t, 1);
+  assert(him.pause > 0, 'and standing there rather than walking on');
+
   // A friend loiters: a spot is somewhere within half a tile-width of the tile's centre, never
   // in a blocked place, and never reached through one.
   var core = function (x, z) { return Math.hypot(x, z) < 0.25; }; // a building in the middle
