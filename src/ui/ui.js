@@ -32,9 +32,10 @@
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
       'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
-      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
+      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'ground-btn', 'ground-label', 'ground-icon', 'picker', 'picker-grid', 'picker-play',
-      'character-btn', 'skins-btn',
+      'character-btn', 'skins-btn', 'theme-btn', 'theme-tray', 'theme-rack',
+      'tray-themes', 'tray-theme-items',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
@@ -832,6 +833,7 @@
     el['wallet-count'].textContent = shards;
     el['shop-balance'].textContent = shards;
     if (el.shop.classList.contains('open')) renderShop();
+    renderThemeTray();
   }
 
   function refreshPlanet() {
@@ -911,6 +913,7 @@
 
   function openShop() {
     closeSettings();
+    closeThemeTray();
     shopOpener = document.activeElement;
     renderShop();
     el.shop.classList.add('open');
@@ -924,6 +927,7 @@
 
   function openSettings() {
     closeShop();
+    closeThemeTray();
     el.settings.classList.add('open');
     el['settings-btn'].setAttribute('aria-expanded', 'true');
   }
@@ -933,85 +937,167 @@
     disarmReset();
   }
 
-  function themeThumb(id) {
+  function themeFill(id) {
     var theme = MI.world.themes.get(id);
     function hex(n) { return '#' + n.toString(16).padStart(6, '0'); }
-    var thumb = document.createElement('div');
-    thumb.className = 'thumb';
-    thumb.style.background = hex(theme.sky);
-    var planet = document.createElement('div');
-    planet.className = 'mini-planet';
-    planet.style.background = 'conic-gradient(from 200deg, ' + hex(theme.land) + ' 0 42%, ' +
+    return 'conic-gradient(from 200deg, ' + hex(theme.land) + ' 0 42%, ' +
       hex(theme.water) + ' 0 100%)';
-    thumb.appendChild(planet);
-    return thumb;
   }
+
+  var TRAY_SECTIONS = [
+    { kind: 'skins', label: 'costumes', icon: '👗' },
+    { kind: 'pets', label: 'pets', icon: '🐾' },
+    { kind: 'satellites', label: 'sky', icon: '🌙' }
+  ];
+  var trayOpenKinds = { themes: true, skins: false, pets: false, satellites: false };
+
+  function closeThemeTray() {
+    el['theme-rack'].classList.remove('open');
+    el['theme-btn'].setAttribute('aria-expanded', 'false');
+    el['theme-tray'].setAttribute('aria-hidden', 'true');
+    el['tray-theme-items'].setAttribute('aria-hidden', 'true');
+  }
+
+  function toggleThemeTray() {
+    var open = !el['theme-rack'].classList.contains('open');
+    if (open) {
+      closeSettings();
+      trayOpenKinds.themes = true;
+      el['tray-themes'].classList.add('expanded');
+      renderThemeTray();
+      el['theme-rack'].classList.add('open');
+    } else {
+      el['theme-rack'].classList.remove('open');
+    }
+    el['theme-btn'].setAttribute('aria-expanded', String(open));
+    el['theme-tray'].setAttribute('aria-hidden', String(!open));
+    el['tray-theme-items'].setAttribute('aria-hidden', String(!open));
+  }
+
+  function ownedCatalog(kind) {
+    return MI.economy.CATALOG[kind].filter(function (item) {
+      return MI.economy.owns(kind, item.id);
+    });
+  }
+
+  function fillTrayItems(container, kind) {
+    container.innerHTML = '';
+    var equippedId = MI.economy.equipped(kind);
+    ownedCatalog(kind).forEach(function (item) {
+      // The themes header already shows the equipped planet; only list the rest.
+      if (kind === 'themes' && item.id === equippedId) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = item.name;
+      btn.setAttribute('aria-label', item.name);
+      btn.setAttribute('aria-pressed', String(item.id === equippedId));
+      if (kind === 'themes') btn.style.background = themeFill(item.id);
+      else btn.textContent = item.icon;
+      btn.addEventListener('click', function () {
+        MI.app.equip(kind, item.id);
+        renderThemeTray();
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  function sectionIcon(section) {
+    return section.icon;
+  }
+
+  function renderThemeTray() {
+    var orb = el['theme-btn'].querySelector('.orb');
+    if (orb) orb.style.background = themeFill(MI.economy.equipped('themes') || 'meadow');
+    fillTrayItems(el['tray-theme-items'], 'themes');
+    el['tray-themes'].classList.toggle('expanded', !!trayOpenKinds.themes);
+
+    el['theme-tray'].innerHTML = '';
+    TRAY_SECTIONS.forEach(function (section) {
+      var owned = ownedCatalog(section.kind);
+      if (!owned.length && section.kind !== 'skins') return;
+      var wrap = document.createElement('div');
+      wrap.className = 'tray-kind ' + section.kind + (trayOpenKinds[section.kind] ? ' expanded' : '');
+      wrap.dataset.kind = section.kind;
+
+      var head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'tray-head';
+      head.textContent = sectionIcon(section);
+      head.title = section.label;
+      head.setAttribute('aria-label', section.label);
+      head.setAttribute('aria-expanded', String(!!trayOpenKinds[section.kind]));
+      head.addEventListener('click', function () {
+        trayOpenKinds[section.kind] = !trayOpenKinds[section.kind];
+        wrap.classList.toggle('expanded', trayOpenKinds[section.kind]);
+        head.setAttribute('aria-expanded', String(!!trayOpenKinds[section.kind]));
+      });
+
+      var items = document.createElement('div');
+      items.className = 'tray-items';
+      fillTrayItems(items, section.kind);
+
+      wrap.appendChild(head);
+      wrap.appendChild(items);
+      el['theme-tray'].appendChild(wrap);
+    });
+  }
+
+  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'sky', skins: 'skins' };
 
   function renderShop() {
     var kind = shopKind;
     var balance = MI.economy.balance();
     el['shop-balance'].textContent = balance;
+    el['shop-title'].textContent = SHOP_TITLES[kind] || kind;
     Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
       tab.setAttribute('aria-selected', String(tab.dataset.kind === kind));
     });
 
-    var equippedId = MI.economy.equipped(kind);
     el['shop-items'].innerHTML = '';
+    var listed = 0;
     MI.economy.CATALOG[kind].forEach(function (item) {
-      var owned = MI.economy.owns(kind, item.id);
-      var inUse = equippedId === item.id;
-      var card = document.createElement('div');
-      card.className = 'item' + (inUse ? ' equipped' : '');
+      if (MI.economy.owns(kind, item.id)) return;
+      listed += 1;
+      var canBuy = balance >= item.price;
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'portrait' + (canBuy ? '' : ' short');
+      if (!canBuy) card.disabled = true;
 
-      var thumb;
-      if (kind === 'themes') thumb = themeThumb(item.id);
-      else {
-        thumb = document.createElement('div');
-        thumb.className = 'thumb';
-        thumb.textContent = item.icon;
-      }
-      thumb.setAttribute('aria-hidden', 'true');
-      card.appendChild(thumb);
+      var label = document.createElement('span');
+      label.className = 'label';
+      label.textContent = item.name;
+      card.appendChild(label);
 
-      var info = document.createElement('div');
-      info.className = 'info';
-      var name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = item.name;
-      var blurb = document.createElement('div');
-      blurb.className = 'blurb';
-      blurb.textContent = item.blurb;
-      info.appendChild(name);
-      info.appendChild(blurb);
-
-      var action = document.createElement('button');
-      action.className = 'action';
-      // Pets and satellites are the two kinds you're allowed to have none of, so only they
-      // offer a way back out; a theme or skin is always wearing something.
-      if (inUse && (kind === 'pets' || kind === 'satellites')) {
-        action.className += ' use';
-        action.textContent = 'Put away';
-        action.addEventListener('click', function () { MI.app.equip(kind, null); renderShop(); });
-      } else if (inUse) {
-        action.className += ' in-use';
-        action.textContent = 'In use ✓';
-        action.disabled = true;
-      } else if (owned) {
-        action.className += ' use';
-        action.textContent = 'Use';
-        action.addEventListener('click', function () { MI.app.equip(kind, item.id); renderShop(); });
-      } else if (balance >= item.price) {
-        action.textContent = 'Unlock · ✦ ' + item.price;
-        action.addEventListener('click', function () { buy(kind, item); });
+      var frame = document.createElement('span');
+      frame.className = 'frame';
+      if (kind === 'themes') {
+        var planet = document.createElement('span');
+        planet.className = 'mini-planet';
+        planet.style.background = themeFill(item.id);
+        frame.appendChild(planet);
       } else {
-        action.className += ' short';
-        action.textContent = '✦ ' + item.price + ' · ' + (item.price - balance) + ' to go';
-        action.disabled = true;
+        var glyph = document.createElement('span');
+        glyph.className = 'glyph';
+        glyph.textContent = item.icon;
+        frame.appendChild(glyph);
       }
-      info.appendChild(action);
-      card.appendChild(info);
+      card.appendChild(frame);
+
+      var price = document.createElement('span');
+      price.className = 'price';
+      price.textContent = canBuy ? ('✦ ' + item.price) : ('✦ ' + item.price + ' · ' + (item.price - balance) + ' to go');
+      card.appendChild(price);
+
+      if (canBuy) card.addEventListener('click', function () { buy(kind, item); });
       el['shop-items'].appendChild(card);
     });
+    if (!listed) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'Everything here is already yours.';
+      el['shop-items'].appendChild(empty);
+    }
   }
 
   // --- Your character, and ground view ----------------------------------------------------
@@ -1090,7 +1176,10 @@
     MI.app.equip(kind, item.id); // a new unlock goes straight on
     refreshWallet();
     renderShop();
-    toast(item.icon, item.name + ' unlocked!', 'Now on your planet.', 0, 2600);
+    renderThemeTray();
+    toast(item.icon, item.name + ' unlocked!', kind === 'themes'
+      ? 'Find it on the circle under settings.'
+      : 'Now on your planet.', 0, 2600);
   }
 
   function formatDate(iso) {
@@ -1668,6 +1757,12 @@
     el.shop.addEventListener('click', function (e) {
       if (e.target === el.shop) closeShop(); // a click on the backdrop, not the sheet
     });
+    el['theme-btn'].addEventListener('click', toggleThemeTray);
+    document.addEventListener('pointerdown', function (e) {
+      if (!el['theme-rack'].classList.contains('open')) return;
+      if (el['theme-rack'].contains(e.target)) return;
+      closeThemeTray();
+    });
     Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
       tab.addEventListener('click', function () {
         shopKind = tab.dataset.kind;
@@ -1691,6 +1786,7 @@
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
       else if (el.settings.classList.contains('open')) closeSettings();
+      else if (el['theme-rack'].classList.contains('open')) closeThemeTray();
       else if (isBookBusy()) closeBook();
     });
 
