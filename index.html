@@ -161,129 +161,97 @@
   #settings-btn:hover { transform: rotate(22deg); background: #fff8ec; }
   #settings-btn svg { width: 22px; height: 22px; display: block; }
 
-  /* 42px highlight (settings size). Collapsed = circle; expanded = bar of smaller dots. */
+  /* Under the settings gear: one named shelf per kind of thing you own. It used to be a
+     single unlabelled orb that opened into more unlabelled circles, and nobody could tell
+     what any of it did — so each shelf now says its own name and stays put. */
   #theme-rack {
-    --tray: 42px;
-    --dot: 24px;
-    --pad: 9px;
-    --gap: 8px;
+    --swatch: 42px;
     position: fixed; right: 16px; top: 66px; z-index: 7;
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+    /* Fixed, not max-content: the widest thing in here is the empty-state line inside a
+       collapsed drawer, so intrinsic width reserved space for text nobody can see and the
+       shelves jumped narrower the moment you owned something. */
+    width: 172px; max-width: calc(100vw - 32px);
+    max-height: calc(100dvh - 78px); overflow-y: auto;
+    padding: 2px 4px 6px; box-sizing: border-box;
     pointer-events: none;
-    width: var(--tray);
   }
-  #theme-btn, #theme-tray, .tray-kind, .tray-head, .tray-items button {
+  #theme-rack .tray-kind {
     pointer-events: auto;
-  }
-  #theme-btn {
-    width: var(--tray); height: var(--tray);
-    min-width: var(--tray); min-height: var(--tray);
-    max-width: var(--tray); max-height: var(--tray);
-    aspect-ratio: 1;
-    padding: 0; border-radius: 50%;
-    border: 0; cursor: pointer; font-family: inherit;
-    background: transparent; color: var(--ink);
-    display: grid; place-items: center;
-    overflow: hidden;
-    flex-shrink: 0;
-    transition: transform .25s var(--spring), width .2s ease, height .2s ease;
-  }
-  #theme-btn:hover { transform: translateY(-1px); }
-  #theme-btn .orb {
-    width: 100%; height: 100%; border-radius: 50%;
-  }
-  #theme-rack.open #tray-themes.expanded #theme-btn {
-    width: var(--dot); height: var(--dot);
-    min-width: var(--dot); min-height: var(--dot);
-    max-width: var(--dot); max-height: var(--dot);
-    box-shadow: 0 0 0 2px #fff;
-  }
-  .tray-kind {
-    width: var(--tray);
-    border-radius: calc(var(--tray) / 2);
-    display: flex; flex-direction: column; align-items: center;
-    max-height: var(--tray);
-    overflow: hidden;
-    flex-shrink: 0;
-    box-sizing: border-box;
-    background: transparent;
-    transition: max-height .35s ease, padding .2s ease, background-color .2s ease;
-  }
-  .tray-kind.expanded {
-    max-height: 420px;
-    padding: var(--pad) 0;
-    gap: var(--gap);
-  }
-  .tray-kind:not(.expanded) .tray-items { visibility: hidden; }
-  #theme-rack:not(.open) .tray-kind.themes {
-    max-height: var(--tray);
-    padding: 0;
-  }
-  #theme-rack:not(.open) .tray-items { visibility: hidden; }
-  #theme-rack.open .tray-kind.themes.expanded { background: #8ebdd4; }
-  .tray-kind.pets { background: #7eb8a8; }
-  .tray-kind.satellites { background: #e8b36a; }
-  .tray-head {
-    width: var(--tray); height: var(--tray);
-    min-width: var(--tray); min-height: var(--tray);
-    max-width: var(--tray); max-height: var(--tray);
-    aspect-ratio: 1;
-    padding: 0; border-radius: 50%;
-    border: 0; cursor: pointer; font-family: inherit;
-    background: transparent; color: #3d3428;
-    font-size: 22px; line-height: 1;
-    display: grid; place-items: center;
-    flex-shrink: 0;
-    overflow: hidden;
-    box-sizing: border-box;
-    transition: width .2s ease, height .2s ease, font-size .2s ease, background-color .2s ease;
-  }
-  .tray-kind.expanded .tray-head {
-    width: var(--dot); height: var(--dot);
-    min-width: var(--dot); min-height: var(--dot);
-    max-width: var(--dot); max-height: var(--dot);
-    font-size: 14px;
-    background: #fffdf4;
-  }
-  .tray-items {
-    display: flex; flex-direction: column; align-items: center;
-    gap: var(--gap);
+    display: flex; flex-direction: column; align-items: stretch;
     width: 100%;
   }
+  .tray-tab {
+    display: flex; align-items: center; gap: 8px;
+    min-height: 44px; box-sizing: border-box;
+    padding: 8px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid #e6d4b6; background: var(--paper); color: var(--ink);
+    font-family: inherit; font-size: 14px; line-height: 1; text-align: left;
+    box-shadow: 1px 2px 0 #e4d2b0, 0 6px 14px rgba(112, 70, 44, .1);
+    transition: background .2s ease, transform .25s var(--spring), box-shadow .2s ease;
+  }
+  .tray-tab svg {
+    width: 18px; height: 18px; flex: 0 0 auto; display: block;
+    color: var(--ink-mid);
+  }
+  .tray-tab .tray-name { flex: 1 1 auto; }
+  /* How many you own, so an empty shelf is honest before you open it. */
+  .tray-tab .tray-count {
+    flex: 0 0 auto; min-width: 18px; padding: 1px 5px; border-radius: 999px;
+    background: #f1e6d2; color: var(--ink-mid); font-size: 11px; text-align: center;
+  }
+  .tray-tab:hover { background: #fff8ec; transform: translateX(-2px); }
+  .tray-tab[aria-expanded="true"] {
+    background: #fff8ec; color: var(--ink);
+    box-shadow: 1px 2px 0 #e4d2b0, 0 0 0 2px rgba(240, 140, 70, .35);
+  }
+  .tray-tab[aria-expanded="true"] svg { color: var(--accent, #f08c46); }
+  .tray-tab[aria-expanded="true"] .tray-count { background: #f6dcc4; color: var(--ink); }
+  .tray-tab:focus-visible, .tray-items button:focus-visible {
+    outline: 3px solid var(--ink); outline-offset: 1px;
+  }
+
+  /* The drawer opens under its own shelf, so the others never move out from under you. */
+  .tray-items {
+    display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px;
+    margin: 0 2px; padding: 0 6px;
+    max-height: 0; opacity: 0; overflow: hidden;
+    transition: max-height .3s ease, opacity .2s ease, padding .2s ease, margin .2s ease;
+  }
+  .tray-kind.open .tray-items {
+    max-height: 260px; opacity: 1; overflow: visible;
+    margin: 6px 2px 2px; padding: 0 6px;
+  }
   .tray-items button {
-    width: var(--dot); height: var(--dot);
-    min-width: var(--dot); min-height: var(--dot);
-    max-width: var(--dot); max-height: var(--dot);
-    aspect-ratio: 1;
-    padding: 0; border-radius: 50%;
-    border: 0; cursor: pointer; font-family: inherit;
-    color: #3d3428;
-    font-size: 14px; line-height: 1;
-    display: grid; place-items: center;
-    flex-shrink: 0;
-    box-sizing: border-box;
-    overflow: hidden;
-    background: #fffdf4;
-    background-size: 100% 100%;
-    transition: filter .2s ease, box-shadow .2s ease;
+    width: var(--swatch); height: var(--swatch);
+    padding: 0; border-radius: 50%; cursor: pointer; font-family: inherit;
+    border: 1px solid #e6d4b6; background: #fffdf4; background-size: 100% 100%;
+    color: var(--ink); font-size: 15px; line-height: 1;
+    display: grid; place-items: center; flex: 0 0 auto;
+    box-shadow: 1px 2px 0 #e4d2b0;
+    transition: transform .2s var(--spring), box-shadow .2s ease;
   }
-  .tray-head:hover,
-  .tray-items button:hover { filter: brightness(1.06); }
+  .tray-items button:hover { transform: translateY(-2px); }
   .tray-items button[aria-pressed="true"] {
-    box-shadow: 0 0 0 2px #fff;
+    box-shadow: 1px 2px 0 #e4d2b0, 0 0 0 2px var(--accent, #f08c46);
   }
-  #theme-tray {
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-    width: var(--tray); box-sizing: border-box;
-    max-height: 0; opacity: 0; overflow: hidden; padding: 0;
-    visibility: hidden;
-    transition: max-height .35s ease, opacity .22s ease;
+  .tray-help {
+    width: 100%; margin: 0 0 3px; font-size: 12px; line-height: 1.3;
+    color: var(--ink-mid); text-align: right;
   }
-  #theme-rack.open #theme-tray {
-    max-height: min(70vh, 520px); opacity: 1;
-    overflow: visible;
-    visibility: visible;
+  /* An owned-nothing shelf says where to get some, rather than vanishing. */
+  .tray-empty {
+    width: 100%; margin: 0; padding: 2px 4px; font-size: 12.5px; line-height: 1.35;
+    color: var(--ink-mid); text-align: right;
   }
+  .tray-items .tray-shop-link {
+    width: auto; height: auto; min-height: 36px; padding: 5px 10px;
+    border-radius: 999px; font-size: 12px; font-weight: 700;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tray-tab, .tray-items, .tray-items button { transition-duration: .01ms; }
+  }
+
   #settings {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: start end; padding: 58px 16px 16px;
     background: rgba(44, 95, 111, .18); backdrop-filter: blur(2px);
@@ -1021,7 +989,7 @@
     }
     #shop .tabs button[aria-selected="true"] { padding-right: 12px; padding-top: 10px; }
     #shop-items { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px 12px; }
-    #theme-rack { top: 64px; }
+    #theme-rack { top: 64px; max-width: calc(100vw - 32px); }
   }
 
   @media (max-height: 600px) and (min-width: 681px) {
@@ -1036,7 +1004,7 @@
     #book-btn .mini-spin { transform: rotateY(-22deg); }
     #book-btn .mini-shadow { transform: translateX(-50%) scale(.85); opacity: .3; }
     #stats-chip.bump, #wallet.bump, #planet-card.grew { transform: none; }
-    #theme-tray, .tray-kind { transition-duration: .01ms; }
+    .tray-kind { transition-duration: .01ms; }
     #shop .book, #shop.open .book, .polaroid, .polaroid.r1, .polaroid.r2, .polaroid.r3, .polaroid.r4 { transform: none; }
     #book, #book .spread, #book .page, #book.open .spread, #book.open .page,
     #book .stage-3d, #book .board.front, #book .sheet {
@@ -1580,7 +1548,9 @@
   #shop .tabs button {
     writing-mode: vertical-rl; text-orientation: mixed;
     border: 2px solid #c9a078; border-left: none; cursor: pointer; font-family: inherit;
-    padding: 16px 8px; min-height: 86px; max-height: 120px;
+    /* Sized to the word, not to a fixed box: "satellites" is far taller set vertically
+       than the "sky" this used to say, and a cap clipped it. */
+    padding: 16px 8px; min-height: 86px; max-height: none; flex: 0 1 auto;
     border-radius: 0 12px 12px 0;
     color: #3d3428; font-size: 14px; letter-spacing: .08em; text-transform: uppercase;
     background: #e8d4b0;
@@ -1839,15 +1809,7 @@
     <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"/>
   </svg>
 </button>
-<div id="theme-rack">
-  <div id="tray-themes" class="tray-kind themes expanded">
-    <button id="theme-btn" type="button" aria-expanded="false" aria-controls="theme-tray" aria-label="Things you own">
-      <span class="orb" aria-hidden="true"></span>
-    </button>
-    <div class="tray-items" id="tray-theme-items" aria-hidden="true"></div>
-  </div>
-  <div id="theme-tray" role="group" aria-label="Things you own" aria-hidden="true"></div>
-</div>
+<div id="theme-rack" role="group" aria-label="Customize your planet"></div>
 <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="sheet paper">
     <h2 id="settings-title">settings</h2>
@@ -2038,7 +2000,7 @@
             <b id="shop-balance">0</b>
             <span>coins</span>
           </div>
-          <p class="earn-hint">Write memories to earn coins. Bought things leave these pages and wait on the circle under settings.</p>
+          <p class="earn-hint">Write memories to earn coins. Use the Themes, Pets and Satellites controls below Settings to choose what you own.</p>
           <span class="doodle" aria-hidden="true"></span>
         </section>
         <div class="rings" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
@@ -2050,7 +2012,7 @@
     <div class="tabs" role="tablist" aria-label="Shop sections">
       <button type="button" role="tab" data-kind="themes" aria-selected="true">themes</button>
       <button type="button" role="tab" data-kind="pets" aria-selected="false">pets</button>
-      <button type="button" role="tab" data-kind="satellites" aria-selected="false">sky</button>
+      <button type="button" role="tab" data-kind="satellites" aria-selected="false">satellites</button>
     </div>
   </div>
 </div>

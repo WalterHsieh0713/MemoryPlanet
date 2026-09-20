@@ -36,8 +36,7 @@
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'shop-blurb',
       'ground-btn', 'picker', 'picker-grid', 'picker-play',
-      'character-btn', 'theme-btn', 'theme-tray', 'theme-rack',
-      'tray-themes', 'tray-theme-items',
+      'character-btn', 'theme-rack',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
@@ -1003,33 +1002,61 @@
       hex(theme.water) + ' 0 100%)';
   }
 
+  // One shelf per kind of thing you can own. Drawn rather than set in emoji, so they match
+  // the gear above them and each other. Same 1.9 stroke, same round joins.
   var TRAY_SECTIONS = [
-    { kind: 'pets', label: 'pets', icon: '🐾' },
-    { kind: 'satellites', label: 'sky', icon: '🌙' }
+    {
+      kind: 'themes', label: 'Themes', help: 'Change the planet\u2019s look.', empty: 'No themes yet.',
+      icon: '<circle cx="12" cy="12" r="8.5"/>' +
+            '<path d="M12 3.5a8.5 8.5 0 0 1 0 17Z" fill="currentColor" stroke="none"/>'
+    },
+    {
+      kind: 'pets', label: 'Pets', help: 'Choose a pet to walk the land.', empty: 'No pets yet.',
+      icon: '<ellipse cx="8" cy="7.6" rx="1.9" ry="2.5"/><ellipse cx="14.6" cy="6.8" rx="1.9" ry="2.5"/>' +
+            '<ellipse cx="19" cy="11.6" rx="1.8" ry="2.2"/>' +
+            '<path d="M12.3 12.2c2.6 0 4.6 2 5 4.1.4 1.9-1 3.2-2.8 3.2-1.2 0-1.6-.5-2.5-.5s-1.3.5-2.5.5c-1.8 0-3.2-1.3-2.8-3.2.4-2.1 2.4-4.1 5.6-4.1Z"/>'
+    },
+    {
+      kind: 'satellites', label: 'Satellites', help: 'Choose a companion to orbit above.', empty: 'No satellites yet.',
+      icon: '<circle cx="12" cy="11.4" r="4.6"/>' +
+            '<ellipse cx="12" cy="12" rx="9.4" ry="3.3" transform="rotate(-22 12 12)"/>'
+    }
   ];
-  var trayOpenKinds = { themes: true, pets: false, satellites: false };
+  // Only one drawer at a time: three open at once buries the planet you are dressing.
+  var trayOpenKind = null;
 
   function closeThemeTray() {
-    el['theme-rack'].classList.remove('open');
-    el['theme-btn'].setAttribute('aria-expanded', 'false');
-    el['theme-tray'].setAttribute('aria-hidden', 'true');
-    el['tray-theme-items'].setAttribute('aria-hidden', 'true');
+    var returnKind = trayOpenKind && el['theme-rack'].contains(document.activeElement)
+      ? trayOpenKind : null;
+    trayOpenKind = null;
+    syncTrayOpen();
+    if (returnKind) {
+      var wrap = Array.prototype.filter.call(el['theme-rack'].children, function (child) {
+        return child.dataset.kind === returnKind;
+      })[0];
+      if (wrap) wrap.querySelector('.tray-tab').focus();
+    }
   }
 
-  function toggleThemeTray() {
-    var open = !el['theme-rack'].classList.contains('open');
-    if (open) {
-      closeSettings();
-      trayOpenKinds.themes = true;
-      el['tray-themes'].classList.add('expanded');
-      renderThemeTray();
-      el['theme-rack'].classList.add('open');
-    } else {
-      el['theme-rack'].classList.remove('open');
-    }
-    el['theme-btn'].setAttribute('aria-expanded', String(open));
-    el['theme-tray'].setAttribute('aria-hidden', String(!open));
-    el['tray-theme-items'].setAttribute('aria-hidden', String(!open));
+  function syncTrayOpen() {
+    Array.prototype.forEach.call(el['theme-rack'].children, function (wrap) {
+      var open = wrap.dataset.kind === trayOpenKind;
+      wrap.classList.toggle('open', open);
+      var tab = wrap.querySelector('.tray-tab');
+      var items = wrap.querySelector('.tray-items');
+      if (tab) tab.setAttribute('aria-expanded', String(open));
+      if (items) {
+        items.setAttribute('aria-hidden', String(!open));
+        items.inert = !open;
+      }
+    });
+    el['theme-rack'].classList.toggle('open', trayOpenKind !== null);
+  }
+
+  function toggleTrayKind(kind) {
+    trayOpenKind = trayOpenKind === kind ? null : kind;
+    if (trayOpenKind) closeSettings();
+    syncTrayOpen();
   }
 
   function ownedCatalog(kind) {
@@ -1042,69 +1069,101 @@
     container.innerHTML = '';
     var equippedId = MI.economy.equipped(kind);
     ownedCatalog(kind).forEach(function (item) {
-      // The themes header already shows the equipped planet; only list the rest.
-      if (kind === 'themes' && item.id === equippedId) return;
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.title = item.name;
-      btn.setAttribute('aria-label', item.name);
-      btn.setAttribute('aria-pressed', String(item.id === equippedId));
+      var selected = item.id === equippedId;
+      var action = selected && kind !== 'themes' ? 'Put away ' : 'Use ';
+      btn.title = action + item.name;
+      btn.setAttribute('aria-label', action + item.name);
+      btn.setAttribute('aria-pressed', String(selected));
+      btn.dataset.trayKind = kind;
+      btn.dataset.itemId = item.id;
       if (kind === 'themes') btn.style.background = themeFill(item.id);
       else btn.textContent = item.icon;
       btn.addEventListener('click', function () {
-        MI.app.equip(kind, item.id);
+        MI.app.equip(kind, selected && kind !== 'themes' ? null : item.id);
         renderThemeTray();
       });
       container.appendChild(btn);
     });
   }
 
-  function sectionIcon(section) {
-    return section.icon;
+  function trayIcon(section) {
+    return '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">' + section.icon + '</svg>';
   }
 
   function renderThemeTray() {
-    var orb = el['theme-btn'].querySelector('.orb');
-    if (orb) orb.style.background = themeFill(MI.economy.equipped('themes') || 'meadow');
-    fillTrayItems(el['tray-theme-items'], 'themes');
-    el['tray-themes'].classList.toggle('expanded', !!trayOpenKinds.themes);
-
-    el['theme-tray'].innerHTML = '';
+    var rack = el['theme-rack'];
+    var active = document.activeElement;
+    var focusedKind = rack.contains(active) && active.dataset.trayKind;
+    var focusedItem = focusedKind && active.dataset.itemId;
+    rack.innerHTML = '';
     TRAY_SECTIONS.forEach(function (section) {
       var owned = ownedCatalog(section.kind);
-      if (!owned.length) return;
       var wrap = document.createElement('div');
-      wrap.className = 'tray-kind ' + section.kind + (trayOpenKinds[section.kind] ? ' expanded' : '');
+      wrap.className = 'tray-kind';
       wrap.dataset.kind = section.kind;
 
-      var head = document.createElement('button');
-      head.type = 'button';
-      head.className = 'tray-head';
-      head.textContent = sectionIcon(section);
-      head.title = section.label;
-      head.setAttribute('aria-label', section.label);
-      head.setAttribute('aria-expanded', String(!!trayOpenKinds[section.kind]));
-      head.addEventListener('click', function () {
-        trayOpenKinds[section.kind] = !trayOpenKinds[section.kind];
-        wrap.classList.toggle('expanded', trayOpenKinds[section.kind]);
-        head.setAttribute('aria-expanded', String(!!trayOpenKinds[section.kind]));
-      });
+      var tab = document.createElement('button');
+      tab.type = 'button';
+      tab.className = 'tray-tab';
+      tab.dataset.trayKind = section.kind;
+      tab.setAttribute('aria-expanded', 'false');
+      tab.setAttribute('aria-controls', 'tray-items-' + section.kind);
+      tab.innerHTML = trayIcon(section) +
+        '<span class="tray-name"></span><span class="tray-count"></span>';
+      tab.querySelector('.tray-name').textContent = section.label;
+      tab.querySelector('.tray-count').textContent = String(owned.length);
+      tab.setAttribute('aria-label', section.label + ', ' + owned.length + ' owned. ' + section.help);
+      tab.addEventListener('click', function () { toggleTrayKind(section.kind); });
 
       var items = document.createElement('div');
       items.className = 'tray-items';
-      fillTrayItems(items, section.kind);
+      items.id = 'tray-items-' + section.kind;
+      items.setAttribute('role', 'group');
+      items.setAttribute('aria-label', section.label + ' you own');
+      items.setAttribute('aria-hidden', 'true');
+      var help = document.createElement('p');
+      help.className = 'tray-help';
+      help.textContent = section.help;
+      if (owned.length) {
+        fillTrayItems(items, section.kind);
+        items.insertBefore(help, items.firstChild);
+      } else {
+        items.appendChild(help);
+        var note = document.createElement('p');
+        note.className = 'tray-empty';
+        note.textContent = section.empty;
+        items.appendChild(note);
+        var browse = document.createElement('button');
+        browse.type = 'button';
+        browse.className = 'tray-shop-link';
+        browse.textContent = 'Browse ' + section.label + ' in Shop';
+        browse.addEventListener('click', function () {
+          shopKind = section.kind;
+          openShop();
+        });
+        items.appendChild(browse);
+      }
 
-      wrap.appendChild(head);
+      wrap.appendChild(tab);
       wrap.appendChild(items);
-      el['theme-tray'].appendChild(wrap);
+      rack.appendChild(wrap);
     });
+    syncTrayOpen();
+    if (focusedKind) {
+      Array.prototype.forEach.call(rack.querySelectorAll('button'), function (button) {
+        if (button.dataset.trayKind === focusedKind && button.dataset.itemId === focusedItem) button.focus();
+      });
+    }
   }
 
-  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'sky' };
+  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'satellites' };
   var SHOP_BLURBS = {
     themes: 'Whole-planet clothes. Swap a world on like a postcard.',
     pets: 'Little walkers for the paths. One can be out at a time.',
-    satellites: 'Sky company. They keep orbiting, even when the view folds.'
+    satellites: 'Orbiting company. They keep circling, even when the view folds.'
   };
   var POLAROID_TILT = ['r1', 'r2', 'r3', 'r4'];
 
@@ -1162,7 +1221,7 @@
     if (!listed) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'This page is full. Everything here is already yours.';
+      empty.textContent = 'Everything here is yours. Use the controls below Settings to choose one.';
       el['shop-items'].appendChild(empty);
     }
   }
@@ -1716,9 +1775,8 @@
     refreshWallet();
     renderShop();
     renderThemeTray();
-    toast(item.icon, item.name + ' unlocked!', kind === 'themes'
-      ? 'Find it on the circle under settings.'
-      : 'Now on your planet.', 0, 2600);
+    toast(item.icon, item.name + ' unlocked!',
+      'Now on your planet. Change it below Settings.', 0, 2600);
   }
 
   function formatDate(iso) {
@@ -2489,7 +2547,7 @@
     el.shop.addEventListener('click', function (e) {
       if (e.target === el.shop) closeShop(); // a click on the backdrop, not the sheet
     });
-    el['theme-btn'].addEventListener('click', toggleThemeTray);
+
     document.addEventListener('pointerdown', function (e) {
       if (!el['theme-rack'].classList.contains('open')) return;
       if (el['theme-rack'].contains(e.target)) return;
