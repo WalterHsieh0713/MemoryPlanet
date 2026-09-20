@@ -86,16 +86,80 @@
   // The sphere can't place whole kit tiles on its irregular cells, so terrain shows up
   // there as the cell's own colour instead — each theme's `tint` table (themes.js).
 
-  // Every building in the kit, spread across the categories, so repeat entries of the same
-  // kind don't look stamped out.
+  // Where a building model comes from. The hexagon kit is the default and needs no entry;
+  // anything drawn from another pack names its folder here. Packs are kept apart rather than
+  // pooled into one because each ships its own texture atlas — see loaderFor().
+  var PACKS = {
+    'kenney-hexagon-kit': HEX_PACK,
+    'pirate': 'assets/standalone/buildings/pirate-kit/'
+  };
+  var DEFAULT_PACK = 'kenney-hexagon-kit';
+
+  function packPath(pack) {
+    return PACKS[pack] || PACKS[DEFAULT_PACK];
+  }
+
+  // Buildings from the other packs. The hexagon kit's models are authored to sit on a tile of
+  // KIT_TILE_WIDTH, so they need no correction; these are modelled at their own sizes and
+  // carry a measured factor instead. Measure a new one against a hexagon-kit house rather
+  // than guessing — the numbers are not close.
+  //
+  // These do NOT follow the theme. Theme recolouring is an HSL pass over the hexagon kit's
+  // atlas (themes.js), and each pack has its own, so under Frostfall these stay summery. A
+  // handful of models is worth that; a hundred would not be.
+  // LOOK AT A MODEL BEFORE PUTTING IT IN HERE. `assets/standalone/` is sorted by folder name,
+  // not by inspection, and `buildings/` contains component parts: the fantasy-town "windmill"
+  // is its sails alone (two crossed poles, no mill) and both "watermills" are a bare wheel.
+  // All three were catalogued as buildings and planted on the island before anyone rendered
+  // them. `/asset-sheet/` exists to make that a ten-second check. The hexagon kit's own
+  // building-mill and building-watermill are the real mills.
+  //
+  // Scales are set by measuring what LANDS ON THE TILE, not from the raw GLB box — a box
+  // counts parts that never read as height. Reference: a hexagon-kit building stands 0.52 in
+  // model units above its tile, and these aim at 1.1-1.5x that, so a foreign building reads as
+  // a landmark without towering over the street. The pirate tower at its "footprint fits the
+  // tile" scale came out 2.9x and had to come down by half.
+  var FOREIGN_BUILDINGS = {
+    'tower-complete-large.glb': { pack: 'pirate', scale: 0.073 }, // -> 0.75 (1.4x)
+    'tower-complete-small.glb': { pack: 'pirate', scale: 0.103 }, // -> 0.70 (1.3x)
+    'tower-watch.glb': { pack: 'pirate', scale: 0.25 },           // -> 0.70 (1.3x)
+    'castle-gate.glb': { pack: 'pirate', scale: 0.17 }            // -> 0.75 (1.4x)
+  };
+
+  function buildingSpec(key) {
+    return FOREIGN_BUILDINGS[key] || { pack: DEFAULT_PACK, scale: 1 };
+  }
+
+  // What a category is KNOWN for. It is no longer all a category can have: six categories
+  // splitting the kit's eighteen buildings three or four ways, with the keyword guess sending
+  // most entries to `other`, meant you saw the same three models over and over. A memory now
+  // takes its category's own building most of the time and any building the rest of the time,
+  // so a street varies without a farm ceasing to mean home.
   var CATEGORY_BUILDINGS = {
-    achievement: ['building-castle.glb', 'building-tower.glb', 'building-wizard-tower.glb', 'building-walls.glb'],
+    achievement: ['building-castle.glb', 'building-tower.glb', 'building-wizard-tower.glb',
+      'building-walls.glb', 'tower-complete-large.glb', 'castle-gate.glb'],
     everyday: ['building-house.glb', 'building-cabin.glb', 'building-mill.glb'],
-    travel: ['building-dock.glb', 'building-port.glb'],
+    travel: ['building-dock.glb', 'building-port.glb', 'tower-complete-small.glb',
+      'tower-watch.glb'],
     home: ['building-farm.glb', 'building-sheep.glb', 'building-watermill.glb'],
     social: ['building-village.glb', 'building-market.glb', 'building-archery.glb'],
     other: ['building-mine.glb', 'building-smelter.glb', 'building-wall.glb']
   };
+
+  // How often a memory gets one of its own category's buildings rather than any building.
+  var SIGNATURE_CHANCE = 0.6;
+
+  // Every building there is, category order, no repeats — the pool for the other 40%, and the
+  // list the detail card offers when you want to swap one out by hand.
+  var ALL_BUILDINGS = (function () {
+    var seen = {}, all = [];
+    Object.keys(CATEGORY_BUILDINGS).forEach(function (category) {
+      CATEGORY_BUILDINGS[category].forEach(function (key) {
+        if (!seen[key]) { seen[key] = true; all.push(key); }
+      });
+    });
+    return all;
+  })();
 
   var PERSON_COLORS = [0xff9f68, 0x7ec8e3, 0xf7b7d2, 0xa5d86e, 0xc3a5f0, 0xffd97d, 0x6fd8c0, 0xf2836b];
 
@@ -320,6 +384,7 @@
   var state = null;      // everything built in init(), shared with the public API below
   var animations = [];   // each entry: fn(nowMs) -> true when finished
   var pickListeners = [];
+  var shipPickListeners = [];
   // cb(slot | null) -> truthy when that tile is worth a pointer cursor. The UI decides what
   // counts, and does its own highlighting inside the callback.
   var hoverListener = null;
@@ -338,9 +403,16 @@
   // Which building a category gets. Called once by MI.app and then persisted on the Memory,
   // so the same memory always renders the same building (CLAUDE.md: no Math.random() at spawn).
   function pickAssetFor(category, seed) {
-    var options = CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other;
+    var signature = CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other;
+    var options = hash(seed * 7 + 3) < SIGNATURE_CHANCE ? signature : ALL_BUILDINGS;
     var index = Math.floor(hash(seed || 0) * options.length) % options.length;
-    return { pack: 'kenney-hexagon-kit', key: options[index] };
+    return assetFor(options[index]);
+  }
+
+  // A building file as it is stored on a Memory. Saved rather than looked up each time, so a
+  // model can move packs later without rewriting what is already on the planet.
+  function assetFor(key) {
+    return { pack: buildingSpec(key).pack, key: key };
   }
 
   // Which terrain a seeded tile gets. `index` is its position in that memory's little
@@ -397,10 +469,21 @@
     setTileLand(slot);
     if (opts.animate !== false) popTile(slot);
 
-    var file = (memory.asset && memory.asset.key) || pickAssetFor(memory.category, slot).key;
-    return placeProp(HEX_PACK + file, memory.placement, {
+    var asset = memory.asset && memory.asset.key ? memory.asset : pickAssetFor(memory.category, slot);
+    // A building is persisted on its memory, so a model retired from the catalogue would leave
+    // a saved world asking for a file that is no longer served: the url 404s and the tile comes
+    // up empty, with nothing to say why. Re-pick and keep it instead. (Three fantasy-town
+    // "buildings" were retired this way once they turned out to be rotor parts.)
+    if (ALL_BUILDINGS.indexOf(asset.key) === -1) {
+      asset = pickAssetFor(memory.category, slot);
+      memory.asset = asset;
+      if (MI.store && MI.store.save) MI.store.save();
+    }
+    var spec = buildingSpec(asset.key);
+    return placeProp(packPath(asset.pack) + asset.key, memory.placement, {
       animate: opts.animate !== false,
       rotY: (memory.placement && memory.placement.rotY) || 0,
+      modelScale: spec.scale,
       tag: { type: 'memory', id: memory.id, slot: slot }
     }).then(function (obj) {
       rebuildRoads(); // the new tile may extend or reroute the network
@@ -504,12 +587,21 @@
     pickListeners.push(cb);
   }
 
+  function onShipPick(cb) {
+    shipPickListeners.push(cb);
+  }
+
   function onHover(cb) {
     hoverListener = cb;
   }
 
+  // What the detail card offers when you want to swap a building by hand: every building
+  // there is, this category's own first, since those are the likeliest picks.
   function buildingsFor(category) {
-    return (CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other).slice();
+    var signature = CATEGORY_BUILDINGS[category] || CATEGORY_BUILDINGS.other;
+    return signature.concat(ALL_BUILDINGS.filter(function (key) {
+      return signature.indexOf(key) === -1;
+    }));
   }
 
   // Swap the building on an already-placed memory (the detail card's override).
@@ -892,22 +984,54 @@
       (maxScreenX + padding) / (Math.tan(halfFov) * state.camera.aspect * 0.88),
       (depth + padding) / (Math.tan(halfFov) * 0.78));
 
+    // A building from another pack, standing on the grass tile that was just laid for it. It
+    // carries no hexagon base of its own, so it is built without one (`false`) and lifted to
+    // that tile's top, the same way a path is.
+    function placeForeignOnIsland(foreign, key, id, x, z, groundKey, blockers) {
+      return loadParts(packPath(foreign.pack) + key).then(function (parts) {
+        if (!parts) return;
+        var obj = buildFromParts(parts, false);
+        obj.scale.setScalar(FLAT_MODEL_SCALE * foreign.scale);
+        obj.rotation.y = Math.PI / 3;
+        var lift = tileTopOf(groundKey) * FLAT_MODEL_SCALE;
+        obj.position.set(x, FLAT_BASE_Y + lift, z);
+        obj.userData.restY = FLAT_BASE_Y + lift;
+        obj.userData.tag = { type: 'flat', slot: Number(id), land: true };
+        state.flatGroup.add(obj);
+        if (parts.some(function (part) { return part.spin; })) state.spinners.push(obj);
+        // This model starts at the tile's top rather than its bottom, and is drawn at its own
+        // scale, so head height converts into its units; footprintBox reads the parts' own
+        // positions, which buildFromParts has since settled onto y=0 by baseDrop. islandBlocker
+        // then scales the box by FLAT_MODEL_SCALE, so fold this model's own scale in first.
+        var box = footprintBox(parts, PLAYER_HEAD / foreign.scale + obj.userData.baseDrop);
+        if (box) {
+          ['cx', 'cz', 'hx', 'hz'].forEach(function (k) { box[k] *= foreign.scale; });
+          blockers.push(islandBlocker(x, z, obj.rotation.y, box));
+        }
+      });
+    }
+
     var extent = 0;
     var jobs = [];
     ids.forEach(function (id) {
       var x = centres[id].x, z = centres[id].z;
       extent = Math.max(extent, Math.sqrt(x * x + z * z));
       var road = roads[id];
-      jobs.push(loadParts(HEX_PACK + assetBySlot[id]).then(function (parts) {
+      // A hexagon-kit building is modelled WITH the hexagon of ground it stands on, so one
+      // model is the whole tile. A building from another pack is only the building, so its
+      // tile is plain grass and the model is set on top — otherwise it stands over a hole.
+      var foreign = FOREIGN_BUILDINGS[assetBySlot[id]];
+      var groundKey = foreign ? 'grass.glb' : assetBySlot[id];
+      jobs.push(loadParts(HEX_PACK + groundKey).then(function (parts) {
         if (!parts) return;
         var obj = buildFromParts(parts);
         obj.scale.setScalar(FLAT_MODEL_SCALE);
         obj.rotation.y = Math.PI / 3;
         obj.position.set(x, FLAT_BASE_Y, z);
-        if (buildingSlots.has(Number(id))) {
-          var box = footprintBox(parts, tileTopOf(assetBySlot[id]) + PLAYER_HEAD);
+        if (buildingSlots.has(Number(id)) && !foreign) {
+          var box = footprintBox(parts, tileTopOf(groundKey) + PLAYER_HEAD);
           if (box) blockers.push(islandBlocker(x, z, obj.rotation.y, box));
-        } else if (CANOPY_TILES[assetBySlot[id]]) {
+        } else if (CANOPY_TILES[groundKey]) {
           canopy.push({ x: x, z: z, r: FLAT_TILE_RADIUS * 0.9 });
         }
         obj.userData.restY = FLAT_BASE_Y;
@@ -915,19 +1039,23 @@
         state.flatGroup.add(obj);
         if (parts.some(function (part) { return part.spin; })) state.spinners.push(obj);
 
+        var after = [];
+        if (foreign) after.push(placeForeignOnIsland(foreign, assetBySlot[id], id, x, z, groundKey, blockers));
+
         // The kit's path pieces are thin road overlays, not tiles — they lay ON the terrain.
-        if (!road) return;
-        return loadParts(HEX_PACK + road.file).then(function (roadParts) {
+        if (!road) return after.length ? Promise.all(after) : undefined;
+        after.push(loadParts(HEX_PACK + road.file).then(function (roadParts) {
           if (!roadParts) return;
           var strip = buildFromParts(roadParts);
           strip.scale.setScalar(FLAT_MODEL_SCALE);
           strip.rotation.y = road.rotation; // exact: the connector lookup chose this angle
-          var lift = roadLiftFor(assetBySlot[id]);
+          var lift = roadLiftFor(groundKey);
           strip.position.set(x, FLAT_BASE_Y + lift, z);
           strip.userData.restY = FLAT_BASE_Y + lift;
           strip.userData.tag = { type: 'flat', slot: Number(id), land: true };
           state.flatGroup.add(strip);
-        });
+        }));
+        return Promise.all(after);
       }));
     });
 
@@ -1861,10 +1989,26 @@
 
   // --- Props (buildings, characters) ---------------------------------------------------
 
+  // One GLTFLoader per pack, per CLAUDE.md: every Kenney pack ships its own `colormap.png`,
+  // so a single manager rewriting that name to the hexagon kit's atlas would paint a pirate
+  // tower in hexagon-kit colours. A pack's directory is simply the url up to the file name —
+  // each one keeps its `Textures/` folder beside its GLBs, which is what makes this work.
+  function loaderFor(dir) {
+    if (!state.loaders[dir]) {
+      var manager = new THREE.LoadingManager();
+      manager.setURLModifier(function (url) {
+        return url.indexOf('colormap.png') !== -1 ? dir + 'Textures/variation-a.png' : url;
+      });
+      state.loaders[dir] = new THREE.GLTFLoader(manager);
+    }
+    return state.loaders[dir];
+  }
+
   function loadGLB(url) {
     if (!state.glbCache[url]) {
+      var dir = url.slice(0, url.lastIndexOf('/') + 1);
       state.glbCache[url] = new Promise(function (resolve) {
-        state.loader.load(url, resolve, undefined, function () { resolve(null); });
+        loaderFor(dir).load(url, resolve, undefined, function () { resolve(null); });
       });
     }
     return state.glbCache[url];
@@ -2098,7 +2242,9 @@
       if (!parts || !parts.length) return null;
       var obj = buildFromParts(parts, false); // no hex base — the cell itself is the ground
       var tile = MI.world.sphere.tile(placement.slot);
-      var scale = (tile ? tileScale(tile) : state.spacing) * (placement.scale || 1);
+      // modelScale corrects a pack whose models aren't authored to the hexagon kit's tile.
+      var scale = (tile ? tileScale(tile) : state.spacing) * (placement.scale || 1)
+        * (options.modelScale || 1);
       prepareProp(obj, placement, scale, 0);
       if (tile) {
         alignToCell(obj, tile);
@@ -2471,6 +2617,150 @@
         offset: true // most of the road route is building tiles; stand beside them, not in them
       });
     });
+  }
+
+  // --- The pirate fleet (src/world/ships.js owns who they are) ----------------------------
+  // A ship is a walker whose walkable set is WATER. That one substitution is the whole
+  // feature: the wander FSM, the easing, the turn-to-face — all of it already worked, because
+  // world.js was already the thing that decides where a walker may go.
+  //
+  // Ships are planet-only. The island is land coiled into a chunk with no sea around it to
+  // sail on (buildIslandUnderside builds water UNDER the tiles), so there is nowhere to put
+  // one; they are hidden with the rest of the planet when the view folds.
+
+  // Hulls are 8.8-13.1 long in their own units against a hexagon-kit tile's 1.0, so a ship
+  // takes roughly one tile of ocean at this scale — the size of the buildings, as asked.
+  var SHIP_SCALE = 0.11;
+  // How deep a hull sits IN the water, in the model's own units. Measured off the mesh: the
+  // keel is at 0 and the hull reaches its full beam at about 1.75, which is the deck — so the
+  // waterline is the tapering part below that. Sitting the model on y=0 like a building left
+  // every ship hovering with its keel in view.
+  var SHIP_DRAFT = 1.3;
+
+  // The sea is not flat. animateWater pushes each water tile out along its own normal by
+  // WAVE_AMPLITUDE * sin(t * WAVE_SPEED + phase), so a ship held at a fixed radius rides over
+  // the troughs and gets swallowed by the crests. This is that same wave, so a ship lifts and
+  // drops with the actual water underneath it.
+  function waveOffsetAt(tileId, timeSeconds) {
+    var tile = (tileId === null || tileId === undefined) ? null : state.tiles[tileId];
+    if (!tile) return 0;
+    var phase = (tile.dir[0] + tile.dir[2]) * 2.5;
+    return WAVE_AMPLITUDE * Math.sin(timeSeconds * WAVE_SPEED + phase);
+  }
+
+  // Blended across the two tiles a ship is between, so crossing from one swell to the next is
+  // a roll rather than a step.
+  function shipHeight(walker, timeSeconds, scale) {
+    var from = waveOffsetAt(walker.tileId, timeSeconds);
+    var to = waveOffsetAt(walker.targetId, timeSeconds);
+    var t = Math.max(0, Math.min(1, walker.t));
+    return RADIUS + (from + (to - from) * t) - SHIP_DRAFT * scale;
+  }
+
+  function isWater(id) {
+    return state.waterTileIds.has(id) && !!MI.world.sphere.tile(id);
+  }
+
+  // Open sea: water with no land in sight. An unclaimed ship keeps to it, which is what
+  // "hostile" means here — it will not come near your island, and you feel that as distance
+  // rather than as damage. Claiming lifts the restriction, and the ship sails in to the coast.
+  function isOpenSea(id) {
+    if (!isWater(id)) return false;
+    var tile = MI.world.sphere.tile(id);
+    for (var i = 0; i < tile.neighbors.length; i++) {
+      if (!state.waterTileIds.has(tile.neighbors[i])) return false;
+    }
+    return true;
+  }
+
+  // Brings what is on screen in line with world.ships: adds ships that have appeared, drops
+  // ships that are gone, and swaps the hull of one that has just been claimed. Cheap to call
+  // — it only touches what actually differs.
+  function syncShips() {
+    if (!state || !state.tiles) return;
+    var world = MI.store.get();
+    var wanted = {};
+    (world.ships || []).forEach(function (ship) { wanted[ship.id] = ship; });
+
+    Object.keys(state.shipWalkers).forEach(function (id) {
+      var live = state.shipWalkers[id];
+      var ship = wanted[id];
+      if (!ship || live.model !== MI.ships.modelFor(ship)) {
+        state.shipGroup.remove(live.walker.group);
+        delete state.shipWalkers[id];
+      }
+    });
+
+    Object.keys(wanted).forEach(function (id) {
+      if (state.shipWalkers[id]) return;
+      var ship = wanted[id];
+      var model = MI.ships.modelFor(ship);
+      // Claimed before the hull loads? The entry is reserved so two loads can't race for it.
+      state.shipWalkers[id] = { model: model, walker: null, ship: ship, tile: null };
+      MI.world.walkers.makeWalkerSolo(model).then(function (walker) {
+        var slot = state.shipWalkers[id];
+        if (!walker || !slot || slot.model !== model) return;
+        slot.walker = walker;
+        slot.walker.group.userData.tag = { type: 'ship', id: id };
+        state.shipGroup.add(walker.group);
+      });
+    });
+  }
+
+  function updateShips(dt) {
+    if (!state.tiles || !state.shipWalkers) return;
+    var ids = Object.keys(state.shipWalkers);
+    if (!ids.length) return;
+    // Nothing to sail on yet (a brand-new planet is all water, so this is only ever true
+    // before the grid has loaded) — and nothing to do while the island is up.
+    var sailing = !state.flatMode && !state.transition;
+    var now = performance.now() / 1000; // the clock animateWater runs the swell on
+    ids.forEach(function (id) {
+      var live = state.shipWalkers[id];
+      if (!live.walker) return;
+      live.walker.group.visible = sailing;
+      if (!sailing) return;
+      var canSail = live.ship.claimed ? isWater : isOpenSea;
+      var scale = state.spacing * SHIP_SCALE;
+      MI.world.walkers.updateSphere(live.walker, dt, {
+        isLand: canSail,
+        neighborsOf: walkerNeighbors,
+        findAnchor: function () { return findSeaAnchor(id, canSail); },
+        dirOf: function (tileId) {
+          var t = MI.world.sphere.tile(tileId);
+          return t ? new THREE.Vector3().fromArray(t.dir) : null;
+        },
+        height: shipHeight(live.walker, now, scale),
+        scale: scale,
+        offset: 0,
+        hop: 0 // a ship rides the swell; it does not bounce from tile to tile
+      });
+      live.tile = live.walker.tileId;
+    });
+  }
+
+  // Where a ship starts, and where it re-appears if the sea it was on became land. Chosen from
+  // the ship's own id rather than at random, so the same world puts the same ship in the same
+  // stretch of ocean on every reload (CLAUDE.md: nothing re-rolled at spawn time). Ships are
+  // spread around the planet by starting each search at a different point in the tile list.
+  function findSeaAnchor(shipId, canSail) {
+    var tiles = state.tiles;
+    var offset = Math.floor(hash(hashString(shipId)) * tiles.length);
+    for (var i = 0; i < tiles.length; i++) {
+      var tile = tiles[(offset + i) % tiles.length];
+      if (tile.sides === 6 && canSail(tile.id)) return tile.id;
+    }
+    // Every open-sea tile is gone (a very built-up small planet): any water will do.
+    for (var j = 0; j < tiles.length; j++) {
+      if (tiles[j].sides === 6 && isWater(tiles[j].id)) return tiles[j].id;
+    }
+    return null;
+  }
+
+  function hashString(text) {
+    var out = 0;
+    for (var i = 0; i < String(text).length; i++) out = ((out * 31) + String(text).charCodeAt(i)) >>> 0;
+    return out;
   }
 
   function driveWalkers(walkers, dt, spec) {
@@ -3110,23 +3400,19 @@
     planet.add(petWalkerGroup);
     var residentGroup = new THREE.Group();
     planet.add(residentGroup);
+    // Ships hang off the planet like everything else, so they turn with it and are hidden
+    // with it when the view folds to the island.
+    var shipGroup = new THREE.Group();
+    planet.add(shipGroup);
     // Your character, one instance per view, parented for the same reasons.
     var playerGroup = new THREE.Group();
     planet.add(playerGroup);
-
-    var manager = new THREE.LoadingManager();
-    manager.setURLModifier(function (url) {
-      if (url.indexOf('colormap.png') !== -1) {
-        return HEX_PACK + 'Textures/variation-a.png';
-      }
-      return url;
-    });
 
     state = {
       renderer: renderer, scene: scene, camera: camera,
       planet: planet, props: props, flatGroup: flatGroup,
       hemiLight: hemi, sunLight: sun,
-      loader: new THREE.GLTFLoader(manager), glbCache: {}, partsCache: {}, spinners: [],
+      loaders: {}, glbCache: {}, partsCache: {}, spinners: [],
       camTheta: 0.7, camPhi: 1.1, camDistance: 13, camTarget: new THREE.Vector3(),
       flatMode: false, flatRadius: 3, transition: null,
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
@@ -3144,6 +3430,8 @@
       petId: null, petGroup: petWalkerGroup, petWalkers: null,
       residentGroup: residentGroup, residentWalkers: {},
       roadSlotsCache: null,
+      // The pirate fleet, keyed by ship id: { model, walker, ship, tile }. Planet-only.
+      shipGroup: shipGroup, shipWalkers: {},
       // camMode is 'orbit' or 'ground'; orbitRestore is the orbit camera stashed on the
       // way into ground view, so leaving puts the view back exactly as it was. groundForward
       // is a TANGENT VECTOR in the character's own group's space, carried along by the same
@@ -3355,6 +3643,13 @@
         return;
       }
       if (state.camMode !== 'orbit') return;     // following or mid-tween: nothing to pick yet
+      // Ships first: one stands proud of the sea it is on, so answering with the water tile
+      // underneath it (and opening nothing) would read as a dead click.
+      var shipId = pickShip(e, canvasEl);
+      if (shipId) {
+        shipPickListeners.forEach(function (cb) { cb(shipId); });
+        return;
+      }
       var slot = pickSlot(e, canvasEl);
       pickListeners.forEach(function (cb) { cb(slot); });
     });
@@ -4157,6 +4452,7 @@
       animateWater(now / 1000);
       animateSatellite(now / 1000);
       if (!state.transition) updateWalkers(dt);
+      updateShips(dt); // hides itself mid-fold rather than freezing, so a ship never lands ashore
       if (!state.transition) updatePlayer(dt);
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
@@ -4216,11 +4512,41 @@
     return state.faceToTileId[hits[0].faceIndex];
   }
 
+  // A ship under the pointer, if there is one. Asked BEFORE pickSlot by whoever handles the
+  // click: a ship stands proud of the sea it is on, so hitting the water tile underneath it
+  // and opening nothing would feel broken.
+  function pickShip(e, canvasEl) {
+    if (!state || state.flatMode || !state.shipGroup) return null;
+    var rect = canvasEl.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, state.camera);
+    var hits = raycaster.intersectObject(state.shipGroup, true);
+    for (var i = 0; i < hits.length; i++) {
+      for (var node = hits[i].object; node; node = node.parent) {
+        if (node.userData && node.userData.tag && node.userData.tag.type === 'ship') {
+          return node.userData.tag.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  // Turns the camera to whichever stretch of ocean a ship is currently on, so "your ship is
+  // ready" can actually show you the ship.
+  function focusShip(shipId) {
+    var live = state.shipWalkers && state.shipWalkers[shipId];
+    if (!live || live.tile === null || live.tile === undefined) return false;
+    focus(live.tile);
+    return true;
+  }
+
   MI.world.init = init;
   MI.world.spawnMemory = spawnMemory;
   MI.world.spawnPerson = spawnPerson;
   MI.world.focus = focus;
   MI.world.onPick = onPick;
+  MI.world.onShipPick = onShipPick;
   MI.world.onHover = onHover;
   MI.world.highlightSlot = highlightSlot;
   MI.world.clearHighlight = clearHighlight;
@@ -4235,12 +4561,15 @@
   MI.world.clear = clear;
   MI.world.pickAssetFor = pickAssetFor;
   MI.world.buildingsFor = buildingsFor;
+  MI.world.assetFor = assetFor;
   MI.world.respawnMemory = respawnMemory;
   MI.world.pickTerrainFor = pickTerrainFor;
   MI.world.landscapeCountFor = landscapeCountFor;
   MI.world.spawnLandscape = spawnLandscape;
   MI.world.spawnHouse = spawnHouse;
   MI.world.personColor = personColor;
+  MI.world.syncShips = syncShips;
+  MI.world.focusShip = focusShip;
   // Test hooks (scripts/ and the browser console): the island layout, the planet scale
   // and a way to swing the camera without a mouse.
   MI.world.__island = function () { return state && state.island; };

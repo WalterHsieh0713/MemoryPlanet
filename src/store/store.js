@@ -44,6 +44,10 @@
       // Planet size: a frequency on MI.growth.LADDER. Every slot above indexes into the grid
       // for this frequency, so it must change together with them (MI.app.growPlanet).
       planet: { frequency: firstFrequency() },
+      // The pirate fleet (src/world/ships.js): one entry per ship, only its identity and
+      // whether it has been claimed. Where a ship IS at any moment is not stored — they sail,
+      // and their route is rebuilt from the seed, so there is nothing here to keep in sync.
+      ships: [],
       // Progression — see src/game/economy.js.
       wallet: { shards: 0, lifetime: 0, streak: 0, lastDay: null },
       // Pets walk on the land, satellites orbit in the sky (src/game/economy.js). Separate
@@ -98,6 +102,7 @@
     if (!w.memories) w.memories = [];
     if (!w.people) w.people = [];
     if (!w.landscape) w.landscape = []; // worlds saved before landscape existed
+    if (!w.ships) w.ships = [];         // worlds saved before the pirate fleet
     if (!w.player) w.player = { character: null }; // worlds saved before the character
     if (w.house === undefined) w.house = null;
     if (!w.planet) {

@@ -218,6 +218,8 @@
 
     return Promise.all(spawns).then(function () {
       if (opts.focus !== false) MI.world.focus(slot, { instant: opts.instant === true });
+      // This entry may have been the one a ship was waiting for.
+      checkShips();
       return memory;
     });
   }
@@ -257,7 +259,51 @@
     });
     return Promise.all(spawns).then(function () {
       MI.world.rebuildRoads(); // draw the network once everything is on the planet
+      ensureFleet();           // and put the ships back out on the water
     });
+  }
+
+  // --- The pirate fleet (src/world/ships.js) ---------------------------------------------
+  // Ships arrive as the planet grows and are won by writing, never bought. Everything about
+  // one — its hull, its name, what it asks for — comes from the world's seed, so this only
+  // has to keep the count right and let ships.js say the rest.
+
+  function ensureFleet() {
+    var world = MI.store.get();
+    var added = MI.ships.ensureFleet(world, MI.growth.tierIndex(currentFrequency()));
+    if (added.length) MI.store.save();
+    MI.world.syncShips();
+    return added;
+  }
+
+  // Called after anything that could have moved a goal on. Announces a ship the player can now
+  // go and take, once per ship: claiming is theirs to do, so this points rather than acts.
+  //
+  // ONE ship per call, even when an entry finishes two of them. The announcement is a toast,
+  // and a second toast simply replaces the first — so telling the player about two ships at
+  // once tells them about one. The other waits for the next entry, which is also a kinder
+  // pace: a ship at a time is a thread to follow, four at once is a chore list.
+  function checkShips() {
+    var world = MI.store.get();
+    var waiting = MI.ships.claimable(world).filter(function (ship) { return !announced[ship.id]; });
+    if (!waiting.length) return null;
+    var ship = waiting[0];
+    announced[ship.id] = true;
+    emit({ type: 'ship-ready', ship: ship, progress: MI.ships.progressFor(world, ship) });
+    return ship;
+  }
+  var announced = {};
+
+  // The player's own act: strike the flag, swap the hull, and look at it happening.
+  function claimShip(shipId) {
+    var world = MI.store.get();
+    var ship = MI.ships.find(world, shipId);
+    if (!MI.ships.claim(world, shipId)) return false;
+    MI.store.save();
+    MI.world.syncShips();
+    MI.world.focusShip(shipId);
+    emit({ type: 'ship-claimed', ship: ship });
+    return true;
   }
 
   // One size up the ladder: carry every saved slot onto the bigger grid (MI.growth.remap),
@@ -309,6 +355,7 @@
   function rebuildScene(opts) {
     opts = opts || {};
     var world = MI.store.get();
+    announced = {}; // ship ids repeat across journals; this one's ships have not been announced
     var ready = Promise.resolve();
     if (MI.world.isGroundView()) ready = Promise.resolve(MI.world.setGroundView(false));
     return ready.then(function () {
@@ -358,6 +405,7 @@
   MI.app = {
     addEntry: addEntry, restore: restore, growPlanet: growPlanet,
     equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
-    rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal
+    rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
+    claimShip: claimShip, checkShips: checkShips
   };
 })();
