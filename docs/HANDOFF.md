@@ -26,7 +26,11 @@ node scripts/test-island.js    # island layout + road routing, no browser needed
 headless Chrome over the DevTools Protocol from Node (Node 24 has a global `WebSocket`, so no
 packages), evaluate `MI.*` calls in the page, assert on returned state, and capture
 screenshots to actually look at the result. Those drivers lived in the session scratchpad, not
-the repo. Test hooks exist for it: `MI.world.__island()`, `__scale()`, `__pet()`, `__camera(phi)`.
+the repo. Test hooks exist for it: `MI.world.__island()`, `__scale()`, `__camera(phi)`,
+`__satellite()` (the sky orbiter), `__pet()` (the walking pet, `{ sphere, flat }` — one entry
+per view, each with its current tile) and `__screen({x,y,z})`, which projects a world point to
+canvas pixels so a screenshot can be cropped in on something small. The pets are only a few
+pixels tall at the default framing, so crop before deciding one isn't there.
 Screenshots caught several things state assertions passed straight over (a slab-shaped island
 underside, a pet flying out of frame, pink grass), so look at the pictures, don't just assert.
 

@@ -4,9 +4,10 @@
 (function () {
   window.MI = window.MI || {};
 
-  var STORAGE_KEY = 'memory-planet.world.v3';
-  // v2 worlds are migrated on first load; the v2 copy is left alone for older builds.
-  var LEGACY_KEY = 'memory-planet.world.v2';
+  var STORAGE_KEY = 'memory-planet.world.v4';
+  // Older worlds are migrated on first load, newest first. Each old copy is left where it
+  // is, so an older build of the app still finds the save it expects.
+  var LEGACY_KEYS = ['memory-planet.world.v3', 'memory-planet.world.v2'];
   var world = null;
 
   function firstFrequency() {
@@ -15,7 +16,7 @@
 
   function emptyWorld() {
     return {
-      version: 3, nextSlot: null, home: null, seed: Date.now(),
+      version: 4, nextSlot: null, home: null, seed: Date.now(),
       // The direction the island is currently growing in, as a tangent vector. Persisted so
       // the chain keeps heading the same way across reloads.
       heading: null,
@@ -28,8 +29,10 @@
       planet: { frequency: firstFrequency() },
       // Progression — see src/game/economy.js.
       wallet: { shards: 0, lifetime: 0, streak: 0, lastDay: null },
-      unlocks: { themes: ['meadow'], pets: [], skins: ['classic'] },
-      equipped: { theme: 'meadow', pet: null, skin: 'classic' }
+      // Pets walk on the land, satellites orbit in the sky (src/game/economy.js). Separate
+      // slots on purpose: a world can have one of each out at once.
+      unlocks: { themes: ['meadow'], pets: [], satellites: [], skins: ['classic'] },
+      equipped: { theme: 'meadow', pet: null, satellite: null, skin: 'classic' }
     };
   }
 
@@ -42,7 +45,24 @@
     }
   }
 
-  // Fill anything an older save is missing, so the rest of the app can rely on the v3 shape.
+  // Up to v3, the sky orbiters and the one land walker shared the 'pets' kind and a single
+  // equipped slot. v4 splits them, so an older save's pets have to be sorted into the two
+  // lists. Deliberately a frozen snapshot of what shipped as a land pet at v4 rather than a
+  // read of MI.economy.CATALOG: a migration has to keep meaning the same thing as that
+  // catalog grows, and store.js is below economy.js in the load order anyway.
+  var LAND_PETS_AT_V4 = { dog: true };
+
+  function splitPets(w) {
+    var owned = w.unlocks.pets || [];
+    w.unlocks.pets = owned.filter(function (id) { return LAND_PETS_AT_V4[id]; });
+    w.unlocks.satellites = owned.filter(function (id) { return !LAND_PETS_AT_V4[id]; });
+    // The one equipped id goes to whichever slot it belongs in; the other ends up empty.
+    var was = w.equipped.pet || null;
+    w.equipped.pet = LAND_PETS_AT_V4[was] ? was : null;
+    w.equipped.satellite = was && !LAND_PETS_AT_V4[was] ? was : null;
+  }
+
+  // Fill anything an older save is missing, so the rest of the app can rely on the v4 shape.
   function normalize(w) {
     var fresh = emptyWorld();
     if (!w.memories) w.memories = [];
@@ -50,7 +70,7 @@
     if (!w.landscape) w.landscape = []; // worlds saved before landscape existed
     if (!w.planet) {
       // Every v2 world was built on the original 1002-tile grid (frequency 10).
-      w.planet = { frequency: w.version === 3 ? fresh.planet.frequency : 10 };
+      w.planet = { frequency: w.version >= 3 ? fresh.planet.frequency : 10 };
     }
     ['wallet', 'unlocks', 'equipped'].forEach(function (key) {
       if (!w[key]) w[key] = fresh[key];
@@ -58,7 +78,8 @@
         if (w[key][field] === undefined) w[key][field] = fresh[key][field];
       });
     });
-    w.version = 3;
+    if (!(w.version >= 4)) splitPets(w);
+    w.version = 4;
     return w;
   }
 
@@ -69,7 +90,8 @@
 
   function load() {
     var saved = read(STORAGE_KEY);
-    var legacy = saved ? null : read(LEGACY_KEY);
+    var legacy = null;
+    for (var i = 0; !saved && !legacy && i < LEGACY_KEYS.length; i++) legacy = read(LEGACY_KEYS[i]);
     world = normalize(saved || legacy || emptyWorld());
     if (legacy) save(); // write the migrated copy once
     return world;

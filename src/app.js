@@ -271,6 +271,7 @@
     if (!MI.economy.equip(kind, id)) return false;
     if (kind === 'themes') MI.world.setTheme(id);
     else if (kind === 'pets') MI.world.setPet(id);
+    else if (kind === 'satellites') MI.world.setSatellite(id);
     else if (kind === 'skins') MI.world.setSkin(id);
     return true;
   }
@@ -286,6 +287,7 @@
     }).then(function () {
       MI.world.setTheme(world.equipped.theme);
       MI.world.setPet(world.equipped.pet);
+      MI.world.setSatellite(world.equipped.satellite);
       MI.world.setSkin(world.equipped.skin);
     });
   }

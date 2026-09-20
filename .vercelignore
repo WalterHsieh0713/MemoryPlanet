@@ -9,7 +9,7 @@ CLAUDE.md
 # Asset packs no code loads yet — kept out so deploys stay small. DELETE A LINE HERE the
 # moment code starts loading that pack, or it will 404 in production while working locally.
 # Currently loaded: kenney-hexagon-kit (buildings/terrain) and
-# assets/standalone/animals/cube-pets (land-walker pets, src/world/land-animals.js) — note
+# assets/standalone/animals/cube-pets (the walking pets, src/world/pets.js) — note
 # that folder is deliberately NOT listed below, unlike its sibling categories.
 assets/kenney_castle-kit/
 assets/kenney_cube-pets_1.0/

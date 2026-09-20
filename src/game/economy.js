@@ -1,11 +1,13 @@
-// MI.economy — shards: earned by journaling, spent on themes, pets and character skins.
+// MI.economy — shards: earned by journaling, spent on themes, pets, satellites and skins.
 // Reads and writes the wallet/unlocks/equipped fields of the stored world (MI.store); it
 // never touches the scene. Applying a purchase to the planet is MI.app.equip's job.
 (function () {
   window.MI = window.MI || {};
 
-  // Ids match src/world/themes.js and src/world/cosmetics.js — except land-walker pets
-  // (currently just 'dog'), whose ids match src/world/land-animals.js instead.
+  // Pets are the ones that walk on the land (ids match src/world/pets.js); satellites are
+  // the ones that orbit in the sky (ids match src/world/cosmetics.js, as themes and skins
+  // do). They are bought and equipped separately and will grow apart from here — keep new
+  // kinds in whichever list matches where the thing actually lives.
   var CATALOG = {
     themes: [
       { id: 'meadow', name: 'Meadow', price: 0, icon: '🌿', blurb: 'Green hills and a bright blue sea.' },
@@ -14,7 +16,9 @@
       { id: 'starlight', name: 'Starlight', price: 140, icon: '🌌', blurb: 'A violet world under a sky full of stars.' }
     ],
     pets: [
-      { id: 'dog', name: 'Dog', price: 50, icon: '🐶', blurb: 'Trots around your island on its own four paws.' },
+      { id: 'dog', name: 'Dog', price: 50, icon: '🐶', blurb: 'Trots around your island on its own four paws.' }
+    ],
+    satellites: [
       { id: 'moonling', name: 'Moonling', price: 40, icon: '🌙', blurb: 'A sleepy little moon that circles your island.' },
       { id: 'cloud-sheep', name: 'Cloud Sheep', price: 55, icon: '🐑', blurb: 'Fluffy, floaty, always paddling its legs.' },
       { id: 'sky-koi', name: 'Sky Koi', price: 75, icon: '🐟', blurb: 'Swims laps through the air above your roofs.' },
@@ -28,7 +32,9 @@
       { id: 'crown', name: 'Star Crowns', price: 90, icon: '👑', blurb: 'Royalty, every one of them.' }
     ]
   };
-  var EQUIP_KEY = { themes: 'theme', pets: 'pet', skins: 'skin' };
+  var EQUIP_KEY = { themes: 'theme', pets: 'pet', satellites: 'satellite', skins: 'skin' };
+  // Kinds you are allowed to have none of. Themes and skins always have one equipped.
+  var OPTIONAL = { pets: true, satellites: true };
 
   // Every earning rule in one place, so balancing is a one-line change.
   var REWARD = {
@@ -124,9 +130,10 @@
     return { ok: true, item: item };
   }
 
-  // `id` null puts a pet away (themes and skins always have one equipped).
+  // `id` null puts a pet or satellite away; the two slots are independent, so putting one
+  // away leaves the other where it is.
   function equip(kind, id) {
-    if (id === null ? kind !== 'pets' : !owns(kind, id)) return false;
+    if (id === null ? !OPTIONAL[kind] : !owns(kind, id)) return false;
     world().equipped[EQUIP_KEY[kind]] = id;
     MI.store.save();
     return true;

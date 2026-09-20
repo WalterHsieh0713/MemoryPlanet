@@ -42,11 +42,11 @@
   var WATER_PATTERN_SCALE = 0.32;
 
   // The cube-pets models are modeled much larger in their own local units (~1.5 tall) than
-  // the hex-kit's people/buildings, so land-walker pets need their own, much smaller,
+  // the hex-kit's people/buildings, so walking pets need their own, much smaller,
   // fraction of the usual tile-relative scale — measured against animal-dog.glb's own
   // bounding box, tuned to land a bit smaller than a person.
-  var LAND_ANIMAL_SPHERE_SCALE = 0.07;
-  var LAND_ANIMAL_FLAT_SCALE = 0.09;
+  var PET_SPHERE_SCALE = 0.07;
+  var PET_FLAT_SCALE = 0.09;
 
   var HEX_PACK = 'assets/kenney-hexagon-kit/';
   // The kit's tiles are 1.0 unit flat-to-flat; props are scaled to whatever the grid's real
@@ -787,9 +787,9 @@
       state.flatGroup.add(obj);
     });
 
-    // Land-walker pets (src/world/land-animals.js) aren't stored data, so nothing above
+    // Pets (src/world/pets.js) aren't stored data, so nothing above
     // re-adds them — this group got wiped at the top of this function like everything else.
-    if (state.landAnimalWalkers) state.flatGroup.add(state.landAnimalWalkers.flat.group);
+    if (state.petWalkers) state.flatGroup.add(state.petWalkers.flat.group);
 
     state.flatGroup.add(buildIslandUnderside(ids, centres, spread));
 
@@ -1983,68 +1983,76 @@
     return stars;
   }
 
-  // --- Pets and skins (models in src/world/cosmetics.js) ------------------------------
+  // --- Satellites, pets and skins ------------------------------------------------------
+  // Satellites orbit in the sky and are built from primitives (src/world/cosmetics.js).
+  // Pets walk the tiles and are GLB models (src/world/pets.js). They sit in separate
+  // equip slots, so a world can have one of each out at the same time.
 
-  // How high the pet flies, in tile widths above the surface it is circling, and how wide
+  // How high the satellite flies, in tile widths above the surface it is circling, and how wide
   // its loop is. It lives in the scene rather than on the planet, so it keeps flying when
   // the planet folds away into the island.
-  var PET_HEIGHT = 3.4;
+  var SATELLITE_HEIGHT = 3.4;
   // ...but never more than this much of the planet's own radius: tiles are huge next to a
-  // 42-tile planet, and a height in tile widths alone flies the pet out of frame there.
-  var PET_HEIGHT_CAP = 0.55;
-  var PET_ISLAND_HEIGHT = 1.7;
-  var PET_SPEED = 0.32;
+  // 42-tile planet, and a height in tile widths alone flies the satellite out of frame there.
+  var SATELLITE_HEIGHT_CAP = 0.55;
+  var SATELLITE_ISLAND_HEIGHT = 1.7;
+  var SATELLITE_SPEED = 0.32;
 
-  function setPet(id) {
-    if (state.pet) {
-      state.petGroup.remove(state.pet);
-      state.pet = null;
+  function setSatellite(id) {
+    if (state.satellite) {
+      state.satelliteGroup.remove(state.satellite);
+      state.satellite = null;
     }
-    clearLandAnimal();
-    state.petId = id || null;
+    state.satelliteId = id || null;
 
-    if (id && MI.world.landAnimals.isLandAnimal(id)) {
-      MI.world.landAnimals.makeWalkerPair(id).then(function (pair) {
-        // The player may have equipped something else again before this finished loading.
-        if (!pair || state.petId !== id) return;
-        state.landAnimalWalkers = pair;
-        state.landAnimalGroup.add(pair.sphere.group);
-        // If we're already looking at the island, place it there now; otherwise buildFlatView
-        // will add it the next time that view is (re)built.
-        if (state.flatMode && state.island && state.island.centres) state.flatGroup.add(pair.flat.group);
-        popIn(pair.sphere.group);
-        popIn(pair.flat.group);
-      });
-      return;
-    }
-
-    var model = id ? MI.world.cosmetics.makePet(id) : null;
+    var model = id ? MI.world.cosmetics.makeSatellite(id) : null;
     if (!model) return;
     // The holder is steered each frame; the model inside it keeps its own little motions
     // (wagging, spinning) without fighting that orientation.
     var holder = new THREE.Group();
     holder.add(model);
     holder.userData.tick = model.userData.tick;
-    state.pet = holder;
-    state.petGroup.add(holder);
-    state.petPop = 0;
-    animate(520, function (t) { state.petPop = easeOutBack(t); });
-    animatePet(performance.now() / 1000);
+    state.satellite = holder;
+    state.satelliteGroup.add(holder);
+    state.satellitePop = 0;
+    animate(520, function (t) { state.satellitePop = easeOutBack(t); });
+    animateSatellite(performance.now() / 1000);
   }
 
-  function clearLandAnimal() {
-    while (state.landAnimalGroup.children.length) state.landAnimalGroup.remove(state.landAnimalGroup.children[0]);
+  // The land walker. Independent of setSatellite above — equipping one never puts the
+  // other away. isPet() also screens out a stale saved id (a pet that no longer ships, or
+  // a satellite id arriving here) before we go and fetch a .glb for it.
+  function setPet(id) {
+    clearPet();
+    state.petId = id || null;
+    if (!MI.world.pets.isPet(id)) return;
+
+    MI.world.pets.makeWalkerPair(id).then(function (pair) {
+      // The player may have equipped something else again before this finished loading.
+      if (!pair || state.petId !== id) return;
+      state.petWalkers = pair;
+      state.petGroup.add(pair.sphere.group);
+      // If we're already looking at the island, place it there now; otherwise buildFlatView
+      // will add it the next time that view is (re)built.
+      if (state.flatMode && state.island && state.island.centres) state.flatGroup.add(pair.flat.group);
+      popIn(pair.sphere.group);
+      popIn(pair.flat.group);
+    });
+  }
+
+  function clearPet() {
+    while (state.petGroup.children.length) state.petGroup.remove(state.petGroup.children[0]);
     // Also drop the flat instance if it's currently sitting in flatGroup (safe no-op
     // otherwise — Object3D.remove() ignores an object that isn't actually a child).
-    if (state.landAnimalWalkers) state.flatGroup.remove(state.landAnimalWalkers.flat.group);
-    state.landAnimalWalkers = null;
+    if (state.petWalkers) state.flatGroup.remove(state.petWalkers.flat.group);
+    state.petWalkers = null;
   }
 
   // Every real hexagon neighbour of a tile on the PLANET grid — sphere-view only. The flat
   // view's island is a coiled layout (MI.island), where a planet neighbour isn't necessarily
-  // an adjacent cell any more (see flatLandAnimalNeighbors below) — using this for both views,
+  // an adjacent cell any more (see flatPetNeighbors below) — using this for both views,
   // as an earlier version did, is what let the pet occasionally "hop" across an unrelated cell.
-  function landAnimalNeighbors(tileId) {
+  function petNeighbors(tileId) {
     var tile = MI.world.sphere.tile(tileId);
     if (!tile) return [];
     return tile.neighbors.filter(function (id) {
@@ -2056,7 +2064,7 @@
   // The flat view's real visual neighbours: other tiles whose coiled {i,j} cell is actually
   // adjacent to this one (MI.island.adjacent), not whichever tiles happen to be neighbours on
   // the planet grid the coiling was computed from.
-  function flatLandAnimalNeighbors(cells) {
+  function flatPetNeighbors(cells) {
     return function (tileId) {
       var cell = cells[tileId];
       if (!cell) return [];
@@ -2069,11 +2077,11 @@
     };
   }
 
-  // Land-walker pets tick here instead of animatePet's sky loop, since their movement is a
+  // Pets tick here instead of animateSatellite's sky loop, since their movement is a
   // tile-to-tile walk rather than a closed-form orbit. Builds the small "what does land mean
-  // here / where is tile X" context land-animals.js needs, once per frame, for each view.
-  function updateLandAnimal(dt) {
-    var walkers = state.landAnimalWalkers;
+  // here / where is tile X" context pets.js needs, once per frame, for each view.
+  function updatePet(dt) {
+    var walkers = state.petWalkers;
     if (!walkers || !state.tiles) return;
 
     var isLand = function (id) { return !state.waterTileIds.has(id); };
@@ -2085,10 +2093,10 @@
       }
       return null;
     };
-    MI.world.landAnimals.updateSphere(walkers.sphere, dt, {
-      isLand: isLand, neighborsOf: landAnimalNeighbors, findAnchor: findAnchor,
+    MI.world.pets.updateSphere(walkers.sphere, dt, {
+      isLand: isLand, neighborsOf: petNeighbors, findAnchor: findAnchor,
       dirOf: function (id) { var t = MI.world.sphere.tile(id); return t ? new THREE.Vector3().fromArray(t.dir) : null; },
-      height: RADIUS + LAND_LIFT, scale: state.spacing * LAND_ANIMAL_SPHERE_SCALE
+      height: RADIUS + LAND_LIFT, scale: state.spacing * PET_SPHERE_SCALE
     });
 
     if (state.island && state.island.centres) {
@@ -2100,30 +2108,30 @@
         var keys = Object.keys(centres);
         return keys.length ? Number(keys[0]) : null;
       };
-      MI.world.landAnimals.updateFlat(walkers.flat, dt, {
-        isLand: flatIsLand, neighborsOf: flatLandAnimalNeighbors(state.island.cells), findAnchor: flatFindAnchor,
-        centres: centres, baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * LAND_ANIMAL_FLAT_SCALE
+      MI.world.pets.updateFlat(walkers.flat, dt, {
+        isLand: flatIsLand, neighborsOf: flatPetNeighbors(state.island.cells), findAnchor: flatFindAnchor,
+        centres: centres, baseY: FLAT_BASE_Y + 0.2 * FLAT_MODEL_SCALE, scale: FLAT_MODEL_SCALE * PET_FLAT_SCALE
       });
     }
   }
 
   var SIDEWAYS = new THREE.Vector3(1, 0, 0);
-  var petPlanetPos = new THREE.Vector3(), petIslandPos = new THREE.Vector3();
-  var petPlanetQuat = new THREE.Quaternion(), petIslandQuat = new THREE.Quaternion();
-  var petBasis = new THREE.Matrix4();
+  var satPlanetPos = new THREE.Vector3(), satIslandPos = new THREE.Vector3();
+  var satPlanetQuat = new THREE.Quaternion(), satIslandQuat = new THREE.Quaternion();
+  var satBasis = new THREE.Matrix4();
 
   function aimAlong(quat, up, forward) {
     forward.sub(up.clone().multiplyScalar(forward.dot(up))).normalize();
     var right = new THREE.Vector3().crossVectors(up, forward).normalize();
-    quat.setFromRotationMatrix(petBasis.makeBasis(right, up, forward));
+    quat.setFromRotationMatrix(satBasis.makeBasis(right, up, forward));
   }
 
   // A slow, high loop: around home on the planet, around the island in island view, eased
-  // between the two as the views change (state.viewMix), so the pet never pops away.
-  function animatePet(t) {
-    var pet = state.pet;
-    if (!pet || !state.tiles) return;
-    var a = t * PET_SPEED;
+  // between the two as the views change (state.viewMix), so the satellite never pops away.
+  function animateSatellite(t) {
+    var satellite = state.satellite;
+    if (!satellite || !state.tiles) return;
+    var a = t * SATELLITE_SPEED;
     var bob = 0.08 * Math.sin(t * 2.1);
     var mix = state.viewMix;
 
@@ -2141,23 +2149,23 @@
     var radial = h.clone().multiplyScalar(Math.cos(beta))
       .add(ring.multiplyScalar(Math.sin(beta))).normalize();
     var altitude = RADIUS + LAND_LIFT
-      + Math.min(state.spacing * PET_HEIGHT, RADIUS * PET_HEIGHT_CAP) * (1 + bob * 0.3);
-    petPlanetPos.copy(radial).multiplyScalar(altitude * planetScale);
-    aimAlong(petPlanetQuat, radial,
+      + Math.min(state.spacing * SATELLITE_HEIGHT, RADIUS * SATELLITE_HEIGHT_CAP) * (1 + bob * 0.3);
+    satPlanetPos.copy(radial).multiplyScalar(altitude * planetScale);
+    aimAlong(satPlanetQuat, radial,
       t1.clone().multiplyScalar(-Math.sin(a)).add(t2.clone().multiplyScalar(Math.cos(a))));
     var planetSize = state.spacing * 0.85 * planetScale;
 
     // --- around the island, level, above the rooftops ---
     var loop = Math.max(2.5, (state.flatRadius || 4) * 0.62);
-    petIslandPos.set(Math.cos(a) * loop,
-      FLAT_BASE_Y + FLAT_SPACING * (PET_ISLAND_HEIGHT + bob), Math.sin(a) * loop);
-    aimAlong(petIslandQuat, UP, new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)));
+    satIslandPos.set(Math.cos(a) * loop,
+      FLAT_BASE_Y + FLAT_SPACING * (SATELLITE_ISLAND_HEIGHT + bob), Math.sin(a) * loop);
+    aimAlong(satIslandQuat, UP, new THREE.Vector3(-Math.sin(a), 0, Math.cos(a)));
     var islandSize = FLAT_MODEL_SCALE * 0.6;
 
-    pet.position.copy(petPlanetPos).lerp(petIslandPos, mix);
-    pet.quaternion.copy(petPlanetQuat).slerp(petIslandQuat, mix);
-    pet.scale.setScalar((planetSize + (islandSize - planetSize) * mix) * state.petPop);
-    if (pet.userData.tick) pet.userData.tick(t);
+    satellite.position.copy(satPlanetPos).lerp(satIslandPos, mix);
+    satellite.quaternion.copy(satPlanetQuat).slerp(satIslandQuat, mix);
+    satellite.scale.setScalar((planetSize + (islandSize - planetSize) * mix) * state.satellitePop);
+    if (satellite.userData.tick) satellite.userData.tick(t);
   }
 
   // Re-dress every figure on screen, in both views, without respawning anything.
@@ -2174,7 +2182,7 @@
 
   // --- Init ---------------------------------------------------------------------------
 
-  // options (all optional, from the saved world): { frequency, theme, pet, skin }.
+  // options (all optional, from the saved world): { frequency, theme, satellite, pet, skin }.
   function init(canvasEl, options) {
     var opts = options || {};
     var renderer = new THREE.WebGLRenderer({ canvas: canvasEl, antialias: true });
@@ -2217,17 +2225,17 @@
     var flatGroup = new THREE.Group();
     flatGroup.visible = false;
     scene.add(flatGroup);
-    // In the scene, not on the planet: the pet keeps flying when the planet folds away.
-    var petGroup = new THREE.Group();
-    scene.add(petGroup);
-    // Land-walker pets (src/world/land-animals.js) need one instance per view, since they
-    // wander independently in each. Unlike petGroup above, the sphere instance lives inside
+    // In the scene, not on the planet: the satellite keeps flying when the planet folds away.
+    var satelliteGroup = new THREE.Group();
+    scene.add(satelliteGroup);
+    // Pets (src/world/pets.js) need one instance per view, since they
+    // wander independently in each. Unlike satelliteGroup above, the sphere instance lives inside
     // `planet` — it stands on the tiles, so it has to hide and scale with them. The flat
     // instance lives inside `flatGroup` itself (added back in by buildFlatView, since that
     // group is fully cleared and rebuilt on every flat-view refresh) so it automatically
     // inherits the island's fold rotation.
-    var landAnimalGroup = new THREE.Group();
-    planet.add(landAnimalGroup);
+    var petGroup = new THREE.Group();
+    planet.add(petGroup);
 
     var manager = new THREE.LoadingManager();
     manager.setURLModifier(function (url) {
@@ -2247,13 +2255,13 @@
       // Planet size (setPlanet): frequency, world scale = frequency / 10, unit = its inverse.
       frequency: null, worldScale: 1, unit: 1, gridCache: {},
       island: null, islandFocus: new THREE.Vector3(), sky: null, skyCache: {},
-      viewMix: 0, petPop: 1, // 0 = planet view, 1 = island view; petPop scales a pet in
+      viewMix: 0, satellitePop: 1, // 0 = planet view, 1 = island view; satellitePop scales a satellite in
       landAsset: {},            // slot -> terrain asset, for repainting on a theme change
       // Cosmetics: every kit material / foliage geometry ever split, so a theme can restyle
       // what's already on screen; one recoloured atlas per theme.
       kitMaterials: [], foliageGeometries: [], atlasCache: {},
-      themeId: null, skin: opts.skin || 'classic', petId: null, pet: null, petGroup: petGroup,
-      landAnimalGroup: landAnimalGroup, landAnimalWalkers: null
+      themeId: null, skin: opts.skin || 'classic', satelliteId: null, satellite: null, satelliteGroup: satelliteGroup,
+      petId: null, petGroup: petGroup, petWalkers: null
     };
     state.stars = makeStars();
     scene.add(state.stars);
@@ -2308,6 +2316,7 @@
     });
 
     return setPlanet(opts.frequency || REFERENCE_FREQUENCY, { animate: false }).then(function () {
+      setSatellite(opts.satellite || null);
       setPet(opts.pet || null);
       startLoop();
     });
@@ -2457,8 +2466,8 @@
         state.islandWaterMaterial.userData.waterUniforms.uTime.value = now / 1000;
       }
       animateWater(now / 1000);
-      animatePet(now / 1000);
-      if (!state.transition) updateLandAnimal(dt);
+      animateSatellite(now / 1000);
+      if (!state.transition) updatePet(dt);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
       for (var i = animations.length - 1; i >= 0; i--) {
         if (animations[i](now)) animations.splice(i, 1);
@@ -2538,10 +2547,34 @@
   // Test hooks (scripts/ and the browser console): the island layout, the planet scale
   // and a way to swing the camera without a mouse.
   MI.world.__island = function () { return state && state.island; };
+  MI.world.__satellite = function () {
+    if (!state || !state.satellite) return null;
+    var p = state.satellite.getWorldPosition(new THREE.Vector3());
+    return { x: p.x, y: p.y, z: p.z, scale: state.satellite.scale.x, visible: state.satellite.visible, mix: state.viewMix };
+  };
+  // The walking pet, per view: the sphere instance and (once the island exists) the flat
+  // one, in world space. Two entries, not one, because a pet wanders each view separately.
   MI.world.__pet = function () {
-    if (!state || !state.pet) return null;
-    var p = state.pet.getWorldPosition(new THREE.Vector3());
-    return { x: p.x, y: p.y, z: p.z, scale: state.pet.scale.x, visible: state.pet.visible, mix: state.viewMix };
+    if (!state || !state.petWalkers) return null;
+    var out = {};
+    ['sphere', 'flat'].forEach(function (view) {
+      var group = state.petWalkers[view].group;
+      var p = group.getWorldPosition(new THREE.Vector3());
+      out[view] = {
+        x: p.x, y: p.y, z: p.z, scale: group.scale.x,
+        visible: group.visible && !!group.parent, tile: state.petWalkers[view].tileId
+      };
+    });
+    return out;
+  };
+  // World point -> canvas pixels, for cropping a screenshot in on something small. The
+  // browser checks in docs/HANDOFF.md are the only caller: a state assertion will happily
+  // pass on something that is off screen or a pixel wide, so they zoom in and look.
+  MI.world.__screen = function (p) {
+    if (!state) return null;
+    var v = new THREE.Vector3(p.x, p.y, p.z).project(state.camera);
+    var c = state.renderer.domElement;
+    return { x: (v.x * 0.5 + 0.5) * c.clientWidth, y: (-v.y * 0.5 + 0.5) * c.clientHeight, depth: v.z };
   };
   MI.world.__scale = function () { return state && state.planet.scale.x; };
   MI.world.__camera = function (phi) { state.camPhi = clampPhi(phi); state.updateCamera(); };
@@ -2550,6 +2583,7 @@
   MI.world.planetInfo = planetInfo;
   MI.world.currentTiles = currentTiles;
   MI.world.setTheme = setTheme;
+  MI.world.setSatellite = setSatellite;
   MI.world.setPet = setPet;
   MI.world.setSkin = setSkin;
 })();

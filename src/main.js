@@ -7,6 +7,7 @@
     frequency: saved.planet.frequency,
     theme: saved.equipped.theme,
     pet: saved.equipped.pet,
+    satellite: saved.equipped.satellite,
     skin: saved.equipped.skin
   })
     .then(function () {

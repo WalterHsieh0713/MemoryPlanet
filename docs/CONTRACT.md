@@ -17,14 +17,16 @@ Memory = {
 Person = { id, name, relationship, memoryIds: [], firstMemoryId,
            appearance: { color }, placement: { slot, dir, rotY } }
 Landscape = { slot, asset, fromMemoryId }   // plain terrain tiles around memories
-World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent vec|null, seed,
+World  = { version: 4, nextSlot /*unused*/, home: slot|null, heading: tangent vec|null, seed,
            memories: [], people: [], landscape: [],
            planet: { frequency },                       // on MI.growth.LADDER; every slot indexes this grid
            wallet: { shards, lifetime, streak, lastDay /*YYYY-MM-DD*/ },
-           unlocks: { themes: [id], pets: [id], skins: [id] },
-           equipped: { theme: id, pet: id|null, skin: id } }
-// localStorage key memory-planet.world.v3. A v2 save is migrated on load as frequency 10 (the
-// original 1002-tile grid); the v2 key is left untouched. Landscape entries created when the
+           unlocks: { themes: [id], pets: [id], satellites: [id], skins: [id] },
+           equipped: { theme: id, pet: id|null, satellite: id|null, skin: id } }
+// localStorage key memory-planet.world.v4. Older saves are migrated on load and their own keys
+// left untouched: a v3 save's 'pets' held both kinds under one equipped slot, so it is split
+// into pets (land) and satellites (sky); a v2 save is additionally read as frequency 10 (the
+// original 1002-tile grid). Landscape entries created when the
 // planet grows carry source: 'growth' and fromMemoryId: null.
 ```
 
@@ -50,14 +52,17 @@ World  = { version: 3, nextSlot /*unused*/, home: slot|null, heading: tangent ve
 - `toXZ(cell, spacing)`, `adjacent(a, b)`, `DIRS`
 
 ## MI.economy  (`src/game/economy.js`)
-- `CATALOG = { themes, pets, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
+- `CATALOG = { themes, pets, satellites, skins }` (each item `{ id, name, price, icon, blurb }`), `REWARD` (all earning numbers)
+- **pets** walk on the land (GLB models, `src/world/pets.js`); **satellites** orbit in the sky (procedural, `src/world/cosmetics.js`). Separate slots — a world can have one of each.
 - `balance()`, `rewardMemory(memory, { newPeople }) -> { total, lines, balance }`, `rewardGrowth(sizeIndex)`
-- `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet may be `null`), `equipped(kind)`
+- `owns(kind, id)`, `buy(kind, id) -> { ok, item } | { ok: false, reason, short }`, `equip(kind, id)` (records only; pet and satellite may be `null`, themes and skins may not), `equipped(kind)`
 
 ## MI.world  (owners: A = scene/planet/controls, B = spawn/assets/characters)
-- `init(canvasEl, { frequency, theme, pet, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
+- `init(canvasEl, { frequency, theme, pet, satellite, skin }) -> Promise` (resolves when the planet is built; options from the saved world)
 - `setPlanet(frequency, { animate }) -> Promise` — swap to that grid (planet group scaled by frequency/10, so tiles keep their world size); clears props, caller replays the remapped world. `loadGrid(f)`, `currentTiles()`, `planetInfo()`
-- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js` and `src/world/cosmetics.js`. The pet lives in the scene, not on the planet: `animatePet` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
+- `setTheme(id)` (restyles tiles, water, sky, lights, kit atlas and foliage in place), `setPet(id|null)`, `setSatellite(id|null)`, `setSkin(id)`. Visuals live in `src/world/themes.js`, `src/world/cosmetics.js` (satellites, skins) and `src/world/pets.js` (pets).
+  - A **satellite** lives in the scene, not on the planet: `animateSatellite` eases it between circling home high above the planet and circling the island, by `state.viewMix` (0 planet, 1 island, set by `applyViewLighting`), so it keeps flying through the change of view.
+  - A **pet** stands on the tiles, so it is parented to the planet (sphere view) and to the island group (flat view), one wandering instance each. `updatePet` steps it tile to tile and is skipped mid-transition.
 - `spawnMemory(memory, { animate })`, `spawnPerson(person, { animate })`
 - `focus(slot, { instant })` — rotate planet so the tile faces the camera, dolly in
 - `onPick(cb(slot | null))`

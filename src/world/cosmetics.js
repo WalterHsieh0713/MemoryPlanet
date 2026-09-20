@@ -1,5 +1,7 @@
-// MI.world.cosmetics — pets and character skins, built from THREE primitives the same way
-// world.js builds its minifigure people, so they need no asset packs and match the toy style.
+// MI.world.cosmetics — satellites and character skins, built from THREE primitives the same
+// way world.js builds its minifigure people, so they need no asset packs and match the toy
+// style. Satellites are the ones that orbit in the sky; the pets that walk on the land are
+// GLB models and live in src/world/pets.js instead.
 // Pure builders: no scene state. world.js decides where they go; src/game/economy.js decides
 // what they cost.
 (function () {
@@ -29,32 +31,32 @@
     add(group, new THREE.SphereGeometry(0.03, 6, 4), blush, spread + 0.06, y - 0.06, z - 0.02);
   }
 
-  // --- Pets. Built about 1 unit long, facing +Z with +Y up; world.js scales them to the
+  // --- Satellites. Built about 1 unit long, facing +Z with +Y up; world.js scales them to the
   // planet's tile size and flies them in a loop above your island. Each may set
   // userData.tick(timeSeconds) for its own little motion.
 
   function moonling() {
-    var pet = new THREE.Group();
-    add(pet, new THREE.IcosahedronGeometry(0.42, 1), mat(0xe9e4d6));
+    var sat = new THREE.Group();
+    add(sat, new THREE.IcosahedronGeometry(0.42, 1), mat(0xe9e4d6));
     var crater = mat(0xc9c2b0);
     [[0.22, 0.24, 0.26], [-0.28, 0.16, 0.2], [0.3, -0.18, 0.16], [-0.12, -0.3, -0.24], [0.05, 0.36, -0.2]]
       .forEach(function (p) {
         var n = new THREE.Vector3(p[0], p[1], p[2]).normalize();
-        var dent = add(pet, new THREE.CylinderGeometry(0.07, 0.07, 0.03, 8), crater);
+        var dent = add(sat, new THREE.CylinderGeometry(0.07, 0.07, 0.03, 8), crater);
         dent.position.copy(n.clone().multiplyScalar(0.395));
         dent.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
       });
-    face(pet, 0.4, 0.02, 0.11);
-    pet.userData.tick = function (t) { pet.rotation.z = Math.sin(t * 1.3) * 0.12; };
-    return pet;
+    face(sat, 0.4, 0.02, 0.11);
+    sat.userData.tick = function (t) { sat.rotation.z = Math.sin(t * 1.3) * 0.12; };
+    return sat;
   }
 
   function cloudSheep() {
-    var pet = new THREE.Group();
+    var sat = new THREE.Group();
     var wool = mat(0xfbfbf7);
     [[0, 0.02, 0, 0.26], [0.2, 0.06, -0.08, 0.2], [-0.2, 0.05, -0.06, 0.2], [0.02, 0.16, -0.16, 0.2],
       [0.1, -0.04, 0.14, 0.18], [-0.12, -0.02, 0.12, 0.18], [0, 0.02, -0.26, 0.18]]
-      .forEach(function (b) { add(pet, new THREE.IcosahedronGeometry(b[3], 0), wool, b[0], b[1], b[2]); });
+      .forEach(function (b) { add(sat, new THREE.IcosahedronGeometry(b[3], 0), wool, b[0], b[1], b[2]); });
     var dark = mat(0x4a4f57);
     var head = new THREE.Group();
     head.position.set(0, 0.04, 0.3);
@@ -64,50 +66,50 @@
     var eye = mat(0xffffff);
     add(head, new THREE.SphereGeometry(0.03, 6, 4), eye, -0.055, 0.03, 0.12);
     add(head, new THREE.SphereGeometry(0.03, 6, 4), eye, 0.055, 0.03, 0.12);
-    pet.add(head);
+    sat.add(head);
     var legs = [];
     [[-0.12, 0.12], [0.12, 0.12], [-0.12, -0.14], [0.12, -0.14]].forEach(function (p) {
-      legs.push(add(pet, new THREE.CylinderGeometry(0.035, 0.03, 0.18, 5), dark, p[0], -0.24, p[1]));
+      legs.push(add(sat, new THREE.CylinderGeometry(0.035, 0.03, 0.18, 5), dark, p[0], -0.24, p[1]));
     });
-    pet.userData.tick = function (t) {
+    sat.userData.tick = function (t) {
       legs.forEach(function (leg, i) { leg.rotation.x = Math.sin(t * 6 + i * Math.PI / 2) * 0.35; });
       head.rotation.y = Math.sin(t * 0.9) * 0.25;
     };
-    return pet;
+    return sat;
   }
 
   function skyKoi() {
-    var pet = new THREE.Group();
+    var sat = new THREE.Group();
     var white = mat(0xfff7ef), orange = mat(0xff8a3d), fin = mat(0xffb27a);
-    var body = add(pet, new THREE.SphereGeometry(0.2, 10, 8), white);
+    var body = add(sat, new THREE.SphereGeometry(0.2, 10, 8), white);
     body.scale.set(1, 0.95, 2.2);
-    add(pet, new THREE.SphereGeometry(0.13, 8, 6), orange, 0.06, 0.1, 0.12).scale.set(1, 0.6, 1.4);
-    add(pet, new THREE.SphereGeometry(0.11, 8, 6), orange, -0.07, 0.09, -0.16).scale.set(1, 0.6, 1.3);
+    add(sat, new THREE.SphereGeometry(0.13, 8, 6), orange, 0.06, 0.1, 0.12).scale.set(1, 0.6, 1.4);
+    add(sat, new THREE.SphereGeometry(0.11, 8, 6), orange, -0.07, 0.09, -0.16).scale.set(1, 0.6, 1.3);
     var tail = new THREE.Group();
     tail.position.set(0, 0, -0.42);
     var tailFin = add(tail, new THREE.ConeGeometry(0.2, 0.34, 6), fin, 0, 0, -0.1);
     tailFin.rotation.x = -Math.PI / 2;
     tailFin.scale.set(1, 1, 0.25);
-    pet.add(tail);
+    sat.add(tail);
     [-1, 1].forEach(function (side) {
-      var f = add(pet, new THREE.ConeGeometry(0.08, 0.2, 5), fin, side * 0.19, -0.05, 0.1);
+      var f = add(sat, new THREE.ConeGeometry(0.08, 0.2, 5), fin, side * 0.19, -0.05, 0.1);
       f.rotation.z = side * 1.2;
       f.scale.set(1, 1, 0.3);
     });
     var eye = mat(0x2b3440);
-    add(pet, new THREE.SphereGeometry(0.03, 6, 4), eye, -0.12, 0.06, 0.34);
-    add(pet, new THREE.SphereGeometry(0.03, 6, 4), eye, 0.12, 0.06, 0.34);
-    pet.userData.tick = function (t) {
+    add(sat, new THREE.SphereGeometry(0.03, 6, 4), eye, -0.12, 0.06, 0.34);
+    add(sat, new THREE.SphereGeometry(0.03, 6, 4), eye, 0.12, 0.06, 0.34);
+    sat.userData.tick = function (t) {
       tail.rotation.y = Math.sin(t * 5) * 0.45;
-      pet.rotation.z = Math.sin(t * 2.5) * 0.08;
+      sat.rotation.z = Math.sin(t * 2.5) * 0.08;
     };
-    return pet;
+    return sat;
   }
 
   function tinySaucer() {
-    var pet = new THREE.Group();
+    var sat = new THREE.Group();
     var spin = new THREE.Group();
-    pet.add(spin);
+    sat.add(spin);
     var hull = add(spin, new THREE.SphereGeometry(0.42, 16, 8), mat(0xc9d3e0, { metalness: 0.55, roughness: 0.35 }));
     hull.scale.set(1, 0.26, 1);
     add(spin, new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2),
@@ -119,18 +121,18 @@
         mat(colors[i % 3], { emissive: colors[i % 3], emissiveIntensity: 0.9 }),
         Math.cos(a) * 0.38, -0.02, Math.sin(a) * 0.38);
     }
-    add(pet, new THREE.SphereGeometry(0.06, 6, 4), mat(0x9dff8a, { emissive: 0x3aa02a, emissiveIntensity: 0.6 }), 0, 0.27, 0);
-    pet.userData.tick = function (t) {
+    add(sat, new THREE.SphereGeometry(0.06, 6, 4), mat(0x9dff8a, { emissive: 0x3aa02a, emissiveIntensity: 0.6 }), 0, 0.27, 0);
+    sat.userData.tick = function (t) {
       spin.rotation.y = t * 1.6;
-      pet.rotation.x = Math.sin(t * 1.7) * 0.1;
+      sat.rotation.x = Math.sin(t * 1.7) * 0.1;
     };
-    return pet;
+    return sat;
   }
 
-  var PETS = { moonling: moonling, 'cloud-sheep': cloudSheep, 'sky-koi': skyKoi, 'tiny-saucer': tinySaucer };
+  var SATELLITES = { moonling: moonling, 'cloud-sheep': cloudSheep, 'sky-koi': skyKoi, 'tiny-saucer': tinySaucer };
 
-  function makePet(id) {
-    var build = PETS[id];
+  function makeSatellite(id) {
+    var build = SATELLITES[id];
     return build ? build() : null;
   }
 
@@ -197,5 +199,5 @@
     person.add(outfit);
   }
 
-  MI.world.cosmetics = { makePet: makePet, dressPerson: dressPerson };
+  MI.world.cosmetics = { makeSatellite: makeSatellite, dressPerson: dressPerson };
 })();

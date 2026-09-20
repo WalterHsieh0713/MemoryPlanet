@@ -1,6 +1,6 @@
-// MI.world.landAnimals — GLB-based pets that walk on land only, in both views. Unlike the
-// procedural sky pets in cosmetics.js (which orbit above the island), these load a real model
-// from Kenney's Cube Pets pack (assets/standalone/animals/cube-pets/) and wander by stepping
+// MI.world.pets — GLB-based pets that walk on land only, in both views. Unlike the procedural
+// satellites in cosmetics.js (which orbit above the island), these load a real model from
+// Kenney's Cube Pets pack (assets/standalone/animals/cube-pets/) and wander by stepping
 // tile to tile: pick a random LAND neighbour of the current tile, walk to it, repeat. Because a
 // target is only ever chosen from tiles already known to be land, it can't step into water or
 // off the island by construction — there's no separate boundary/fall check.
@@ -10,8 +10,8 @@
 // for the sphere view and one for the flat view (the flat one keyed by world.js's own coiled
 // island layout, since a hex grid neighbour isn't necessarily an adjacent cell once coiled).
 //
-// Adding another animal later is one line in ANIMALS below, once its .glb is sorted into that
-// same folder (deer/cow/tiger are already there from an earlier asset pass).
+// Adding another pet later is one line in PETS below, once its .glb is sorted into that same
+// folder (deer/cow/tiger are already there from an earlier asset pass).
 (function () {
   window.MI = window.MI || {};
   MI.world = MI.world || {};
@@ -21,12 +21,12 @@
   var PAUSE_MIN = 0.7, PAUSE_MAX = 1.8; // seconds spent standing on each tile before the next step
   var HOP_HEIGHT = 0.05; // these models have no walk animation, so a small bob stands in for one
 
-  var ANIMALS = {
+  var PETS = {
     dog: 'animal-dog.glb'
   };
 
-  function isLandAnimal(id) {
-    return !!id && Object.prototype.hasOwnProperty.call(ANIMALS, id);
+  function isPet(id) {
+    return !!id && Object.prototype.hasOwnProperty.call(PETS, id);
   }
 
   function easeInOut(t) {
@@ -55,7 +55,7 @@
   // Loads and normalises one animal's model once (centred on X/Z, resting at y=0, shadows on),
   // cached so every instance clones the same geometry/materials rather than reloading.
   function loadTemplate(id) {
-    var file = ANIMALS[id];
+    var file = PETS[id];
     if (!file) return Promise.resolve(null);
     if (!templateCache[id]) {
       templateCache[id] = new Promise(function (resolve) {
@@ -204,8 +204,8 @@
     }
   }
 
-  MI.world.landAnimals = {
-    isLandAnimal: isLandAnimal,
+  MI.world.pets = {
+    isPet: isPet,
     makeWalkerPair: makeWalkerPair,
     updateSphere: updateSphere,
     updateFlat: updateFlat

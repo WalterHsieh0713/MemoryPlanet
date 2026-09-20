@@ -209,7 +209,9 @@
 
       var action = document.createElement('button');
       action.className = 'action';
-      if (inUse && kind === 'pets') {
+      // Pets and satellites are the two kinds you're allowed to have none of, so only they
+      // offer a way back out; a theme or skin is always wearing something.
+      if (inUse && (kind === 'pets' || kind === 'satellites')) {
         action.className += ' use';
         action.textContent = 'Put away';
         action.addEventListener('click', function () { MI.app.equip(kind, null); renderShop(); });
