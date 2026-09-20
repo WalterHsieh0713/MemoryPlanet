@@ -949,18 +949,32 @@
     #view-btn { bottom: 86px; }
     #planet-card { width: 220px; }
     #journal { bottom: 118px; }
-    #shop .book { flex-direction: column; max-height: min(640px, calc(100dvh - 24px)); width: 100%; }
-    #shop .tabs {
-      flex-direction: row; writing-mode: horizontal-tb; transform: none;
-      padding: 0; margin: 0 0 -2px; overflow-x: auto;
+    #shop .book { flex-direction: column; width: 100%; transform: none; }
+    #shop.open .book { transform: none; }
+    #shop .cover { padding: 10px; border-radius: 14px; }
+    #shop .spread { flex-direction: column; height: auto; max-height: min(70dvh, 640px); overflow: auto; }
+    #shop .leaf.left, #shop .leaf.right {
+      padding: 16px 16px 14px; box-shadow: none;
     }
+    #shop .leaf.left { padding-bottom: 8px; }
+    #shop .rings { display: none; }
+    #shop h2 { font-size: 28px; }
+    #shop .seal { width: 72px; height: 72px; margin: 4px 0 10px; }
+    #shop .seal b { font-size: 22px; }
+    #shop .doodle { display: none; }
+    #shop .tabs {
+      flex-direction: row; writing-mode: horizontal-tb;
+      padding: 0; margin: 8px 0 0; overflow-x: auto; order: 1;
+    }
+    #shop .cover { order: 0; }
     #shop .tabs button {
       writing-mode: horizontal-tb; transform: none;
       min-height: 40px; max-height: none; min-width: max-content;
-      border-radius: 8px 8px 0 0; border-right: 2px solid #3d3428; border-bottom: none;
+      border-radius: 0 0 10px 10px; border-left: 2px solid #c9a078; border-top: none;
       padding: 8px 12px;
     }
-    #shop .tabs button[aria-selected="true"] { padding-left: 12px; padding-bottom: 10px; }
+    #shop .tabs button[aria-selected="true"] { padding-right: 12px; padding-top: 10px; }
+    #shop-items { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px 12px; }
     #theme-rack { top: 64px; }
   }
 
@@ -977,6 +991,7 @@
     #book-btn .mini-shadow { transform: translateX(-50%) scale(.85); opacity: .3; }
     #stats-chip.bump, #wallet.bump, #planet-card.grew { transform: none; }
     #theme-tray, .tray-kind { transition-duration: .01ms; }
+    #shop .book, #shop.open .book, .polaroid, .polaroid.r1, .polaroid.r2, .polaroid.r3, .polaroid.r4 { transform: none; }
     #book, #book .spread, #book .page, #book.open .spread, #book.open .page,
     #book .stage-3d, #book .board.front, #book .sheet {
       transition-duration: .01ms; transition-delay: 0s; animation: none !important;
@@ -1090,101 +1105,206 @@
   #picker .hint { margin-top: 10px; font-size: 12.5px; color: var(--ink-mid); }
   #shop {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
-    background: rgba(44, 40, 32, .28); backdrop-filter: blur(3px);
+    background: rgba(44, 95, 111, .24); backdrop-filter: blur(3px);
     opacity: 0; visibility: hidden; transition: opacity .25s ease, visibility .25s;
   }
   #shop.open { opacity: 1; visibility: visible; }
   #shop .book {
     display: flex; align-items: stretch;
-    width: min(860px, calc(100% - 24px));
-    max-height: min(520px, calc(100vh - 36px));
-    transform: translateY(10px) rotate(-0.4deg); transition: transform .4s var(--spring);
+    width: min(960px, calc(100% - 16px));
+    transform: translateY(12px) rotate(-0.5deg);
+    transition: transform .45s var(--spring);
+    filter: drop-shadow(0 22px 40px rgba(44, 65, 65, .28));
   }
-  #shop.open .book { transform: none; }
+  #shop.open .book { transform: rotate(0.3deg); }
+  #shop .cover {
+    flex: 1; min-width: 0;
+    padding: 14px 11px 16px;
+    border-radius: 18px 4px 8px 16px;
+    background: linear-gradient(90deg, #cb8956, #e7b17b 4%, #e7b17b 48%, #ad7045 50%, #e7b17b 52%, #d79760);
+    box-shadow: 0 4px 0 #a96b42, 0 7px 0 #8e5939, inset 0 0 0 2px #f4c99d;
+  }
+  #shop .spread {
+    position: relative;
+    display: flex; align-items: stretch;
+    height: min(560px, calc(100vh - 72px));
+    border-radius: 4px;
+    overflow: hidden;
+    background: #f7f0e2;
+  }
+  #shop .leaf {
+    position: relative;
+    flex: 1; min-width: 0;
+    padding: 22px 24px 18px;
+    background-color: #fbf6ea;
+    background-image:
+      linear-gradient(#efe6d4 1px, transparent 1px),
+      linear-gradient(90deg, #efe6d4 1px, transparent 1px);
+    background-size: 18px 18px;
+  }
+  #shop .leaf.left {
+    padding-right: 28px;
+    padding-top: 36px;
+    box-shadow: inset -10px 0 16px rgba(120, 80, 40, .08);
+  }
+  #shop .leaf.right {
+    padding-left: 28px; padding-right: 18px;
+    overflow: auto;
+    box-shadow: inset 10px 0 16px rgba(120, 80, 40, .08);
+  }
+  #shop .rings {
+    position: absolute; left: 50%; top: 7%; bottom: 7%;
+    width: 26px; transform: translateX(-50%);
+    display: flex; flex-direction: column; justify-content: space-evenly; align-items: center;
+    z-index: 3; pointer-events: none;
+  }
+  #shop .rings i {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: #f7f0e2;
+    box-shadow: 0 0 0 4px #c48a55, 0 0 0 6px #8a5a32, 1px 2px 0 #5a3518;
+  }
+  #shop .album-kicker {
+    margin: 0 0 2px; font-size: 13px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--ink-mid); transform: rotate(-2deg);
+  }
+  #shop h2 {
+    margin: 0 0 8px; font-size: 42px; font-weight: 400; line-height: 1;
+    letter-spacing: .04em; text-transform: uppercase;
+    color: var(--ink); transform: rotate(-1.4deg);
+  }
+  #shop .blurb {
+    margin: 0 8px 18px 0; max-width: 28ch;
+    font-size: 16px; line-height: 1.45; color: var(--ink);
+    transform: rotate(-0.8deg);
+  }
+  #shop .seal {
+    width: 92px; height: 92px; border-radius: 50%;
+    margin: 8px 0 18px 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 35% 30%, #c4b4f4, var(--shard));
+    color: #fff; transform: rotate(8deg);
+    box-shadow: inset 0 0 0 4px rgba(255,255,255,.22), 2px 3px 0 rgba(80, 40, 120, .25);
+  }
+  #shop .seal .shard { color: #fff; font-size: 14px; }
+  #shop .seal b {
+    font-size: 28px; font-weight: 400; line-height: 1; font-variant-numeric: tabular-nums;
+  }
+  #shop .seal span:last-child { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .9; }
+  #shop .earn-hint {
+    margin: 0; max-width: 30ch;
+    font-size: 13px; line-height: 1.5; color: var(--ink-mid);
+    transform: rotate(1.2deg);
+  }
+  #shop .doodle {
+    position: absolute; bottom: 22px; right: 36px;
+    width: 54px; height: 54px; border-radius: 50%;
+    border: 2px dashed #d7b58a; opacity: .55;
+    pointer-events: none;
+  }
+  #shop .doodle::after {
+    content: ''; position: absolute; inset: 8px; border-radius: 50%;
+    background: conic-gradient(from 200deg, #8fc75a 0 42%, #3f8fc4 0 100%);
+    opacity: .7;
+  }
   #shop .tabs {
-    display: flex; flex-direction: column; gap: 5px;
-    padding: 48px 0 12px; margin-right: -2px; z-index: 2; flex-shrink: 0;
+    display: flex; flex-direction: column; gap: 7px;
+    padding: 42px 0 18px; margin-left: -2px; z-index: 2; flex-shrink: 0;
   }
   #shop .tabs button {
     writing-mode: vertical-rl; text-orientation: mixed;
-    transform: rotate(180deg);
-    border: 2px solid #3d3428; border-right: none; cursor: pointer; font-family: inherit;
-    padding: 18px 9px; min-height: 92px; max-height: 130px;
-    border-radius: 10px 0 0 10px;
+    border: 2px solid #c9a078; border-left: none; cursor: pointer; font-family: inherit;
+    padding: 16px 8px; min-height: 86px; max-height: 120px;
+    border-radius: 0 12px 12px 0;
     color: #3d3428; font-size: 14px; letter-spacing: .08em; text-transform: uppercase;
-    background: #d8c4a0;
+    background: #e8d4b0;
+    box-shadow: 2px 2px 0 rgba(120, 70, 30, .12);
   }
   #shop .tabs button[data-kind="themes"] { background: #8ebdd4; }
   #shop .tabs button[data-kind="pets"] { background: #7eb8a8; }
   #shop .tabs button[data-kind="satellites"] { background: #e8b36a; }
   #shop .tabs button[data-kind="skins"] { background: #d9a3b8; }
   #shop .tabs button[aria-selected="true"] {
-    padding-left: 12px; filter: brightness(1.06);
-    box-shadow: -3px 3px 0 rgba(40, 30, 16, .12);
+    padding-right: 12px; filter: brightness(1.05);
+    box-shadow: 3px 3px 0 rgba(120, 70, 30, .14);
   }
-  #shop .page {
-    flex: 1; min-width: 0; overflow: auto;
-    position: relative;
-    padding: 16px 22px 14px;
-    background: #f4ead6;
-    border: 2px solid #3d3428;
-    border-radius: 2px 10px 8px 2px;
-    box-shadow: 5px 7px 0 rgba(40, 30, 16, .14);
-  }
-  #shop .page::before {
-    content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 10px;
-    background: repeating-linear-gradient(#c9b49a 0 2px, transparent 2px 18px);
-    opacity: .35; pointer-events: none;
-  }
-  #shop h2 {
-    margin: 0 36px 2px 0; text-align: center;
-    font-size: 26px; font-weight: 400; letter-spacing: .12em; text-transform: uppercase;
-  }
-  #shop .balance {
-    text-align: center; font-size: 13px; color: var(--ink-mid);
-  }
-  #shop .balance b { color: var(--ink); font-variant-numeric: tabular-nums; }
   #shop .close {
-    position: absolute; top: 8px; right: 8px;
-    width: 32px; height: 32px; border: 2px solid #3d3428; cursor: pointer; border-radius: 50%;
-    background: #f7f1e4; color: #3d3428; font-size: 15px; font-family: inherit;
+    position: absolute; top: 10px; right: 10px; z-index: 2;
+    width: 32px; height: 32px; border: 0; cursor: pointer; border-radius: 50%;
+    background: #fff8ec; color: var(--ink); font-size: 15px; font-family: inherit;
+    box-shadow: 1px 2px 0 #e4d2b0;
     display: grid; place-items: center;
   }
-  #shop .close:hover { background: #efe3cc; }
+  #shop .close:hover { background: #fff; }
   #shop-items {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
-    gap: 14px 12px; margin-top: 14px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+    gap: 18px 14px; padding: 4px 6px 16px; align-items: start;
   }
   #shop-items .empty {
-    grid-column: 1 / -1; text-align: center; padding: 28px 8px;
-    color: var(--ink-mid); font-size: 16px;
+    grid-column: 1 / -1;
+    margin: 28px 12px 0;
+    padding: 16px 18px;
+    background: #fff8c9;
+    box-shadow: 2px 3px 0 rgba(180, 150, 60, .2);
+    transform: rotate(-2deg);
+    color: var(--ink); font-size: 16px; line-height: 1.4;
   }
-  .portrait {
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-    padding: 0; border: none; background: none; cursor: pointer;
-    font-family: inherit; color: var(--ink);
+  .polaroid {
+    position: relative;
+    display: flex; flex-direction: column;
+    padding: 9px 9px 32px;
+    border: 0; cursor: pointer;
+    background: #fffdf8;
+    color: var(--ink); font-family: inherit;
+    box-shadow: 1px 4px 0 #eadcc4, 2px 8px 16px rgba(90, 55, 30, .12);
+    transition: transform .25s var(--spring);
   }
-  .portrait .label {
-    font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+  .polaroid.r1 { transform: rotate(-2.4deg); }
+  .polaroid.r2 { transform: rotate(1.8deg); }
+  .polaroid.r3 { transform: rotate(-1.1deg); }
+  .polaroid.r4 { transform: rotate(2.6deg); }
+  .polaroid:hover { transform: rotate(0deg) translateY(-3px); z-index: 1; }
+  .polaroid .photo {
+    aspect-ratio: 1; display: grid; place-items: center;
+    background: #f3e6d0; overflow: hidden;
   }
-  .portrait .frame {
-    width: 100%; aspect-ratio: 1; box-sizing: border-box;
-    border: 2px solid #3d3428; background: #efe4d0;
-    display: grid; place-items: center; overflow: hidden;
-    box-shadow: 2px 3px 0 rgba(40, 30, 16, .1);
-  }
-  .portrait .frame .mini-planet {
-    width: 58%; height: 58%; border-radius: 50%;
+  #shop[data-kind="pets"] .polaroid .photo { background: #e7f3ee; }
+  #shop[data-kind="satellites"] .polaroid .photo { background: #f8edd6; }
+  #shop[data-kind="skins"] .polaroid .photo { background: #f6e6ee; }
+  .polaroid .mini-planet {
+    width: 62%; height: 62%; border-radius: 50%;
     box-shadow: inset -6px -6px 0 rgba(0,0,0,.12);
   }
-  .portrait .frame .glyph { font-size: 36px; line-height: 1; }
-  .portrait .price {
-    font-size: 12px; color: var(--ink-mid);
+  .polaroid .glyph { font-size: 42px; line-height: 1; }
+  .polaroid .caption {
+    position: absolute; left: 8px; right: 8px; bottom: 7px;
+    text-align: center; font-size: 14px; line-height: 1.1;
   }
-  .portrait:hover .frame { transform: translateY(-2px); }
-  .portrait.short { opacity: .55; cursor: default; }
-  .portrait.short:hover .frame { transform: none; }
-  #shop .earn-hint { margin: 12px 2px 0; font-size: 12px; line-height: 1.45; color: var(--ink-mid); text-align: center; }
+  .polaroid .sticker {
+    position: absolute; top: -10px; right: -10px;
+    min-width: 44px; height: 44px; padding: 0 6px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--shard-soft); color: var(--shard);
+    font-size: 12px; line-height: 1.05; transform: rotate(12deg);
+    white-space: pre-line; text-align: center;
+    box-shadow: inset 0 0 0 2px #dcc4f0;
+  }
+  .polaroid.short { cursor: default; filter: saturate(.7); opacity: .78; }
+  .polaroid.short:hover { transform: none; }
+  .polaroid.short .sticker {
+    background: #f4ead6; color: var(--ink-mid); box-shadow: inset 0 0 0 2px #e6d4b6;
+    border-radius: 8px; height: auto; padding: 4px 7px; min-width: 0; font-size: 11px;
+  }
+  .polaroid:nth-child(3n+1)::before {
+    content: ''; position: absolute; top: -7px; left: 22%;
+    width: 46px; height: 13px; background: var(--tape); opacity: .88;
+    transform: rotate(-9deg); pointer-events: none;
+  }
+  .polaroid:nth-child(3n+2)::after {
+    content: ''; position: absolute; top: -11px; left: 50%;
+    width: 13px; height: 20px; border: 2px solid #8eb4c8; border-bottom: 0;
+    border-radius: 9px 9px 3px 3px; transform: translateX(-50%) rotate(8deg);
+    pointer-events: none;
+  }
 
   /* --- tile detail card --- */
   #detail {
@@ -1427,18 +1547,32 @@
 
 <div id="shop">
   <div class="book" role="dialog" aria-modal="true" aria-labelledby="shop-title">
+    <div class="cover">
+      <div class="spread">
+        <section class="leaf left">
+          <button class="close" id="shop-close" aria-label="Close shop">✕</button>
+          <p class="album-kicker">keepsakes</p>
+          <h2 id="shop-title">themes</h2>
+          <p id="shop-blurb" class="blurb">Whole-planet clothes. Swap a world on like a postcard.</p>
+          <div class="seal" aria-label="Shard balance">
+            <span class="shard" aria-hidden="true">✦</span>
+            <b id="shop-balance">0</b>
+            <span>shards</span>
+          </div>
+          <p class="earn-hint">Write memories to earn shards. Bought things leave these pages and wait on the circle under settings.</p>
+          <span class="doodle" aria-hidden="true"></span>
+        </section>
+        <div class="rings" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <section class="leaf right">
+          <div id="shop-items" role="tabpanel"></div>
+        </section>
+      </div>
+    </div>
     <div class="tabs" role="tablist" aria-label="Shop sections">
       <button type="button" role="tab" data-kind="themes" aria-selected="true">themes</button>
       <button type="button" role="tab" data-kind="pets" aria-selected="false">pets</button>
       <button type="button" role="tab" data-kind="satellites" aria-selected="false">sky</button>
       <button type="button" role="tab" data-kind="skins" aria-selected="false">skins</button>
-    </div>
-    <div class="page">
-      <button class="close" id="shop-close" aria-label="Close shop">✕</button>
-      <h2 id="shop-title">themes</h2>
-      <div class="balance"><span class="shard" aria-hidden="true">✦</span> <b id="shop-balance">0</b> shards</div>
-      <div id="shop-items" role="tabpanel"></div>
-      <p class="earn-hint">Write memories to earn shards. Bought things leave the shop and wait on the circle under settings.</p>
     </div>
   </div>
 </div>

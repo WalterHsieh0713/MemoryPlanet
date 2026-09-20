@@ -33,6 +33,7 @@
       'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
+      'shop-blurb',
       'ground-btn', 'ground-label', 'ground-icon', 'picker', 'picker-grid', 'picker-play',
       'character-btn', 'skins-btn', 'theme-btn', 'theme-tray', 'theme-rack',
       'tray-themes', 'tray-theme-items',
@@ -1043,12 +1044,21 @@
   }
 
   var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'sky', skins: 'skins' };
+  var SHOP_BLURBS = {
+    themes: 'Whole-planet clothes. Swap a world on like a postcard.',
+    pets: 'Little walkers for the paths. One can be out at a time.',
+    satellites: 'Sky company. They keep orbiting, even when the view folds.',
+    skins: 'Hats and knits for everyone who lives on the island.'
+  };
+  var POLAROID_TILT = ['r1', 'r2', 'r3', 'r4'];
 
   function renderShop() {
     var kind = shopKind;
     var balance = MI.economy.balance();
     el['shop-balance'].textContent = balance;
     el['shop-title'].textContent = SHOP_TITLES[kind] || kind;
+    if (el['shop-blurb']) el['shop-blurb'].textContent = SHOP_BLURBS[kind] || '';
+    el.shop.setAttribute('data-kind', kind);
     Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
       tab.setAttribute('aria-selected', String(tab.dataset.kind === kind));
     });
@@ -1061,33 +1071,33 @@
       var canBuy = balance >= item.price;
       var card = document.createElement('button');
       card.type = 'button';
-      card.className = 'portrait' + (canBuy ? '' : ' short');
+      card.className = 'polaroid ' + POLAROID_TILT[(listed - 1) % POLAROID_TILT.length] + (canBuy ? '' : ' short');
       if (!canBuy) card.disabled = true;
 
-      var label = document.createElement('span');
-      label.className = 'label';
-      label.textContent = item.name;
-      card.appendChild(label);
-
-      var frame = document.createElement('span');
-      frame.className = 'frame';
+      var photo = document.createElement('span');
+      photo.className = 'photo';
       if (kind === 'themes') {
         var planet = document.createElement('span');
         planet.className = 'mini-planet';
         planet.style.background = themeFill(item.id);
-        frame.appendChild(planet);
+        photo.appendChild(planet);
       } else {
         var glyph = document.createElement('span');
         glyph.className = 'glyph';
         glyph.textContent = item.icon;
-        frame.appendChild(glyph);
+        photo.appendChild(glyph);
       }
-      card.appendChild(frame);
+      card.appendChild(photo);
 
-      var price = document.createElement('span');
-      price.className = 'price';
-      price.textContent = canBuy ? ('✦ ' + item.price) : ('✦ ' + item.price + ' · ' + (item.price - balance) + ' to go');
-      card.appendChild(price);
+      var caption = document.createElement('span');
+      caption.className = 'caption';
+      caption.textContent = item.name;
+      card.appendChild(caption);
+
+      var sticker = document.createElement('span');
+      sticker.className = 'sticker';
+      sticker.textContent = canBuy ? ('✦ ' + item.price) : ((item.price - balance) + ' short');
+      card.appendChild(sticker);
 
       if (canBuy) card.addEventListener('click', function () { buy(kind, item); });
       el['shop-items'].appendChild(card);
@@ -1095,7 +1105,7 @@
     if (!listed) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'Everything here is already yours.';
+      empty.textContent = 'This page is full. Everything here is already yours.';
       el['shop-items'].appendChild(empty);
     }
   }
