@@ -135,7 +135,14 @@
   #view-btn .opt {
     padding: 8px 16px; min-width: 88px; text-align: center;
     color: var(--ink-mid); letter-spacing: .04em;
+    border: 0; background: none; cursor: pointer;
+    font: inherit; font-size: inherit; letter-spacing: .04em;
   }
+  /* The view you are already in is a label, not a button: clicking it does nothing. */
+  #view-btn:not(.is-island) .opt.planet,
+  #view-btn.is-island .opt.island { cursor: default; }
+  #view-btn:not(.is-island) .opt.island:hover,
+  #view-btn.is-island .opt.planet:hover { color: var(--ink); }
   #view-btn:not(.is-island) .opt.planet,
   #view-btn.is-island .opt.island {
     background: #fffdf8; color: var(--ink);
@@ -915,6 +922,14 @@
   #submit-btn:hover { background: var(--accent-deep); transform: translateY(-2px); }
   #submit-btn:active { transform: scale(.98); }
   #submit-btn:disabled { background: #e8d9c5; color: #fffdf8; cursor: default; transform: none; }
+  #edit-cancel {
+    align-self: flex-start; margin: -2px 0 6px; padding: 4px 0;
+    background: none; border: 0; cursor: pointer; font-family: inherit;
+    font-size: 13px; color: var(--ink-mid); text-decoration: underline;
+    text-decoration-style: dotted; text-underline-offset: 3px;
+  }
+  #edit-cancel:hover { color: var(--ink); }
+  #edit-cancel[hidden] { display: none; }
 
   #book :is(button, textarea, input):focus-visible, #book-btn:focus-visible {
     outline: 3px solid #2c5f6f; outline-offset: 3px;
@@ -1245,16 +1260,27 @@
     background: var(--accent-deep); box-shadow: 0 8px 22px rgba(0, 0, 0, .35);
   }
   #galaxy-new:hover { filter: brightness(1.06); }
+  /* Fades while a world is hovered: its name and card land right about here, and now
+     that the names are bold the two used to sit on top of each other. It keeps its box
+     so the card still measures its position against it. */
+  #galaxy-hint { transition: opacity .18s ease; }
+  #galaxy-hint.dim { opacity: 0; }
   #galaxy-labels { position: absolute; inset: 0; pointer-events: none; }
   #galaxy-labels .label {
-    position: absolute; transform: translate(-50%, 22px);
-    font-size: 15px; color: #f4f7ff; white-space: nowrap;
-    text-shadow: 0 1px 8px #070a1c;
+    position: absolute; transform: translate(-50%, 24px);
+    font-size: 19px; font-weight: 700; letter-spacing: .01em;
+    color: #fffdf6; white-space: nowrap;
+    /* A dark rim first so the name holds its shape over a bright planet, then a soft glow
+       so it still reads against empty space. */
+    text-shadow:
+      0 1px 0 rgba(6, 9, 26, .95), 0 -1px 0 rgba(6, 9, 26, .95),
+      1px 0 0 rgba(6, 9, 26, .95), -1px 0 0 rgba(6, 9, 26, .95),
+      0 2px 14px rgba(6, 9, 26, .9);
     transition: transform .2s var(--spring), font-size .2s ease, opacity .2s ease;
-    opacity: .8;
+    opacity: .92;
   }
   #galaxy-labels .label.hover {
-    opacity: 1; font-size: 18px; transform: translate(-50%, 28px);
+    opacity: 1; font-size: 23px; transform: translate(-50%, 30px);
   }
   #galaxy-card {
     position: absolute; width: 230px; padding: 12px 14px 12px;
@@ -1262,17 +1288,35 @@
     transform: translate(-50%, calc(-100% - 18px)) rotate(-0.5deg);
     text-align: center;
   }
-  #galaxy-card .name { font-size: 20px; line-height: 1.15; }
-  #galaxy-card .meta { margin-top: 2px; font-size: 13px; color: var(--ink-mid); }
-  #galaxy-open, #galaxy-delete {
-    margin-top: 10px; width: 100%; border: 0; border-radius: 4px; cursor: pointer;
-    font-family: inherit; font-size: 14px; padding: 8px 10px;
+  #galaxy-card .meta { font-size: 15px; color: var(--ink); white-space: nowrap; }
+  /* The tools only exist in edit mode; hovering a world is otherwise read-only. */
+  #galaxy-card .tools { display: flex; gap: 6px; align-items: stretch; margin-top: 8px; }
+  #galaxy-card .tools[hidden] { display: none; }
+  #galaxy-card .nudge {
+    width: 30px; flex: 0 0 auto; padding: 0; font-size: 17px; line-height: 1;
+    border-radius: 9px; border: 1px solid #e0cdae; background: #fffdf8;
+    color: var(--ink); cursor: pointer; font-family: inherit;
   }
-  #galaxy-open { background: var(--ink); color: #fff; }
-  #galaxy-open:hover { filter: brightness(1.08); }
+  #galaxy-card .nudge:hover:not(:disabled) { background: #fff; }
+  #galaxy-card .nudge:disabled { opacity: .35; cursor: default; }
+  #galaxy-edit {
+    position: absolute; top: 16px; right: 16px; z-index: 2;
+    width: 42px; height: 42px; padding: 0; border-radius: 50%; cursor: pointer;
+    display: grid; place-items: center;
+    border: 1px solid rgba(255, 255, 255, .28);
+    background: rgba(255, 255, 255, .1); color: #f3f6ff;
+    transition: background .2s ease, color .2s ease, transform .25s var(--spring);
+  }
+  #galaxy-edit svg { width: 20px; height: 20px; display: block; }
+  #galaxy-edit:hover { background: rgba(255, 255, 255, .2); transform: rotate(-12deg); }
+  #galaxy-edit[aria-pressed="true"] {
+    background: var(--paper); color: var(--ink); border-color: #e6d4b6;
+    box-shadow: 0 0 0 4px rgba(255, 233, 163, .22);
+  }
   #galaxy-delete {
-    margin-top: 6px; background: #fff8ec; color: var(--ink-mid);
-    border: 1px dashed #d7b58a;
+    flex: 1 1 auto; border-radius: 9px; cursor: pointer;
+    font-family: inherit; font-size: 14px; padding: 8px 10px;
+    background: #fff8ec; color: var(--ink-mid); border: 1px dashed #d7b58a;
   }
   #galaxy-delete:hover { color: var(--ink); background: #fff; }
   #galaxy-delete.confirming { background: #ffe3d6; color: #c2410c; border-color: #e8b198; }
@@ -1451,14 +1495,18 @@
     padding-right: 12px; filter: brightness(1.05);
     box-shadow: 3px 3px 0 rgba(120, 70, 30, .14);
   }
+  /* Sits in the screen corner, over the settings gear it stands in for while the shop is open. */
   #shop .close {
-    position: absolute; top: 10px; right: 10px; z-index: 2;
-    width: 32px; height: 32px; border: 0; cursor: pointer; border-radius: 50%;
-    background: #fff8ec; color: var(--ink); font-size: 15px; font-family: inherit;
-    box-shadow: 1px 2px 0 #e4d2b0;
+    position: absolute; top: 16px; right: 16px; z-index: 2;
+    width: 42px; height: 42px; padding: 0; cursor: pointer; border-radius: 50%;
+    border: 1px solid #e6d4b6;
+    background: var(--paper); color: var(--ink); font-size: 17px; font-family: inherit;
+    box-shadow: 1px 2px 0 #e4d2b0, 0 6px 14px rgba(112, 70, 44, .1);
     display: grid; place-items: center;
+    transition: transform .25s var(--spring), background .2s ease;
   }
-  #shop .close:hover { background: #fff; }
+  #shop .close:hover { background: #fff8ec; transform: scale(1.08); }
+  #shop .close:active { transform: scale(.96); }
   #shop-items {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
     gap: 20px 16px; padding: 8px 8px 18px; align-items: start;
@@ -1549,14 +1597,6 @@
     border-radius: 8px;
   }
   #detail .title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  #title-suggest {
-    border: none; cursor: pointer; font-family: inherit; white-space: nowrap;
-    padding: 4px 10px; border-radius: 999px; background: #f3eefd;
-    color: var(--shard); font-size: 11px; font-weight: 700;
-    transition: background .2s ease, transform .25s var(--spring);
-  }
-  #title-suggest:hover { background: #e9e1fb; transform: translateY(-1px); }
-  #title-suggest:disabled { opacity: .6; cursor: default; transform: none; }
   #detail p { margin: 12px 0 0; font-size: 14px; font-weight: 500; line-height: 1.55; }
   #detail .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
   #detail .swap-label {
@@ -1583,6 +1623,14 @@
     font-family: inherit;
   }
   #detail .close:hover { background: #e2ecef; color: var(--ink); }
+  #detail .edit {
+    position: absolute; right: 46px; top: 14px; width: 26px; height: 26px;
+    border: none; cursor: pointer; border-radius: 50%; background: #eef4f6;
+    color: var(--ink-soft); display: grid; place-items: center; padding: 0;
+    transition: background .2s ease, color .2s ease, transform .25s var(--spring);
+  }
+  #detail .edit svg { width: 15px; height: 15px; display: block; }
+  #detail .edit:hover { background: #e2ecef; color: var(--ink); transform: rotate(-12deg); }
 
   #loading {
     position: fixed; inset: 0; display: grid; place-items: center; z-index: 30;
@@ -1602,11 +1650,20 @@
   <div id="galaxy-hint">hover a world · click to open</div>
   <div id="galaxy-labels"></div>
   <div id="galaxy-card" class="paper hit" hidden>
-    <div id="galaxy-card-name" class="name"></div>
     <div id="galaxy-card-meta" class="meta"></div>
-    <button type="button" id="galaxy-open">open this world</button>
-    <button type="button" id="galaxy-delete">delete</button>
+    <div id="galaxy-tools" class="tools" hidden>
+      <button type="button" id="galaxy-left" class="nudge" aria-label="Move this world left">&lsaquo;</button>
+      <button type="button" id="galaxy-delete">delete</button>
+      <button type="button" id="galaxy-right" class="nudge" aria-label="Move this world right">&rsaquo;</button>
+    </div>
   </div>
+  <button type="button" id="galaxy-edit" class="hit" aria-pressed="false" aria-label="Edit your worlds" title="Edit your worlds">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9"
+         stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" />
+      <path d="M14.5 7.5 16.5 9.5" />
+    </svg>
+  </button>
   <button type="button" id="galaxy-new" class="hit">Start a new journal</button>
 </div>
 <div id="world-title" class="paper" hidden>
@@ -1670,10 +1727,10 @@
   <div id="planet-bar" role="progressbar" aria-label="Land until the planet grows" aria-valuemin="0" aria-valuemax="100"><i></i></div>
   <div id="planet-hint">grows when half of it is land</div>
 </div>
-<button id="view-btn" type="button" aria-label="Switch between planet and island view">
-  <span class="opt planet" id="view-planet-label">planet</span>
-  <span class="opt island" id="view-island-label">island</span>
-</button>
+<div id="view-btn" role="group" aria-label="Choose a view">
+  <button type="button" class="opt planet" id="view-planet-label" data-view="planet" aria-pressed="true">planet</button>
+  <button type="button" class="opt island" id="view-island-label" data-view="island" aria-pressed="false">island</button>
+</div>
 <button id="ground-btn" type="button" aria-label="Follow your character" aria-pressed="false" title="Follow your character">
   <svg viewBox="0 0 32 32" aria-hidden="true" fill="currentColor">
     <defs>
@@ -1720,9 +1777,10 @@
     <div class="page right" id="book-write-page">
       <div id="book-write-panel">
       <div class="page-head">
-        <span class="page-title">today</span>
+        <span class="page-title" id="write-title">today</span>
         <span class="page-note" id="write-date"></span>
       </div>
+      <button type="button" id="edit-cancel" hidden>← leave it as it was</button>
       <textarea id="entry-input" autocomplete="off" placeholder="What happened today?"
                 aria-label="Write a memory"></textarea>
       <div id="tag-row">
@@ -1756,7 +1814,7 @@
             <path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
         </button>
-        <button id="submit-btn">Plant it on my planet ✨</button>
+        <button id="submit-btn" data-write="Plant it on my planet ✨" data-edit="Save these changes ✨">Plant it on my planet ✨</button>
       </div>
       </div>
       <div id="book-right-body" hidden></div>
@@ -1766,12 +1824,18 @@
 
 <div id="detail" class="paper">
   <button class="close" id="detail-close" aria-label="Close">✕</button>
+  <button class="edit" id="detail-edit" aria-label="Edit this memory" title="Edit this memory">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9"
+         stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z" />
+      <path d="M14.5 7.5 16.5 9.5" />
+    </svg>
+  </button>
   <div class="cat" id="detail-cat"></div>
   <h3 id="detail-title" contenteditable="true" spellcheck="false"
       role="textbox" aria-label="Memory title, click to rename"></h3>
   <div class="title-row">
     <div class="date" id="detail-date"></div>
-    <button id="title-suggest" hidden>✨ suggest a title</button>
   </div>
   <p id="detail-text"></p>
   <div class="pills" id="detail-pills"></div>
@@ -1799,11 +1863,11 @@
 </div>
 
 <div id="shop">
+  <button class="close" id="shop-close" aria-label="Close shop">✕</button>
   <div class="book" role="dialog" aria-modal="true" aria-labelledby="shop-title">
     <div class="cover">
       <div class="spread">
         <section class="leaf left">
-          <button class="close" id="shop-close" aria-label="Close shop">✕</button>
           <p class="album-kicker">keepsakes</p>
           <h2 id="shop-title">themes</h2>
           <p id="shop-blurb" class="blurb">Whole-planet clothes. Swap a world on like a postcard.</p>

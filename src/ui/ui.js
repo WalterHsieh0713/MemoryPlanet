@@ -30,7 +30,8 @@
     ['stats-chip', 'stats-text', 'entry-input', 'submit-btn', 'empty-hint', 'demo-btn',
       'toast', 'toast-emoji', 'toast-headline', 'toast-sub', 'detail', 'detail-close',
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
-      'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
+      'reset-btn', 'view-btn', 'view-planet-label', 'view-island-label',
+      'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
       'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
       'shop-blurb',
@@ -38,17 +39,18 @@
       'character-btn', 'theme-btn', 'theme-tray', 'theme-rack',
       'tray-themes', 'tray-theme-items',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
-      'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
+      'book-list', 'book-write-tab', 'book-memories-tab', 'write-date',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
       'tag-mood', 'tag-cat', 'tag-big', 'mic-btn', 'settings-btn', 'settings',
       'book-tabs-left', 'book-tabs-right', 'book-write-panel', 'book-right-body',
-      'book-heading', 'book-mobile-tabs',
+      'book-heading', 'book-mobile-tabs', 'write-title', 'edit-cancel', 'detail-edit',
       'world-title', 'world-title-text', 'journals-btn',
       'gate', 'gate-shelf', 'gate-create', 'gate-journals', 'gate-empty', 'gate-blurb',
       'gate-new', 'gate-back', 'gate-name', 'gate-avatars', 'gate-create-btn',
       'gate-create-kicker', 'gate-create-title', 'gate-create-blurb',
       'galaxy-ui', 'galaxy-count', 'galaxy-count-text', 'galaxy-hint', 'galaxy-labels',
-      'galaxy-card', 'galaxy-card-name', 'galaxy-card-meta', 'galaxy-open', 'galaxy-delete',
+      'galaxy-card', 'galaxy-card-meta', 'galaxy-delete', 'galaxy-tools',
+      'galaxy-edit', 'galaxy-left', 'galaxy-right',
       'galaxy-new']
       .forEach(function (id) { el[id] = $(id); });
   }
@@ -334,8 +336,8 @@
 
     refreshPersonList();
     renderBook();
-    el['write-date'].textContent = new Date().toLocaleDateString(undefined,
-      { weekday: 'long', month: 'long', day: 'numeric' });
+    if (!isEditing()) el['write-date'].textContent = todayLabel();
+    syncWriteMode();
     selectBookPage('write');
 
     var mini = el['book-btn'].querySelector('.mini-book');
@@ -372,6 +374,13 @@
     bookFocusTimer = setTimeout(function () {
       if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
     }, 2900);
+  }
+
+  // Shutting the book yourself abandons whatever rewrite was in it. submitEdit closes the
+  // book too, but only to get out of the way of the result, so it calls closeBook directly.
+  function dismissBook() {
+    stopEditing();
+    closeBook();
   }
 
   function closeBook() {
@@ -844,7 +853,7 @@
         if (openSlot === null) MI.world.clearHighlight();
       });
       row.addEventListener('click', function () {
-        closeBook();
+        dismissBook();
         showDetail(memory);
         MI.world.focus(slot);
       });
@@ -1155,6 +1164,7 @@
   var gateAvatar = null;
   var gateBusy = false;
   var hoveredGalaxy = null;
+  var galaxyEditing = false;
   var galaxyDeleteArmed = null;
 
   function fillAvatarGrid(container, selectedId, onPick) {
@@ -1289,7 +1299,7 @@
     el['galaxy-ui'].classList.remove('open');
     el['galaxy-card'].hidden = true;
     hoveredGalaxy = null;
-    disarmGalaxyDelete();
+    setGalaxyEditing(false);
   }
 
   function refreshGalaxyCount() {
@@ -1303,6 +1313,7 @@
   function updateGalaxyCard(id) {
     if (id === hoveredGalaxy) return;
     hoveredGalaxy = id;
+    el['galaxy-hint'].classList.toggle('dim', !!id);
     disarmGalaxyDelete();
     if (!id) {
       el['galaxy-card'].hidden = true;
@@ -1313,12 +1324,51 @@
       el['galaxy-card'].hidden = true;
       return;
     }
-    el['galaxy-card-name'].textContent = journal.name;
     var bits = [plural(journal.memories, 'memory').replace('memorys', 'memories')];
     if (journal.people) bits.push(plural(journal.people, 'friend'));
-    if (journal.character) bits.push(characterName(journal.character));
     el['galaxy-card-meta'].textContent = bits.join(' · ');
+    syncGalaxyTools();
     el['galaxy-card'].hidden = false;
+  }
+
+  // Delete and the reorder nudges only exist while editing; hovering is otherwise read-only.
+  function syncGalaxyTools() {
+    el['galaxy-tools'].hidden = !galaxyEditing;
+    var list = MI.store.listJournals();
+    var at = -1;
+    if (hoveredGalaxy) list.forEach(function (j, i) { if (j.id === hoveredGalaxy) at = i; });
+    // A world at the end of the shelf has nowhere further to go that way.
+    el['galaxy-left'].disabled = gateBusy || at <= 0;
+    el['galaxy-right'].disabled = gateBusy || at < 0 || at >= list.length - 1;
+    el['galaxy-delete'].disabled = gateBusy || at < 0;
+  }
+
+  function setGalaxyEditing(on) {
+    galaxyEditing = !!on;
+    el['galaxy-edit'].setAttribute('aria-pressed', String(galaxyEditing));
+    // The button holds a pencil icon, so its state goes in the label — writing textContent
+    // here would throw the svg away.
+    var label = galaxyEditing ? 'Done editing your worlds' : 'Edit your worlds';
+    el['galaxy-edit'].setAttribute('aria-label', label);
+    el['galaxy-edit'].title = label;
+    el['galaxy-hint'].textContent = galaxyEditing
+      ? 'editing · reorder with ‹ › · delete a world'
+      : 'hover a world · click to open';
+    disarmGalaxyDelete();
+    syncGalaxyTools();
+  }
+
+  // Swap a world with its neighbour and lay the ring out again. The card follows the planet,
+  // so keep the same world hovered rather than dropping the panel mid-edit.
+  function nudgeGalaxy(delta) {
+    if (gateBusy || !galaxyEditing || !hoveredGalaxy) return;
+    if (!MI.store.reorderJournal(hoveredGalaxy, delta)) return;
+    var keep = hoveredGalaxy;
+    disarmGalaxyDelete();
+    hoveredGalaxy = null;      // force updateGalaxyCard to redraw against the new order
+    refreshGalaxy();
+    updateGalaxyCard(keep);
+    MI.world.hoverGalaxyPlanet(keep); // stay held, but do not fly the camera on every nudge
   }
 
   function syncGalaxyLabels(screens) {
@@ -1347,8 +1397,18 @@
       var hit = null;
       screens.forEach(function (s) { if (s.id === hoveredGalaxy) hit = s; });
       if (hit && !hit.behind) {
-        el['galaxy-card'].style.left = hit.x + 'px';
-        el['galaxy-card'].style.top = Math.max(96, hit.y - 12) + 'px';
+        // The card is drawn ABOVE the point it is given (see its transform), so the clamp has
+        // to know how tall it currently is — it grows when the edit tools appear, and a fixed
+        // 96px floor used to slide the taller card off the top of the screen.
+        var card = el['galaxy-card'];
+        var lift = card.offsetHeight + 18;
+        var half = card.offsetWidth / 2 + 12;
+        // Clear whatever the top-centre chrome actually occupies, rather than a guess: the
+        // hint line sits under the count chip and both grow with the text in them.
+        var hint = el['galaxy-hint'].getBoundingClientRect();
+        var floor = Math.max(96, hint.bottom + 14);
+        card.style.left = Math.max(half, Math.min(window.innerWidth - half, hit.x)) + 'px';
+        card.style.top = Math.max(floor + lift, hit.y - 12) + 'px';
       }
     }
   }
@@ -1405,8 +1465,8 @@
       ? 'opening…'
       : (el.gate.classList.contains('first') ? 'Begin' : 'Create this world');
     el['galaxy-new'].disabled = gateBusy;
-    el['galaxy-open'].disabled = gateBusy;
-    el['galaxy-delete'].disabled = gateBusy;
+    el['galaxy-edit'].disabled = gateBusy;
+    syncGalaxyTools();
   }
 
   function finishEnter() {
@@ -1476,7 +1536,7 @@
     closeShop();
     closePicker();
     hideDetail();
-    if (isBookBusy()) closeBook();
+    if (isBookBusy()) dismissBook();
     var ready = MI.world.isGroundView() ? leaveGroundView() : Promise.resolve();
     ready.then(function () { showGate('shelf'); });
   }
@@ -1540,7 +1600,6 @@
     openMemory = memory;
     if (openSlot !== null) MI.world.highlightSlot(openSlot);
     markOpenRow(true);
-    el['title-suggest'].hidden = claudeAvailable === false;
     el['detail-cat'].textContent = memory.category + ' · ' + (memory.mood && memory.mood.label || '');
     el['detail-title'].textContent = memory.title;
     el['detail-date'].textContent = formatDate(memory.occurredOn || memory.createdAt);
@@ -1587,11 +1646,9 @@
   }
 
   // --- Renaming an entry -------------------------------------------------------------------
-  // A title is a guess until someone says otherwise, so it is editable in place. Claude can
-  // offer a nicer one when a key is configured; the button hides itself when it can't.
+  // A title is a guess until someone says otherwise, so it is editable in place.
 
   var openMemory = null;
-  var claudeAvailable = null; // unknown until the first attempt
 
   function saveTitle() {
     if (!openMemory) return;
@@ -1602,32 +1659,6 @@
     MI.store.save();
     renderBook();
     markOpenRow(false);
-  }
-
-  function suggestTitle() {
-    if (!openMemory) return;
-    var memory = openMemory;
-    el['title-suggest'].disabled = true;
-    el['title-suggest'].textContent = 'thinking…';
-    MI.ai.classify(memory.text).then(function (result) {
-      el['title-suggest'].disabled = false;
-      el['title-suggest'].textContent = '✨ suggest a title';
-      // classify() falls back to the local guess when Claude is unreachable, and that would
-      // just hand back the title we already have.
-      if (result.source !== 'claude') {
-        claudeAvailable = false;
-        el['title-suggest'].hidden = true;
-        toast('🔌', 'No title suggestions', 'Claude is not configured for this planet.', 0, 3000);
-        return;
-      }
-      claudeAvailable = true;
-      if (memory !== openMemory) return; // they moved on while it was thinking
-      memory.title = result.title;
-      el['detail-title'].textContent = result.title;
-      MI.store.save();
-      renderBook();
-      markOpenRow(false);
-    });
   }
 
   function hideDetail() {
@@ -1641,7 +1672,8 @@
 
   function setBusy(busy) {
     el['submit-btn'].disabled = busy;
-    el['submit-btn'].textContent = busy ? 'planting…' : 'Plant it on my planet ✨';
+    if (busy) el['submit-btn'].textContent = isEditing() ? 'saving…' : 'planting…';
+    else syncWriteMode(); // the label depends on whether this is a new entry or a rewrite
     if (el['mic-btn']) el['mic-btn'].disabled = busy;
   }
 
@@ -1920,9 +1952,144 @@
     startListening();
   }
 
+  // --- Editing a memory -------------------------------------------------------------------
+  // An edit reuses the writing page rather than growing a second, lesser set of controls
+  // inside the detail card: same textarea, same chips that carry a person, same faces, same
+  // kinds. Only the labels and what Save does are different.
+
+  var editingId = null;       // the memory being rewritten, or null while writing a new one
+  var draftBeforeEdit = null; // the unsent entry we interrupted, handed back when editing ends
+
+  function isEditing() { return editingId !== null; }
+
+  function syncWriteMode() {
+    var editing = isEditing();
+    el['write-title'].textContent = editing ? 'editing' : 'today';
+    el['edit-cancel'].hidden = !editing;
+    el['entry-input'].placeholder = editing ? 'What actually happened?' : 'What happened today?';
+    if (!el['submit-btn'].disabled) {
+      el['submit-btn'].textContent = editing
+        ? el['submit-btn'].dataset.edit
+        : el['submit-btn'].dataset.write;
+    }
+  }
+
+  function todayLabel() {
+    return new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+
+  // An edit is dated by the day the memory is about, not the day you fixed it.
+  function entryDateLabel(memory) {
+    var when = memory.occurredOn || (memory.createdAt || '').slice(0, 10);
+    var parsed = when ? new Date(when + 'T00:00:00') : null;
+    if (!parsed || isNaN(parsed.getTime())) return todayLabel();
+    return parsed.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
+  }
+
+  function startEditing(memory) {
+    if (!memory) return;
+    // Hold on to whatever was half-written, or opening an edit would eat it.
+    if (!isEditing()) draftBeforeEdit = { text: el['entry-input'].value, tags: tags, touched: touched };
+    editingId = memory.id;
+
+    el['entry-input'].value = memory.text || '';
+    tags = {
+      people: (memory.people || []).map(function (id) {
+        var person = MI.store.get().people.filter(function (p) { return p.id === id; })[0];
+        return person ? { name: person.name, personId: person.id } : null;
+      }).filter(Boolean),
+      mood: memory.mood && memory.mood.label ? moodKeyFromLabel(memory.mood.label) : null,
+      category: memory.category || null,
+      big: memory.importance === 4
+    };
+    // All marked touched: these are answers the writer already gave, and the keyword guess
+    // must not quietly overwrite them as the sentence is retyped.
+    touched = { people: true, mood: true, category: true, importance: true };
+
+    hideDetail();
+    refreshPersonList();
+    paintTagRow();
+    syncWriteMode();
+    el['write-date'].textContent = entryDateLabel(memory);
+    if (isBookOpen()) {
+      selectBookPage('write');
+      el['entry-input'].focus();
+    } else {
+      openBook();
+    }
+  }
+
+  // Leave edit mode and put the interrupted draft back on the page.
+  function stopEditing() {
+    if (!isEditing()) return;
+    editingId = null;
+    if (draftBeforeEdit) {
+      el['entry-input'].value = draftBeforeEdit.text;
+      tags = draftBeforeEdit.tags;
+      touched = draftBeforeEdit.touched;
+      draftBeforeEdit = null;
+    } else {
+      el['entry-input'].value = '';
+      tags = { people: [], mood: null, category: null, big: false };
+      touched = {};
+    }
+    el['tag-person-input'].value = '';
+    paintTagRow();
+    syncWriteMode();
+    el['write-date'].textContent = todayLabel();
+  }
+
+  // Say what quietly changed on the planet, so an edit never silently removes someone.
+  function describeEdit(result) {
+    var gone = (result.departed || []).map(function (p) { return p.name; });
+    var came = (result.arrived || []).map(function (p) { return p.name; });
+    if (gone.length && came.length) {
+      return ['🔁', 'Your world changed', came.join(', ') + ' moved in · ' + gone.join(', ') + ' left.'];
+    }
+    if (gone.length === 1) {
+      return ['👋', gone[0] + ' left your world', 'No memory mentions them any more.'];
+    }
+    if (gone.length) {
+      return ['👋', gone.length + ' friends left your world', gone.join(', ') + ' are no longer in any memory.'];
+    }
+    if (came.length === 1) {
+      return ['🙋', came[0] + ' moved in', 'They are standing by this memory.'];
+    }
+    if (came.length) {
+      return ['🙋', came.length + ' friends moved in', came.join(', ') + ' are standing by this memory.'];
+    }
+    return ['✏️', 'Memory updated', 'Your planet matches what it says now.'];
+  }
+
+  function submitEdit() {
+    var text = el['entry-input'].value.trim();
+    if (!text) return;
+    commitPerson(); // a name still sitting in the box counts
+    var id = editingId;
+    var entryTags = currentTags();
+    setBusy(true);
+    closeBook();
+
+    MI.app.updateEntry(id, text, { tags: entryTags }).then(function (result) {
+      setBusy(false);
+      if (!result) { openBook(); return; } // nothing saved: leave the rewrite on screen
+      stopEditing();
+      var said = describeEdit(result);
+      toast(said[0], said[1], said[2], 0, 4200);
+      refreshStats();
+      renderBook();
+      showDetail(result.memory);
+    }, function (err) {
+      setBusy(false);
+      console.error('[MI.ui] updateEntry failed', err);
+      openBook(); // keep the rewrite available to retry
+    });
+  }
+
   function submitEntry() {
     if (el['submit-btn'].disabled) return;
     stopListening({ silent: true });
+    if (isEditing()) { submitEdit(); return; }
     var text = el['entry-input'].value.trim();
     if (!text) return;
     commitPerson(); // a name still sitting in the box counts
@@ -1997,7 +2164,13 @@
   }
 
   function syncViewButton() {
-    el['view-btn'].classList.toggle('is-island', MI.world.isFlatView());
+    markView(MI.world.isFlatView());
+  }
+
+  function markView(island) {
+    el['view-btn'].classList.toggle('is-island', island);
+    el['view-planet-label'].setAttribute('aria-pressed', String(!island));
+    el['view-island-label'].setAttribute('aria-pressed', String(island));
   }
   function disarmReset() {
     clearTimeout(resetArmed);
@@ -2006,13 +2179,15 @@
     el['reset-btn'].classList.remove('confirming');
   }
 
-  function toggleView() {
+  // Each option selects its own view. Asking for the view you are already in does nothing:
+  // it is a two-position switch, not a toggle that flips from whichever side you press.
+  function showView(wantIsland) {
     if (MI.store.get().memories.length === 0) return; // nothing to lay out yet
     if (MI.world.isTransitioning()) return; // let the fold finish before reversing it
-    var goingFlat = !MI.world.isFlatView();
-    el['view-btn'].classList.toggle('is-island', goingFlat);
+    if (wantIsland === MI.world.isFlatView()) return; // already there
+    markView(wantIsland);
     hideDetail();
-    MI.world.setFlatView(goingFlat);
+    MI.world.setFlatView(wantIsland);
   }
 
   function init() {
@@ -2025,11 +2200,18 @@
       if (e.target === el.settings) closeSettings();
     });
     el['reset-btn'].addEventListener('click', handleReset);
-    el['view-btn'].addEventListener('click', function () {
+    el['view-btn'].addEventListener('click', function (e) {
+      var opt = e.target.closest('.opt');
+      if (!opt) return;
+      var wantIsland = opt.dataset.view === 'island';
       // The two views hold the character in different places and the fold animates the
-      // camera, so come back up first; they can drop to the ground again after.
-      if (MI.world.isGroundView()) { leaveGroundView().then(toggleView); return; }
-      toggleView();
+      // camera, so come back up first; they can drop to the ground again after. From the
+      // ground both options are live — either one lifts you into the view you asked for.
+      if (MI.world.isGroundView()) {
+        leaveGroundView().then(function () { showView(wantIsland); });
+        return;
+      }
+      showView(wantIsland);
     });
 
     el['submit-btn'].addEventListener('click', submitEntry);
@@ -2039,6 +2221,14 @@
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEntry(); }
     });
 
+    el['detail-edit'].addEventListener('click', function () {
+      if (openMemory) startEditing(openMemory);
+    });
+    el['edit-cancel'].addEventListener('click', function () {
+      var memory = MI.store.get().memories.filter(function (m) { return m.id === editingId; })[0];
+      stopEditing();
+      if (memory) showDetail(memory); // back to the card you came from
+    });
     el['book-btn'].addEventListener('click', openBook);
     el['book-btn'].addEventListener('pointerenter', peekMiniBook);
     el['book-btn'].addEventListener('pointerleave', function () {
@@ -2048,11 +2238,11 @@
     el['book-btn'].addEventListener('blur', function () {
       if (!el['book-btn'].matches(':hover')) unpeekMiniBook();
     });
-    el['book-close'].addEventListener('click', closeBook);
+    el['book-close'].addEventListener('click', dismissBook);
     el['book-write-tab'].addEventListener('click', function () { selectBookPage('write'); });
     el['book-memories-tab'].addEventListener('click', function () { selectBookPage('memories'); });
     el.book.addEventListener('click', function (e) {
-      if (e.target === el.book) closeBook(); // the cover around the pages, not the pages
+      if (e.target === el.book) dismissBook(); // the cover around the pages, not the pages
     });
 
     buildTagRow();
@@ -2073,7 +2263,6 @@
         el['detail-title'].blur();
       }
     });
-    el['title-suggest'].addEventListener('click', suggestTitle);
 
     MI.app.onEvent(handleAppEvent);
     el['ground-btn'].addEventListener('click', toggleGroundView);
@@ -2090,10 +2279,10 @@
       updateGalaxyCard(null);
       showGate('create');
     });
-    el['galaxy-open'].addEventListener('click', function () {
-      if (hoveredGalaxy) enterExisting(hoveredGalaxy);
-    });
     el['galaxy-delete'].addEventListener('click', handleGalaxyDelete);
+    el['galaxy-edit'].addEventListener('click', function () { setGalaxyEditing(!galaxyEditing); });
+    el['galaxy-left'].addEventListener('click', function () { nudgeGalaxy(-1); });
+    el['galaxy-right'].addEventListener('click', function () { nudgeGalaxy(1); });
     el['gate-new'].addEventListener('click', function () { showGate('create'); });
     el['gate-back'].addEventListener('click', function () {
       if (!MI.store.listJournals().length) return;
@@ -2159,7 +2348,7 @@
       if (el.shop.classList.contains('open')) closeShop();
       else if (el.settings.classList.contains('open')) closeSettings();
       else if (el['theme-rack'].classList.contains('open')) closeThemeTray();
-      else if (isBookBusy()) closeBook();
+      else if (isBookBusy()) dismissBook();
     });
 
     MI.world.onPick(function (slot) {
@@ -2193,6 +2382,12 @@
       if (gateBusy) return;
       if (!id) {
         updateGalaxyCard(null);
+        return;
+      }
+      // Clicking a world is how you open it — except while editing, where a click is aimed
+      // at the tools on the card and opening the world underneath would be a nasty surprise.
+      if (galaxyEditing) {
+        updateGalaxyCard(id);
         return;
       }
       enterExisting(id);

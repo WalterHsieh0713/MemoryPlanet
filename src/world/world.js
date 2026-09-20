@@ -464,6 +464,18 @@
     });
   }
 
+  // Take a resident off the world. Editing a memory can untag the only mention a person ever
+  // had, and someone nobody has written about should not still be wandering around.
+  function despawnPerson(personId) {
+    if (!state || !personId) return;
+    var pair = state.residentWalkers[personId];
+    if (!pair) return;
+    state.residentGroup.remove(pair.sphere.group);
+    state.flatGroup.remove(pair.flat.group);
+    disposeWalkerPair(pair);
+    delete state.residentWalkers[personId];
+  }
+
   // Rotate the planet under the camera so `slot` faces the viewer. Meaningless in flat mode,
   // where the layout is centred on the origin and a tile's sphere direction says nothing
   // about where it ended up.
@@ -1998,14 +2010,20 @@
 
   // Pieces fall in and settle, foundation first. Mirrors the sandbox's timing.
   function assembleBuilding(group) {
-    group.children.forEach(function (piece) { piece.visible = false; });
+    // Only the pieces buildFromParts prepared have a `home` to settle into. A tile group can
+    // be carrying other children too — on the island the open memory's highlight halo is
+    // parented to its tile — and those must be left alone, not hidden and not animated.
+    var pieces = group.children.filter(function (piece) {
+      return piece.userData && piece.userData.home !== undefined;
+    });
+    pieces.forEach(function (piece) { piece.visible = false; });
     var elapsed = 0;
     // Must outlast the last piece: max delay (0.42 + 1.25) + its 0.65s fall = 2.32s.
     var DURATION = 2400;
     animate(DURATION, function (t) {
       if (state.transition) t = 1;
       elapsed = t * (DURATION / 1000);
-      group.children.forEach(function (piece, i) {
+      pieces.forEach(function (piece, i) {
         var data = piece.userData;
         var progress = (elapsed - data.delay) / 0.65;
         if (progress < 0) return;
@@ -2067,6 +2085,27 @@
     obj.updateMatrixWorld(true);
   }
 
+  // A tile's top is drawn as a FLAT polygon whose corners all sit on the sphere, so it falls
+  // away from the tangent plane at the tile's centre — by surfaceRadius * (1 - cos a) at the
+  // rim, where a is the angle from the centre out to a corner. A prop stood on that tangent
+  // plane therefore only touches the tile at one point and hovers everywhere else. It is
+  // worst on the small planets, where one tile spans 20 degrees of the globe (a third of a
+  // tile's own height) and invisible on the big ones, where it spans four.
+  // Sinking the prop by that much seats its base in the plane of the tile's corner ring:
+  // flush with the ground it is standing on, instead of floating over it.
+  var SEAT_FRACTION = 1; // 1 = flush with the corner ring, 0 = the old tangent plane
+  function seatDepth(tile, surfaceRadius) {
+    if (!tile || !tile.corners || !tile.corners.length) return 0;
+    var n = new THREE.Vector3().fromArray(tile.dir).normalize();
+    var lowest = 1;
+    for (var i = 0; i < tile.corners.length; i++) {
+      var c = tile.corners[i];
+      var cos = new THREE.Vector3(c[0], c[1], c[2]).normalize().dot(n);
+      if (cos < lowest) lowest = cos;
+    }
+    return surfaceRadius * (1 - lowest) * SEAT_FRACTION;
+  }
+
   function prepareProp(obj, placement, scale, rotY) {
     obj.traverse(function (node) {
       if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
@@ -2075,7 +2114,9 @@
     obj.userData.restScale = obj.scale.clone();
     var dir = MI.world.sphere.slotToDir(placement.slot);
     // Props stand on claimed tiles, which are raised out of the sea by LAND_LIFT.
-    MI.world.sphere.orientToSurface(obj, dir, rotY || 0, RADIUS + LAND_LIFT);
+    var surface = RADIUS + LAND_LIFT;
+    var seat = seatDepth(MI.world.sphere.tile(placement.slot), surface);
+    MI.world.sphere.orientToSurface(obj, dir, rotY || 0, surface - seat);
   }
 
   // Splitting a GLB into parts is the expensive bit, so it's cached per file and every
@@ -2810,17 +2851,19 @@
     // being land between one frame and the next. Put it back on the home tile if so.
     if (!isLandAt(standingOn) && !placePlayer(p, view)) return;
 
-    // Who can walk you: in follow mode the WASD keys, on the island otherwise the arrows,
-    // and on the planet nobody — there you only watch the character stand and wander.
-    var keys = null;
-    if (state.camMode === 'ground') keys = state.keys.wasd;
-    else if (state.camMode === 'orbit' && state.flatMode) keys = state.keys.arrows;
+    // Where you can walk: in follow mode, and on the island from above. On the planet from
+    // orbit you only watch the character stand and wander.
+    // WASD and the arrows both steer, in either place — one character, one set of controls,
+    // whichever keys your hand falls on. They stay tracked as two sets only so that a keyup
+    // for one never clears a key the other is still holding down.
+    var canWalk = state.camMode === 'ground' || (state.camMode === 'orbit' && state.flatMode);
     var input = { forward: 0, strafe: 0 };
-    if (keys) {
-      if (keys.w) input.forward += 1;
-      if (keys.s) input.forward -= 1;
-      if (keys.d) input.strafe += 1;
-      if (keys.a) input.strafe -= 1;
+    if (canWalk) {
+      var wasd = state.keys.wasd, arrows = state.keys.arrows;
+      if (wasd.w || arrows.w) input.forward += 1;
+      if (wasd.s || arrows.s) input.forward -= 1;
+      if (wasd.d || arrows.d) input.strafe += 1;
+      if (wasd.a || arrows.a) input.strafe -= 1;
     }
 
     var up = playerUp(p);
@@ -3308,8 +3351,8 @@
     }, { passive: false });
     canvasEl.style.cursor = 'grab';
 
-    // WASD walks you in follow mode, the arrows on the island otherwise (updatePlayer decides
-    // which set counts), so both are tracked and neither steals the other's keys.
+    // WASD and the arrows are equivalent; updatePlayer reads both. They are kept as two
+    // separate sets so that releasing one never clears a key the other is still holding.
     var MOVE_KEYS = {
       KeyW: ['wasd', 'w'], KeyA: ['wasd', 'a'], KeyS: ['wasd', 's'], KeyD: ['wasd', 'd'],
       ArrowUp: ['arrows', 'w'], ArrowLeft: ['arrows', 'a'],
@@ -3543,48 +3586,186 @@
     return s;
   }
 
-  function makeMiniPlanet(journal) {
-    var theme = MI.world.themes.get(journal.theme || 'meadow');
-    var geo = new THREE.IcosahedronGeometry(1, 2);
-    var pos = geo.attributes.position;
-    var colors = new Float32Array(pos.count * 3);
-    var landAmt = Math.min(0.78, 0.12 + (journal.memories || 0) * 0.07);
-    var seed = idSeed(journal.id);
-    var land = new THREE.Color(theme.land);
-    var water = new THREE.Color(theme.water);
-    var dirt = new THREE.Color(theme.landSide);
-    for (var i = 0; i < pos.count; i++) {
-      var x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
-      var n = hash(((x + 2) * 19 + (y + 2) * 37 + (z + 2) * 11 + (seed % 997)) | 0);
-      var isLand = n < landAmt && y > -0.22;
-      var c = isLand ? (y < 0.05 ? dirt : land) : water;
-      colors[i * 3] = c.r;
-      colors[i * 3 + 1] = c.g;
-      colors[i * 3 + 2] = c.b;
-      if (isLand) {
-        var bump = 1.05 + n * 0.06;
-        pos.setXYZ(i, x * bump, y * bump, z * bump);
-      }
+  // --- Mini planets -------------------------------------------------------------------
+  // Every world on the shelf is drawn for real: its own saved land tiles, on its own grid,
+  // with its own buildings standing on them. It is a COMPRESSED copy, though, because a
+  // whole shelf of them shares the screen — tile tops and a short skirt instead of the full
+  // planet mesh, flat vertex colours instead of the water shader and the atlas, no shadows,
+  // no assembly animation, and only the newest MINI_BUILDING_CAP buildings. The GLB parts
+  // come from the same cache the live planet fills, so a building's mesh is parsed once for
+  // the whole app however many worlds are showing it.
+  var MINI_RADIUS = 1;            // every mini planet is built at radius 1 and then scaled
+  var MINI_LAND_LIFT = 0.035;     // how far a claimed tile stands out of its sea
+  var MINI_TILE_DEPTH = 0.07;     // the skirt under a tile, so land has a dirt side
+  var MINI_BUILDING_CAP = 12;     // newest first; the rest of the world is still land
+  var miniCache = {};             // signature -> built group, so re-entering the galaxy is free
+
+  // Rebuild only when something you could actually see has changed.
+  function miniSignature(journal, world) {
+    return [journal.id, journal.theme || 'meadow',
+      (world.planet && world.planet.frequency) || journal.frequency,
+      (world.memories || []).length, (world.landscape || []).length,
+      world.house && world.house.slot,
+      (world.memories || []).map(function (m) { return m.asset && m.asset.key; }).join(',')
+    ].join('|');
+  }
+
+  function buildMiniTiles(hexgrid, landSlots, theme) {
+    var topLand = new THREE.Color(theme.land), topWater = new THREE.Color(theme.water);
+    var sideLand = new THREE.Color(theme.landSide), sideWater = new THREE.Color(theme.waterSide);
+    var positions = [];
+    var colors = [];
+    function vertex(p, c) {
+      positions.push(p[0], p[1], p[2]);
+      colors.push(c.r, c.g, c.b);
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    var ball = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({
+    hexgrid.tiles.forEach(function (tile) {
+      var isLand = landSlots.has(tile.id);
+      var surface = MINI_RADIUS + (isLand ? MINI_LAND_LIFT : 0);
+      var floor = MINI_RADIUS - MINI_TILE_DEPTH;
+      var faceTop = isLand ? topLand : topWater;
+      var faceSide = isLand ? sideLand : sideWater;
+      var centre = tile.dir.map(function (c) { return c * surface; });
+      for (var k = 0; k < tile.sides; k++) {
+        var a = tile.corners[k];
+        var b = tile.corners[(k + 1) % tile.sides];
+        var t0 = a.map(function (c) { return c * surface; });
+        var t1 = b.map(function (c) { return c * surface; });
+        // Top: one fan triangle per edge, exactly as the real planet builds it.
+        vertex(centre, faceTop); vertex(t0, faceTop); vertex(t1, faceTop);
+        // Skirt: the same winding the real planet verified against the grid.
+        var l0 = a.map(function (c) { return c * floor; });
+        var l1 = b.map(function (c) { return c * floor; });
+        vertex(t0, faceSide); vertex(l1, faceSide); vertex(t1, faceSide);
+        vertex(t0, faceSide); vertex(l0, faceSide); vertex(l1, faceSide);
+      }
+    });
+    var geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    geometry.computeVertexNormals();
+    return new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({
       vertexColors: true, flatShading: true
     }));
-    ball.castShadow = true;
-    ball.receiveShadow = true;
-    var atmos = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1.14, 2),
+  }
+
+  // Everything a mini planet needs to know about a world, read off the save.
+  function miniPlan(world) {
+    var landSlots = new Set();
+    var buildings = [];
+    (world.landscape || []).forEach(function (entry) {
+      if (typeof entry.slot === 'number') landSlots.add(entry.slot);
+    });
+    (world.memories || []).forEach(function (memory) {
+      var slot = memory.placement && memory.placement.slot;
+      if (typeof slot !== 'number') return;
+      landSlots.add(slot);
+      buildings.push({
+        slot: slot,
+        file: (memory.asset && memory.asset.key) || null,
+        rotY: (memory.placement && memory.placement.rotY) || 0
+      });
+    });
+    if (world.house && typeof world.house.slot === 'number') {
+      landSlots.add(world.house.slot);
+      buildings.push({ slot: world.house.slot, file: world.house.asset, rotY: 0, house: true });
+    }
+    // Newest first, then capped: a busy world still reads as busy from its land.
+    buildings.reverse();
+    return { landSlots: landSlots, buildings: buildings.slice(0, MINI_BUILDING_CAP) };
+  }
+
+  // alignToCell reads its angle off a corner taken on the real globe, at RADIUS. A mini
+  // planet is built at radius 1, so the corner has to be taken at ITS surface or the angle
+  // comes out of a point far outside the tile and the building lands askew.
+  function alignMiniToCell(obj, tile, surface) {
+    obj.updateMatrixWorld(true);
+    var corner = new THREE.Vector3().fromArray(tile.corners[0]).normalize().multiplyScalar(surface);
+    var local = obj.worldToLocal(corner);
+    obj.rotateY(KIT_VERTEX_ANGLE - Math.atan2(local.z, local.x));
+    obj.updateMatrixWorld(true);
+  }
+
+  function buildMiniWorld(journal) {
+    var world = MI.store.journalWorld(journal.id);
+    if (!world) return Promise.resolve(null);
+    var signature = miniSignature(journal, world);
+    if (miniCache[signature]) return Promise.resolve(miniCache[signature].clone());
+
+    var theme = MI.world.themes.get(journal.theme || 'meadow');
+    var frequency = (world.planet && world.planet.frequency) || journal.frequency || 2;
+    return loadGrid(frequency).then(function (hexgrid) {
+      if (!hexgrid || !hexgrid.tiles) return null;
+      var plan = miniPlan(world);
+      var group = new THREE.Group();
+      group.add(buildMiniTiles(hexgrid, plan.landSlots, theme));
+
+      var byId = {};
+      hexgrid.tiles.forEach(function (tile) { byId[tile.id] = tile; });
+      var surface = MINI_RADIUS + MINI_LAND_LIFT;
+      var jobs = plan.buildings.map(function (item) {
+        var tile = byId[item.slot];
+        if (!tile || !item.file) return Promise.resolve();
+        return loadParts(HEX_PACK + item.file).then(function (parts) {
+          if (!parts || !parts.length) return;
+          var prop = buildFromParts(parts, false); // no hex base: the tile itself is the ground
+          // tileApothem measures on the real globe, so bring it back to this unit sphere.
+          var scale = (tileApothem(tile) / RADIUS) * 2 / KIT_TILE_WIDTH;
+          prop.scale.setScalar(scale * (item.house ? HOUSE_SCALE : 1));
+          MI.world.sphere.orientToSurface(prop, tile.dir, 0, surface - seatDepth(tile, surface));
+          alignMiniToCell(prop, tile, surface);
+          if (item.rotY) prop.rotateY(item.rotY);
+          // Shadows are the expensive part of a prop and nothing here casts onto anything
+          // you can see, so a mini planet turns them off.
+          prop.traverse(function (node) {
+            if (node.isMesh) { node.castShadow = false; node.receiveShadow = false; }
+          });
+          group.add(prop);
+        });
+      });
+      return Promise.all(jobs).then(function () {
+        miniCache[signature] = group;
+        return group.clone();
+      });
+    }).catch(function () { return null; });
+  }
+
+  // A cheap themed marble that shows the instant the galaxy opens; the real world replaces
+  // it as soon as its grid and models are in, so entering space never waits on a load.
+  function makeMiniPlaceholder(theme) {
+    return new THREE.Mesh(
+      new THREE.IcosahedronGeometry(MINI_RADIUS, 1),
+      new THREE.MeshLambertMaterial({ color: theme.water, flatShading: true })
+    );
+  }
+
+  function makeMiniPlanet(journal) {
+    var theme = MI.world.themes.get(journal.theme || 'meadow');
+    var group = new THREE.Group();
+    // `spinner` is what tickGalaxy turns, so swapping the world in underneath it keeps the
+    // planet rotating without a hitch.
+    var spinner = new THREE.Group();
+    var placeholder = makeMiniPlaceholder(theme);
+    spinner.add(placeholder);
+    group.add(spinner);
+    group.add(new THREE.Mesh(
+      new THREE.IcosahedronGeometry(MINI_RADIUS * 1.14, 2),
       new THREE.MeshBasicMaterial({
         color: theme.water, transparent: true, opacity: 0.2,
         side: THREE.BackSide, depthWrite: false
       })
-    );
-    var group = new THREE.Group();
-    group.add(ball);
-    group.add(atmos);
+    ));
     group.userData.journalId = journal.id;
     group.userData.journal = journal;
-    return { group: group, ball: ball };
+
+    buildMiniWorld(journal).then(function (world) {
+      if (!world || !spinner.parent) return; // the galaxy closed while this was loading
+      spinner.remove(placeholder);
+      placeholder.geometry.dispose();
+      placeholder.material.dispose();
+      spinner.add(world);
+    });
+    return { group: group, ball: spinner };
   }
 
   function livePlanetRadius() {
@@ -3633,14 +3814,18 @@
     minis.forEach(function (journal, i) {
       var made = makeMiniPlanet(journal);
       var count = Math.max(1, minis.length);
-      var angle;
-      if (liveId) {
-        angle = facing + Math.PI + (i / count) * Math.PI * 2;
-      } else {
-        var span = Math.min(Math.PI * 1.15, 0.7 + count * 0.4);
-        var t = count <= 1 ? 0.5 : i / (count - 1);
-        angle = facing + Math.PI - span / 2 + span * t;
-      }
+      // Spread the worlds across an arc on the far side of the live planet, never all the
+      // way round it. Dividing a full circle put one world exactly at the camera's own angle
+      // whenever there were two of them — behind you, unhoverable and unclickable, which is
+      // the common case since most shelves hold two or three.
+      var span = liveId
+        ? Math.min(Math.PI * 1.5, 0.9 + count * 0.45)
+        : Math.min(Math.PI * 1.15, 0.7 + count * 0.4);
+      // Run the arc so the shelf reads LEFT TO RIGHT on screen. Sweeping the other way put
+      // the first world on the right, which made the reorder arrows point the wrong way:
+      // "move left" walked the world up the shelf and visibly to the right.
+      var t = count <= 1 ? 0.5 : i / (count - 1);
+      var angle = facing + Math.PI + span / 2 - span * t;
       var restY = Math.sin(i * 1.7 + 0.4) * 1.15;
       made.group.position.set(ring * Math.sin(angle), restY, ring * Math.cos(angle));
       var freq = journal.frequency || 2;
@@ -3953,8 +4138,18 @@
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
+      // An animation that throws must not take the renderer down with it. Before this, one
+      // bad step aborted the whole frame BEFORE render() and left itself in the queue, so it
+      // threw again on every frame after — the picture froze for good. Drop it and carry on.
       for (var i = animations.length - 1; i >= 0; i--) {
-        if (animations[i](now)) animations.splice(i, 1);
+        var finished;
+        try {
+          finished = animations[i](now);
+        } catch (err) {
+          console.error('animation step failed; dropping it', err);
+          finished = true;
+        }
+        if (finished) animations.splice(i, 1);
       }
       state.renderer.render(state.scene, state.camera);
     })();
@@ -4011,6 +4206,7 @@
   MI.world.init = init;
   MI.world.spawnMemory = spawnMemory;
   MI.world.spawnPerson = spawnPerson;
+  MI.world.despawnPerson = despawnPerson;
   MI.world.focus = focus;
   MI.world.onPick = onPick;
   MI.world.onHover = onHover;
@@ -4107,6 +4303,10 @@
   MI.world.enterGalaxy = enterGalaxy;
   MI.world.leaveGalaxy = leaveGalaxy;
   MI.world.focusGalaxyPlanet = focusGalaxyPlanet;
+  // Raise a planet as though the pointer were on it, without flying the camera to it.
+  // Reordering needs this: the ring is rebuilt underneath you and the world you are
+  // holding should stay lifted, but the view must not lurch on every nudge.
+  MI.world.hoverGalaxyPlanet = function (id) { if (state && state.galaxy) setGalaxyHover(id || null); };
   MI.world.selectGalaxyPlanet = selectGalaxyPlanet;
   MI.world.isGalaxy = isGalaxy;
   MI.world.onGalaxyHover = function (cb) { galaxyHoverListener = cb; };

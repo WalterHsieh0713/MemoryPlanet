@@ -269,6 +269,31 @@
     return { ok: true, wasCurrent: wasCurrent };
   }
 
+  // The shelf summary only carries counts. The galaxy draws each world for real, so it needs
+  // the saved world itself — the one that is open lives in memory, the rest on disk.
+  function journalWorld(id) {
+    if (!id) return null;
+    if (world && world.id === id) return world;
+    return readJournal(id);
+  }
+
+  // Move a journal one place along the shelf. The galaxy lays its ring out in shelf order,
+  // so this is what reordering the planets writes to.
+  function reorderJournal(id, delta) {
+    if (!library) migrateLibrary();
+    var list = library.journals || [];
+    var from = -1;
+    for (var i = 0; i < list.length; i++) { if (list[i].id === id) { from = i; break; } }
+    if (from < 0) return false;
+    var to = from + (delta < 0 ? -1 : 1);
+    if (to < 0 || to >= list.length) return false;
+    var moved = list[from];
+    list[from] = list[to];
+    list[to] = moved;
+    write(LIBRARY_KEY, library);
+    return true;
+  }
+
   function openJournal(id) {
     if (!id) return null;
     if (world && world.id === id) return world;
@@ -311,6 +336,15 @@
     var used = takenSlots();
     get().landscape.forEach(function (l) { used.add(l.slot); });
     return used;
+  }
+
+  // Drop someone from the world entirely. Only ever right when no memory mentions them any
+  // more — a person's whole existence here is the memories they appear in.
+  function removePerson(id) {
+    var w = get();
+    var before = w.people.length;
+    w.people = w.people.filter(function (p) { return p.id !== id; });
+    return w.people.length !== before;
   }
 
   function addPerson(person) {
@@ -374,6 +408,7 @@
     addMemory: addMemory,
     addLandscape: addLandscape,
     addPerson: addPerson,
+    removePerson: removePerson,
     findPerson: findPerson,
     findMemoryBySlot: findMemoryBySlot,
     reset: reset,
@@ -385,6 +420,8 @@
     createJournal: createJournal,
     openJournal: openJournal,
     deleteJournal: deleteJournal,
+    journalWorld: journalWorld,
+    reorderJournal: reorderJournal,
     DEFAULT_NAME: DEFAULT_NAME,
     NAME_MAX: NAME_MAX
   };
