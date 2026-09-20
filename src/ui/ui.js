@@ -36,7 +36,7 @@
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
-      'tag-mood', 'tag-cat', 'tag-big']
+      'tag-mood', 'tag-cat', 'tag-big', 'mic-btn']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -282,6 +282,7 @@
   }
 
   function closeBook() {
+    stopListening({ silent: true });
     clearTimeout(bookFocusTimer);
     el.book.classList.remove('open');
     el['book-btn'].setAttribute('aria-expanded', 'false');
@@ -715,10 +716,287 @@
   function setBusy(busy) {
     el['submit-btn'].disabled = busy;
     el['submit-btn'].textContent = busy ? 'planting…' : 'Plant it on my planet ✨';
+    if (el['mic-btn']) el['mic-btn'].disabled = busy;
+  }
+
+  // --- Speak a memory -------------------------------------------------------------------
+  // Web Speech API (Chrome/Safari). Interim results fill the page as you talk; when a
+  // browser only returns a finished phrase, the same text is revealed a few letters at a
+  // time so it still looks like handwriting appearing on the ruled paper.
+
+  var SpeechEngine = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognition = null;
+  var listening = false;
+  var speechPrefix = '';
+  var revealTarget = '';
+  var revealTimer = null;
+  var doneAnimTimer = null;
+  var startMicTimer = null;
+  var micLockUntil = 0;
+  var micCanStopAt = 0;
+
+  function joinSpoken(prefix, spoken) {
+    var bit = String(spoken || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    if (!bit) return prefix || '';
+    if (!prefix) return bit;
+    if (/[\s]$/.test(prefix) || /^[\n,.!?;:)'"]/.test(bit)) return prefix + bit;
+    return prefix + ' ' + bit;
+  }
+
+  // Longest phrases first so "question mark" does not leave a stray "mark".
+  var DICTATION_MARKS = [
+    { re: /\bexclamation\s+(?:mark|point)s?\b/gi, to: '!' },
+    { re: /\bquestion\s+marks?\b/gi, to: '?' },
+    { re: /\bfull\s+stops?\b/gi, to: '.' },
+    { re: /\bdot\s+dot\s+dot\b/gi, to: '...' },
+    { re: /\b(?:new|next)\s+paragraphs?\b/gi, to: '\n\n' },
+    { re: /\b(?:new|next)\s+lines?\b/gi, to: '\n' },
+    { re: /\b(?:open|left)\s+(?:quote|quotation\s+mark)s?\b/gi, to: '"' },
+    { re: /\b(?:close|right|end)\s+(?:quote|quotation\s+mark)s?\b/gi, to: '"' },
+    { re: /\b(?:open|left)\s+parenthes(?:is|es)\b/gi, to: '(' },
+    { re: /\b(?:close|right)\s+parenthes(?:is|es)\b/gi, to: ')' },
+    { re: /\bsemi[-\s]?colons?\b/gi, to: ';' },
+    { re: /\bellipsis\b/gi, to: '...' },
+    { re: /\bapostrophes?\b/gi, to: "'" },
+    { re: /\bpercent\s+signs?\b/gi, to: '%' },
+    { re: /\bat\s+signs?\b/gi, to: '@' },
+    { re: /\bhashtags?\b/gi, to: '#' },
+    { re: /\basterisks?\b/gi, to: '*' },
+    { re: /\bunderscores?\b/gi, to: '_' },
+    { re: /\bsmiley(?:\s+face)?s?\b/gi, to: ' :)' },
+    { re: /\bcolons?\b/gi, to: ':' },
+    { re: /\bcommas?\b/gi, to: ',' },
+    { re: /\bhyphens?\b/gi, to: '-' },
+    { re: /\bdashes?\b/gi, to: '—' },
+    { re: /\bperiods?\b(?!\s+(?:of|piece|drama|in|when|where|from|to|between|during)\b)/gi, to: '.' }
+  ];
+
+  function applyDictationMarks(text) {
+    var out = String(text || '');
+    DICTATION_MARKS.forEach(function (rule) {
+      out = out.replace(rule.re, rule.to);
+    });
+    return out;
+  }
+
+  function looksLikeQuestion(phrase) {
+    var t = phrase.replace(/['"]/g, '').trim();
+    if (/^(?:what a|how a|how the)\b/i.test(t)) return false;
+    return /^(?:who|what|when|where|why|how|is|are|am|do|does|did|can|could|would|will|should|shall|wasn't|isn't|aren't|won't|didn't|couldn't|wouldn't)\b/i.test(t);
+  }
+
+  function looksExcited(phrase) {
+    return /^(?:wow|yay|no way|oh my god|oh my gosh)(?:\b|[!.,]|$)/i.test(phrase.trim());
+  }
+
+  function capitalizePhrase(phrase) {
+    return phrase.replace(/^(\s*["'(]*)([a-z])/, function (_, lead, letter) {
+      return lead + letter.toUpperCase();
+    });
+  }
+
+  function autoPunctuatePhrase(phrase) {
+    var t = String(phrase || '').replace(/[ \t]+/g, ' ').trim();
+    if (!t) return t;
+    t = capitalizePhrase(t);
+    if (/[.!?…]$/.test(t) || /\.\.\.$/.test(t)) return t;
+    if (looksLikeQuestion(t)) return t + '?';
+    if (looksExcited(t)) return t + '!';
+    if (t.split(/\s+/).length < 2) return t;
+    return t + '.';
+  }
+
+  function tidyPunctuation(text) {
+    return String(text || '')
+      .replace(/\.{3}/g, '\u2026')
+      .replace(/[ \t]+([,.!?;:])/g, '$1')
+      .replace(/([!?])\1+/g, '$1')
+      .replace(/([.!?…])([^\s"'.)\]])/g, '$1 $2')
+      .replace(/([.!?…])\s+([a-z])/g, function (_, mark, letter) {
+        return mark + ' ' + letter.toUpperCase();
+      })
+      .replace(/(^|\n)(\s*)([a-z])/g, function (_, br, space, letter) {
+        return br + space + letter.toUpperCase();
+      })
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n[ \t]+/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\u2026/g, '...');
+  }
+
+  function paintMic(mode) {
+    var btn = el['mic-btn'];
+    if (!btn) return;
+    btn.classList.remove('listening', 'done');
+    if (mode) {
+      void btn.offsetWidth; // restart the press / done animation
+      btn.classList.add(mode);
+    }
+    var on = mode === 'listening';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.setAttribute('aria-label', on ? 'Stop listening' : (mode === 'done' ? 'Heard' : 'Speak a memory'));
+    btn.title = on ? 'Done' : 'Speak a memory';
+  }
+
+  function scrollEntry() {
+    el['entry-input'].scrollTop = el['entry-input'].scrollHeight;
+  }
+
+  function tickReveal() {
+    var current = el['entry-input'].value;
+    if (current === revealTarget) {
+      clearInterval(revealTimer);
+      revealTimer = null;
+      return;
+    }
+    if (revealTarget.indexOf(current) !== 0) {
+      el['entry-input'].value = revealTarget;
+      clearInterval(revealTimer);
+      revealTimer = null;
+    } else {
+      var step = current.length + Math.max(1, Math.min(3, revealTarget.length - current.length));
+      el['entry-input'].value = revealTarget.slice(0, step);
+    }
+    scrollEntry();
+    clearTimeout(guessTimer);
+    guessTimer = setTimeout(guessTags, 220);
+  }
+
+  function revealToward(text) {
+    revealTarget = text;
+    if (el['entry-input'].value === revealTarget) return;
+    if (!revealTimer) revealTimer = setInterval(tickReveal, 28);
+  }
+
+  function snapReveal() {
+    clearInterval(revealTimer);
+    revealTimer = null;
+    if (revealTarget) {
+      el['entry-input'].value = revealTarget;
+      scrollEntry();
+    }
+  }
+
+  function applyTranscript(event) {
+    var spoken = '';
+    for (var i = 0; i < event.results.length; i++) {
+      var marked = applyDictationMarks(event.results[i][0].transcript);
+      if (event.results[i].isFinal) {
+        if (spoken && !/[\s]$/.test(spoken) && !/^[\n,.!?;:]/.test(marked)) spoken += ' ';
+        spoken += autoPunctuatePhrase(marked);
+      } else {
+        if (spoken && !/[\s]$/.test(spoken) && marked) spoken += ' ';
+        spoken += marked;
+      }
+    }
+    revealToward(joinSpoken(speechPrefix, tidyPunctuation(spoken)));
+  }
+
+  function stopListening(options) {
+    var opts = options || {};
+    clearTimeout(startMicTimer);
+    startMicTimer = null;
+    if (!listening && !recognition) {
+      snapReveal();
+      return;
+    }
+    listening = false;
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try { recognition.stop(); } catch (e) { /* already stopped */ }
+      recognition = null;
+    }
+    if (revealTarget) revealTarget = tidyPunctuation(applyDictationMarks(revealTarget));
+    snapReveal();
+    if (opts.silent) {
+      paintMic(null);
+      return;
+    }
+    paintMic('done');
+    clearTimeout(doneAnimTimer);
+    doneAnimTimer = setTimeout(function () { paintMic(null); }, 900);
+  }
+
+  function bindRecognition(engine) {
+    engine.onresult = applyTranscript;
+    engine.onerror = function (event) {
+      // aborted/no-speech fire when Chrome tears down a phrase; keep the session.
+      if (event.error === 'no-speech' || event.error === 'aborted') return;
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        listening = false;
+        recognition = null;
+        paintMic(null);
+        toast('🎤', 'Microphone is blocked', 'Allow the mic for this page, then try Speak again.', 0, 3600);
+        return;
+      }
+      // network and other blips: stay on the listening look and try again
+    };
+    engine.onend = function () {
+      if (!listening) return;
+      speechPrefix = revealTarget || el['entry-input'].value;
+      try { engine.start(); } catch (e) { /* start() while starting */ }
+    };
+  }
+
+  function startListening() {
+    if (!SpeechEngine) {
+      toast('🎤', 'This browser cannot listen', 'Try Chrome or Safari — they can write as you speak.', 0, 3600);
+      return;
+    }
+    clearTimeout(startMicTimer);
+    speechPrefix = el['entry-input'].value;
+    revealTarget = speechPrefix;
+    listening = true;
+    paintMic('listening');
+    // Start after the click finishes. Starting SpeechRecognition inside the click
+    // often aborts it, which used to look like the button immediately pressing Done.
+    startMicTimer = setTimeout(function () {
+      startMicTimer = null;
+      if (!listening) return;
+      if (recognition) {
+        try { recognition.stop(); } catch (e) { /* none */ }
+      }
+      recognition = new SpeechEngine();
+      recognition.lang = (navigator.language || 'en-US');
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      bindRecognition(recognition);
+      try {
+        recognition.start();
+      } catch (e) {
+        listening = false;
+        recognition = null;
+        paintMic(null);
+        toast('🎤', 'Could not start listening', 'Check the microphone and try again.', 0, 3200);
+      }
+    }, 80);
+  }
+
+  function toggleListening(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (el['mic-btn'].disabled) return;
+    var now = Date.now();
+    if (now < micLockUntil) return;
+    if (listening) {
+      if (now < micCanStopAt) return;
+      micLockUntil = now + 300;
+      stopListening();
+      return;
+    }
+    micLockUntil = now + 400;
+    micCanStopAt = now + 600;
+    startListening();
   }
 
   function submitEntry() {
     if (el['submit-btn'].disabled) return;
+    stopListening({ silent: true });
     var text = el['entry-input'].value.trim();
     if (!text) return;
     commitPerson(); // a name still sitting in the box counts
@@ -819,6 +1097,7 @@
     el['view-btn'].addEventListener('click', toggleView);
 
     el['submit-btn'].addEventListener('click', submitEntry);
+    el['mic-btn'].addEventListener('click', toggleListening);
     el['entry-input'].addEventListener('keydown', function (e) {
       // It is a page in a book, so Enter is a new line; Ctrl/Cmd+Enter puts it on the planet.
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); submitEntry(); }

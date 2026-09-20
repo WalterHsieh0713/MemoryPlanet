@@ -360,6 +360,57 @@
   #tag-big[aria-pressed="true"] { background: #ffeab8; color: #b45309; }
 
   #write-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  #mic-btn {
+    position: relative; flex-shrink: 0; overflow: visible;
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 52px; height: 52px; padding: 0; border: none; cursor: pointer;
+    border-radius: 12px; color: var(--ink);
+    background: #f4ece0; box-shadow: var(--shadow-soft);
+    transition: background .2s ease, color .2s ease, box-shadow .2s ease;
+  }
+  #mic-btn:hover { background: #ecdfcc; transform: translateY(-1px); }
+  #mic-btn:active { transform: scale(.96); }
+  #mic-btn:disabled { opacity: .55; cursor: default; transform: none; }
+  #mic-btn svg { width: 26px; height: 26px; display: block; pointer-events: none; }
+  #mic-btn .mic-svg { fill: none; stroke: currentColor; }
+  #mic-btn .mic-svg .head { fill: currentColor; stroke: none; }
+  #mic-btn .mic-check { display: none; fill: none; stroke: currentColor; }
+  #mic-btn.done .mic-svg { display: none; }
+  #mic-btn.done .mic-check { display: block; }
+  #mic-btn .mic-rings, #mic-btn .mic-rings::before, #mic-btn .mic-rings::after {
+    position: absolute; inset: 0; border-radius: 12px; pointer-events: none;
+  }
+  #mic-btn.listening,
+  #mic-btn.listening:hover {
+    background: #ffe3d6; color: #c2410c;
+    animation: mic-press .42s var(--spring);
+  }
+  #mic-btn.listening .mic-rings::before,
+  #mic-btn.listening .mic-rings::after {
+    content: '';
+    border: 2px solid rgba(244, 128, 74, .55);
+    animation: mic-ring 1.5s ease-out infinite;
+  }
+  #mic-btn.listening .mic-rings::after { animation-delay: .55s; }
+  #mic-btn.done,
+  #mic-btn.done:hover {
+    background: #d8f0c8; color: #3f6d2a;
+    animation: mic-done .55s var(--spring);
+  }
+  @keyframes mic-press {
+    0% { transform: scale(1); }
+    40% { transform: scale(.9); }
+    100% { transform: scale(1); }
+  }
+  @keyframes mic-done {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.12); }
+    100% { transform: scale(1); }
+  }
+  @keyframes mic-ring {
+    0% { transform: scale(1); opacity: .7; }
+    100% { transform: scale(1.28); opacity: 0; }
+  }
   #submit-btn {
     flex: 1; border: none; cursor: pointer; font-family: inherit;
     padding: 15px 20px; border-radius: 16px;
@@ -425,6 +476,9 @@
       transition-duration: .01ms; transition-delay: 0s;
     }
     #book .spread::before { display: none; }
+    #mic-btn.listening, #mic-btn.done { animation: none; }
+    #mic-btn.listening .mic-rings::before,
+    #mic-btn.listening .mic-rings::after { animation: none; display: none; }
   }
 
   /* --- toast --- */
@@ -673,6 +727,18 @@
         <button id="tag-big" aria-pressed="false" title="Mark this as a big day">★ big day</button>
       </div>
       <div id="write-actions">
+        <button id="mic-btn" type="button" aria-pressed="false" aria-label="Speak a memory" title="Speak a memory">
+          <span class="mic-rings" aria-hidden="true"></span>
+          <svg class="mic-svg" viewBox="0 0 24 24" aria-hidden="true">
+            <rect class="head" x="8" y="1.5" width="8" height="12" rx="4"/>
+            <path d="M6.5 10.5v1.5c0 3.3 2.5 6 5.5 6s5.5-2.7 5.5-6v-1.5" stroke-width="2" stroke-linecap="round"/>
+            <path d="M12 18v3" stroke-width="2" stroke-linecap="round"/>
+            <path d="M8 21.5h8" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <svg class="mic-check" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
         <button id="submit-btn">Plant it on my planet ✨</button>
       </div>
     </div>
