@@ -153,6 +153,12 @@
     };
   }
 
+  // A brand-new person gets a look picker in the UI. Demo seeds and silent restores skip it
+  // and keep the hashed default spawnPerson already writes.
+  function asksLookPick(opts) {
+    return !opts || (opts.pickLooks !== false && opts.animate !== false);
+  }
+
   function addEntry(text, options) {
     var opts = options || {};
     var animated = opts.animate !== false;
@@ -328,13 +334,16 @@
       MI.store.save();
     }
 
+    var pickLooks = asksLookPick(opts) && resolved.created.length > 0;
     var jobs = [];
     // The building only goes up again if it actually changed — a swap animation for an edit
     // that only fixed a typo would be noise.
     if ((memory.asset && memory.asset.key) !== oldAsset) jobs.push(MI.world.respawnMemory(memory));
-    resolved.created.forEach(function (person) {
-      jobs.push(MI.world.spawnPerson(person, { animate: opts.animate !== false }));
-    });
+    if (!pickLooks) {
+      resolved.created.forEach(function (person) {
+        jobs.push(MI.world.spawnPerson(person, { animate: opts.animate !== false }));
+      });
+    }
 
     return Promise.all(jobs).then(function () {
       if (oldPeople.slice().sort().join('|') !== resolved.ids.slice().sort().join('|')) {
@@ -343,8 +352,9 @@
     }).then(function () {
       // Editing never pays: shards are for writing something down, not for going back over
       // it. `departed` and `arrived` let the UI say what quietly changed on the planet.
-      emit({ type: 'edited', memory: memory, departed: departed, arrived: resolved.created });
-      return { memory: memory, departed: departed, arrived: resolved.created };
+      emit({ type: 'edited', memory: memory, departed: departed, arrived: resolved.created,
+        needsLook: pickLooks });
+      return { memory: memory, departed: departed, arrived: resolved.created, needsLook: pickLooks };
     });
   }
 
@@ -387,16 +397,21 @@
       memory.photo = null;
       MI.store.save();
     }
+    var pickLooks = asksLookPick(opts) && people.created.length > 0;
     emit({ type: 'reward', memory: memory,
-      reward: MI.economy.rewardMemory(memory, { newPeople: people.created.length }) });
+      reward: MI.economy.rewardMemory(memory, { newPeople: people.created.length }),
+      arrived: people.created, needsLook: pickLooks });
 
     var spawns = [MI.world.spawnMemory(memory, { animate: opts.animate !== false })];
     seeded.forEach(function (entry) {
       MI.world.spawnLandscape(entry, { animate: opts.animate !== false });
     });
-    people.created.forEach(function (person) {
-      spawns.push(MI.world.spawnPerson(person, { animate: opts.animate !== false }));
-    });
+    // New people wait for the look picker unless this write is silent (demo seed, restore).
+    if (!pickLooks) {
+      people.created.forEach(function (person) {
+        spawns.push(MI.world.spawnPerson(person, { animate: opts.animate !== false }));
+      });
+    }
 
     return Promise.all(spawns).then(function () {
       if (opts.focus !== false) MI.world.focus(slot, { instant: opts.instant === true });
@@ -636,6 +651,26 @@
     return rebuildScene();
   }
 
+  // Stamp a Mini Character look onto a person who was just written into the journal, then
+  // walk them onto the planet. The picker calls this; without it they would wait undressed.
+  function dressPerson(personId, lookId) {
+    var world = MI.store.get();
+    var person = world.people.filter(function (p) { return p.id === personId; })[0];
+    if (!person) return Promise.resolve(null);
+    var look = MI.world.player && MI.world.player.get
+      ? (MI.world.player.get(lookId) || MI.world.player.get(MI.world.player.defaultId()))
+      : null;
+    person.appearance = person.appearance || {};
+    if (look) {
+      person.appearance.model = look.model;
+      person.appearance.color = look.color;
+    }
+    MI.store.save();
+    return MI.world.spawnPerson(person, { animate: true }).then(function () {
+      return person;
+    });
+  }
+
   // Attach or clear a photo on an already-written memory (the detail card, not a rewrite).
   function setMemoryPhoto(memoryId, photo) {
     var world = MI.store.get();
@@ -654,7 +689,7 @@
   MI.app = {
     addEntry: addEntry, updateEntry: updateEntry, restore: restore, growPlanet: growPlanet,
     equip: equip, feedPet: feedPet, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
-    ensureHub: ensureHub, setMemoryPhoto: setMemoryPhoto,
+    ensureHub: ensureHub, setMemoryPhoto: setMemoryPhoto, dressPerson: dressPerson,
     rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
     claimShip: claimShip, checkShips: checkShips
   };
