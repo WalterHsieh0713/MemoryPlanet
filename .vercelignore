@@ -3,6 +3,9 @@ server.js
 scripts/
 tools/
 docs/
+supabase/
+.env
+.env.*
 .claude/
 CLAUDE.md
 # The asset contact sheet: a local tool, and its folder listing comes from server.js, which is

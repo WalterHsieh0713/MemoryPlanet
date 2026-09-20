@@ -1,25 +1,25 @@
-// Boot sequence: quiet ocean first, then the journal shelf. A world is only replayed
-// once someone opens a journal they already keep, or names a new one.
+// Start the game only after leaving the decorative cover, avoiding two render loops.
 (function () {
-  var canvas = document.getElementById('scene-canvas');
-
-  MI.store.boot();
-  MI.world.init(canvas, {
-    frequency: MI.growth.LADDER[0],
-    theme: 'meadow',
-    pet: null,
-    satellite: null,
-    character: null,
-    skin: 'classic'
-  })
-    .then(function () {
+  var started;
+  function openJournals() {
+    if (started) return started;
+    started = Promise.resolve().then(function () {
+      MI.store.boot();
+      return MI.world.init(document.getElementById('scene-canvas'), {
+        frequency: MI.growth.LADDER[0],
+        theme: 'meadow',
+        pet: null,
+        satellite: null,
+        character: null,
+        skin: 'classic'
+      });
+    }).then(function () {
       MI.ui.init();
       MI.ui.hideLoading();
-      MI.ui.showGate();
-    })
-    .catch(function (err) {
-      console.error('[main] failed to start', err);
-      var loading = document.getElementById('loading');
-      if (loading) loading.textContent = 'Could not load the planet — check the console.';
+      MI.ui.showGate('shelf');
     });
+    return started;
+  }
+  MI.landing.init({ openJournals: openJournals });
+  MI.auth.init({ enter: MI.landing.enter });
 })();

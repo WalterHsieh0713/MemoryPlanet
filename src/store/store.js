@@ -18,6 +18,20 @@
   var NAME_MAX = 32;
   var world = null;
   var library = null;
+  var scope = '';
+  var listeners = [];
+
+  function storageKey(key) { return scope + key; }
+  function setAccount(userId) {
+    scope = userId ? 'memory-planet.account.' + userId + ':' : '';
+    world = null;
+    library = null;
+  }
+  function changed(persisted) { listeners.slice().forEach(function (fn) { fn(persisted !== false); }); }
+  function subscribe(fn) {
+    listeners.push(fn);
+    return function () { listeners = listeners.filter(function (item) { return item !== fn; }); };
+  }
 
   function firstFrequency() {
     return MI.growth ? MI.growth.LADDER[0] : 2;
@@ -64,7 +78,7 @@
 
   function read(key) {
     try {
-      var raw = localStorage.getItem(key);
+      var raw = localStorage.getItem(storageKey(key));
       return raw ? JSON.parse(raw) : null;
     } catch (e) {
       return null; // private mode / blocked storage / corrupt JSON
@@ -73,7 +87,7 @@
 
   function write(key, value) {
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(storageKey(key), JSON.stringify(value));
       return true;
     } catch (e) {
       return false; // Storage full or blocked — the in-memory world still works for this session.
@@ -219,11 +233,12 @@
   function save() {
     if (!world || !world.id) return false;
     var ok = write(journalKey(world.id), world);
-    write(STORAGE_KEY, world);
+    ok = write(STORAGE_KEY, world) && ok;
     if (!library) library = emptyLibrary();
     library.currentId = world.id;
     upsertSummary(world);
-    write(LIBRARY_KEY, library);
+    ok = write(LIBRARY_KEY, library) && ok;
+    changed(ok);
     return ok;
   }
 
@@ -265,7 +280,7 @@
     if (!library) migrateLibrary();
     var wasCurrent = (world && world.id === id) || library.currentId === id;
     if (!(world && world.id === id)) persistCurrent();
-    try { localStorage.removeItem(journalKey(id)); } catch (e) {}
+    try { localStorage.removeItem(storageKey(journalKey(id))); } catch (e) {}
     library.journals = (library.journals || []).filter(function (j) { return j.id !== id; });
     if (library.currentId === id) {
       library.currentId = library.journals[0] && library.journals[0].id || null;
@@ -276,9 +291,10 @@
       var next = library.currentId ? readJournal(library.currentId) : null;
       if (next) write(STORAGE_KEY, next);
       else {
-        try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+        try { localStorage.removeItem(storageKey(STORAGE_KEY)); } catch (e) {}
       }
     }
+    changed();
     return { ok: true, wasCurrent: wasCurrent };
   }
 
@@ -304,6 +320,7 @@
     list[from] = list[to];
     list[to] = moved;
     write(LIBRARY_KEY, library);
+    changed();
     return true;
   }
 
@@ -320,6 +337,7 @@
     upsertSummary(world);
     write(LIBRARY_KEY, library);
     write(STORAGE_KEY, world);
+    changed();
     return world;
   }
 
@@ -410,7 +428,47 @@
     return world;
   }
 
+  function exportLibrary() {
+    if (!library) migrateLibrary();
+    return JSON.parse(JSON.stringify({ version: 1, library: library,
+      worlds: library.journals.map(function (entry) { return journalWorld(entry.id); }) }));
+  }
+
+  function restoreLibrary(snapshot) {
+    // Validate the entire envelope before changing any saved keys.
+    snapshot = JSON.parse(JSON.stringify(snapshot));
+    if (!snapshot || snapshot.version !== 1 || !snapshot.library ||
+        !Array.isArray(snapshot.library.journals) || !Array.isArray(snapshot.worlds)) {
+      throw new Error('This cloud save is not a valid journal library.');
+    }
+    var ids = new Set();
+    snapshot.worlds.forEach(function (w) {
+      if (!w || typeof w.id !== 'string' || ids.has(w.id) ||
+          !Array.isArray(w.memories) || !Array.isArray(w.people)) throw new Error('Invalid journal in cloud save.');
+      ids.add(w.id);
+      normalize(w);
+    });
+    var listed = new Set();
+    snapshot.library.journals.forEach(function (entry) {
+      if (!entry || !ids.has(entry.id) || listed.has(entry.id)) throw new Error('Incomplete cloud journal library.');
+      listed.add(entry.id);
+    });
+    if (listed.size !== ids.size) throw new Error('Incomplete cloud journal library.');
+    snapshot.worlds.forEach(function (w) {
+      if (!write(journalKey(w.id), w)) throw new Error('Not enough browser storage to load your journals.');
+    });
+    if (!write(LIBRARY_KEY, snapshot.library)) throw new Error('Could not save your journal list on this browser.');
+    // Remove the legacy alias so an intentionally empty cloud shelf stays empty at boot.
+    try { localStorage.removeItem(storageKey(STORAGE_KEY)); } catch (e) {}
+    library = snapshot.library;
+    world = emptyWorld();
+  }
+
   MI.store = {
+    setAccount: setAccount,
+    subscribe: subscribe,
+    exportLibrary: exportLibrary,
+    restoreLibrary: restoreLibrary,
     load: load,
     boot: boot,
     save: save,

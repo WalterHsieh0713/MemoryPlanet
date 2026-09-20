@@ -34,6 +34,7 @@ function readBody(req) {
 // The Claude call itself lives in api/_classify.js, shared with the deployed serverless
 // function (api/classify.js) so there is only one implementation.
 const { classifyText } = require('./api/_classify.js');
+const publicConfig = require('./api/config.js');
 
 async function classify(req, res) {
   const raw = await readBody(req);
@@ -83,6 +84,7 @@ function listAssets(url, res) {
 http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
+    if (url.pathname === '/api/config') return publicConfig(req, res);
     if (req.method === 'POST' && url.pathname === '/api/classify') return await classify(req, res);
     if (req.method === 'GET' && url.pathname === '/api/assets') return listAssets(url, res);
 
