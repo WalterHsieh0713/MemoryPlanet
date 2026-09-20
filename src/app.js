@@ -52,33 +52,20 @@
     return { ids: ids, created: created };
   }
 
-  // Deterministic 0..1 from an integer — the same trick the world module uses, so nothing
-  // here has to call Math.random() and a replayed world comes out identical.
-  function wobbleFor(step) {
-    var h = ((step * 2654435761) >>> 0) / 4294967296;
-    return (h - 0.5) * 1.15; // up to about +/-33 degrees of drift per memory
-  }
-
-  // Where the next memory lands. Rather than filling outward from home as a blob, each
-  // memory steps two tiles along a drifting heading, so the island grows as a meandering
-  // chain — which is what gives it one main road with room for branches, instead of a web.
+  // Where the next memory lands: the free tile nearest home that joins the existing land and
+  // touches no other building (the house included), so the land grows as a compact blob with
+  // terrain or road between buildings (MI.placement.choose, node scripts/test-placement.js).
   function chooseSlot(world) {
-    var occupied = MI.store.occupiedSlots();
-    var last = world.memories[world.memories.length - 1];
-
-    if (last && last.placement) {
-      var step = MI.world.sphere.walkFrom(
-        last.placement.slot, world.heading, occupied, wobbleFor(world.memories.length)
-      );
-      if (step) {
-        world.heading = step.heading; // carry the direction to the next memory
-        return { slot: step.slot, via: step.via };
-      }
-    }
-    // First memory, or the chain painted itself into a corner: fall back to the nearest
-    // free tile that isn't touching another building.
-    var slot = MI.world.sphere.nextFreeSlot(occupied, world.home, MI.store.takenSlots());
-    return slot === null ? null : { slot: slot, via: null };
+    var buildings = new Set(MI.store.takenSlots());
+    if (world.house && typeof world.house.slot === 'number') buildings.add(world.house.slot);
+    var found = MI.placement.choose(MI.world.currentTiles(), {
+      home: world.home,
+      buildings: buildings,
+      land: MI.growth.landSlots(world),
+      taken: MI.store.occupiedSlots(),
+      count: world.memories.length
+    });
+    return found === null ? null : { slot: found.slot, via: found.via };
   }
 
   // Dress a few tiles around a new memory so the island grows as a landscape with the
@@ -93,8 +80,9 @@
     var wanted = MI.world.landscapeCountFor(memory.importance, slot);
     var created = [];
 
-    // The tile the chain stepped over comes first and is not optional — it's what keeps
-    // this memory joined to the previous one by land.
+    // When the building could not be placed beside existing land (the first memory beside
+    // the house, or a nearly full planet), the tile placement picked to join it comes first
+    // and is not optional, or the island would split.
     if (via !== null && via !== undefined && !occupied.has(via)) {
       var bridgeTile = MI.world.sphere.tile(via);
       if (bridgeTile && bridgeTile.sides === 6) {

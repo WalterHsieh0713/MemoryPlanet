@@ -46,7 +46,7 @@ function addMemory(world, tiles, n) {
   var buildings = new Set(world.memories.map(function (m) { return m.placement.slot; }));
   var slot = sphere.nextFreeSlot(occupied, world.home, buildings);
   if (slot === null) return false;
-  if (world.home === null) world.home = slot;
+  if (world.home === null) { world.home = slot; world.house = { slot: slot }; }
   var id = 'memory-' + n;
   world.memories.push({ id: id, placement: { slot: slot, dir: tiles[slot].dir.slice() } });
   occupied.add(slot);
@@ -61,6 +61,15 @@ function addMemory(world, tiles, n) {
     world.people.push({ id: 'person-' + n, placement: { slot: slot, dir: tiles[slot].dir.slice() } });
   }
   return true;
+}
+
+function touchingPairs(world, tiles) {
+  var b = world.memories.map(function (m) { return m.placement.slot; });
+  var n = 0;
+  for (var i = 0; i < b.length; i++) {
+    for (var j = i + 1; j < b.length; j++) if (tiles[b[i]].neighbors.indexOf(b[j]) !== -1) n++;
+  }
+  return n;
 }
 
 var failures = [];
@@ -83,7 +92,8 @@ while (true) {
     memories: world.memories.length,
     land: growth.landSlots(world).size,
     pieces: components(tiles, growth.landSlots(world)),
-    spread: maxAngleFromHome(world, tiles) * frequency
+    spread: maxAngleFromHome(world, tiles) * frequency,
+    touching: touchingPairs(world, tiles)
   };
   var newTiles = loadGrid(next);
   var result = growth.remap(world, tiles, newTiles, frequency, next);
@@ -107,6 +117,9 @@ while (true) {
     check(buildingSlots.indexOf(p.placement.slot) !== -1, label + p.id + ' no longer stands on a building tile');
   });
   check(buildingSlots.indexOf(world.home) !== -1, label + 'home is not a building tile');
+  check(touchingPairs(world, newTiles) <= before.touching, label + 'remap put buildings side by side: ' +
+    before.touching + ' -> ' + touchingPairs(world, newTiles));
+  check(world.house.slot === world.home, label + 'house slot ' + world.house.slot + ' was left behind, home is ' + world.home);
   check(after.pieces <= before.pieces, label + 'island split: ' + before.pieces + ' -> ' + after.pieces + ' pieces');
 
   console.log(label + before.memories + ' memories, land ' + before.land + ' -> ' + land.size +

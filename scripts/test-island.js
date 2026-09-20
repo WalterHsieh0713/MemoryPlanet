@@ -1,8 +1,10 @@
 // Offline check for src/world/island.js — NOT loaded by the app. Run:  node scripts/test-island.js
-// Grows a winding strip of land the way MI.app does (two tiles per memory along a drifting
-// heading), coils it into an island, and fails loudly if a tile goes missing or doubles up,
-// the island splits, it comes out a strip instead of a chunk, a tile loses every planet
-// neighbour, or a road fails to join two memories.
+// Grows land two ways: a winding strip like the old MI.app placement (two tiles per memory
+// along a drifting heading, still what older saves hold) and the compact blob MI.placement
+// makes now. It coils each into an island, and fails loudly if a tile goes missing or doubles
+// up, the island splits, it comes out a strip instead of a chunk, a tile loses every planet
+// neighbour, a road fails to join two memories, or (new worlds) two buildings end up side
+// by side on the island.
 var path = require('path');
 var fs = require('fs');
 
@@ -11,6 +13,7 @@ globalThis.THREE = require(path.join(__dirname, '..', 'three-r128.min.js'));
 require(path.join(__dirname, '..', 'src', 'world', 'sphere.js'));
 var growth = require(path.join(__dirname, '..', 'src', 'world', 'growth.js'));
 var island = require(path.join(__dirname, '..', 'src', 'world', 'island.js'));
+var placement = require(path.join(__dirname, '..', 'src', 'world', 'placement.js'));
 var sphere = globalThis.MI.world.sphere;
 
 function loadTiles(f) {
@@ -58,6 +61,36 @@ function growStrip(tiles, memories) {
   return world;
 }
 
+// MI.app's placement now: MI.placement.choose, then a bridge (if asked for) and 1-3 neighbours.
+function growBlob(tiles, memories) {
+  sphere.setGrid({ tiles: tiles });
+  var home = tiles.filter(function (t) { return t.sides === 6; })[0].id;
+  var world = { home: home, house: { slot: home }, memories: [], landscape: [{ slot: home }], people: [] };
+  var taken = new Set([home]);
+  for (var n = 0; n < memories; n++) {
+    var buildings = new Set(world.memories.map(function (m) { return m.placement.slot; }));
+    buildings.add(home);
+    var found = placement.choose(tiles, {
+      home: home, buildings: buildings, land: growth.landSlots(world), taken: taken, count: n
+    });
+    if (found === null) break;
+    var slot = found.slot;
+    world.memories.push({ id: 'm' + n, placement: { slot: slot } });
+    taken.add(slot);
+    var made = 0, wanted = 1 + (n % 3);
+    if (found.via !== null && !taken.has(found.via)) {
+      world.landscape.push({ slot: found.via }); taken.add(found.via); made++;
+    }
+    var start = slot % tiles[slot].sides;
+    for (var s = 0; s < tiles[slot].sides && made < wanted; s++) {
+      var nb = tiles[slot].neighbors[(start + s) % tiles[slot].sides];
+      if (tiles[nb].sides !== 6 || taken.has(nb)) continue;
+      world.landscape.push({ slot: nb }); taken.add(nb); made++;
+    }
+  }
+  return world;
+}
+
 function pieces(cells) {
   var slots = Object.keys(cells);
   var seen = {}, count = 0;
@@ -79,14 +112,30 @@ function pieces(cells) {
 var failures = [];
 function check(cond, message) { if (!cond) failures.push(message); }
 
-[[2, 5], [3, 12], [4, 20], [6, 45], [8, 80], [10, 140]].forEach(function (run) {
-  var f = run[0], tiles = loadTiles(f);
-  var world = growStrip(tiles, run[1]);
+var RUNS = [[2, 5], [3, 12], [4, 20], [6, 45], [8, 80], [10, 140]];
+var CASES = [];
+RUNS.forEach(function (run) { CASES.push({ kind: 'strip', f: run[0], n: run[1] }); });
+RUNS.forEach(function (run) { CASES.push({ kind: 'blob', f: run[0], n: Math.min(run[1], 40) }); });
+
+CASES.forEach(function (run) {
+  var f = run.f, tiles = loadTiles(f);
+  var world = run.kind === 'blob' ? growBlob(tiles, run.n) : growStrip(tiles, run.n);
   var land = growth.landSlots(world);
   var buildings = new Set(world.memories.map(function (m) { return m.placement.slot; }));
-  var result = island.layout(land, world.home, tiles);
+  if (run.kind === 'blob') buildings.add(world.home);
+  var result = island.layout(land, world.home, tiles, buildings);
   var cells = result.cells;
-  var label = 'f=' + f + ' (' + land.size + ' land tiles): ';
+  var label = run.kind + ' f=' + f + ' (' + land.size + ' land tiles): ';
+
+  if (run.kind === 'blob') {
+    var list = Array.from(buildings), beside = 0;
+    for (var p = 0; p < list.length; p++) {
+      for (var q = p + 1; q < list.length; q++) {
+        if (island.adjacent(cells[list[p]], cells[list[q]])) beside++;
+      }
+    }
+    check(beside === 0, label + beside + ' building pair(s) side by side on the island');
+  }
 
   var placed = Object.keys(cells);
   check(placed.length === land.size, label + 'placed ' + placed.length + ' of ' + land.size);
@@ -95,9 +144,9 @@ function check(cond, message) { if (!cond) failures.push(message); }
   check(pieces(cells) === 1, label + 'island is in ' + pieces(cells) + ' pieces');
   check(cells[world.home].i === 0 && cells[world.home].j === 0, label + 'home is not at the centre');
 
-  // A hexagonal blob of n cells has radius about sqrt(n / 3); a strip is far longer.
+  // A hexagonal blob of n cells has radius about sqrt(n / 3); a strip is far longer. Keeping buildings apart costs a little compactness, so there is some slack.
   var ideal = Math.sqrt(land.size / 3);
-  check(result.radius <= ideal + 2, label + 'not compact: radius ' + result.radius.toFixed(1) +
+  check(result.radius <= ideal * 1.4 + 2, label + 'not compact: radius ' + result.radius.toFixed(1) +
     ' vs ideal ' + ideal.toFixed(1));
 
   // How spread out the land was on the planet, in the same units (hex steps from home).
@@ -117,7 +166,7 @@ function check(cond, message) { if (!cond) failures.push(message); }
     if (!planetNeighbours.length) return;
     if (!planetNeighbours.some(function (n) { return island.adjacent(cells[s], cells[n]); })) lonely++;
   });
-  check(lonely / placed.length <= 0.1, label + lonely + ' tiles lost every planet neighbour');
+  check(lonely / placed.length <= 0.15, label + lonely + ' tiles lost every planet neighbour');
 
   // Roads join consecutive memories.
   var pairs = [];

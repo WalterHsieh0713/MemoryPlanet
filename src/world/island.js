@@ -2,10 +2,10 @@
 // land tile gets, and where the roads run across it. Pure data + math (no THREE, no DOM), so
 // it runs under Node too: node scripts/test-island.js.
 //
-// On the planet the land grows as a winding chain (MI.app.chooseSlot walks two tiles per
-// memory), so pressing it flat tile-for-tile gives a strip. Instead the island coils that
-// chain into a compact chunk: tiles are placed in order outward from home, each beside a
-// neighbour it touched on the planet, on whichever free cell sits closest to the centre.
+// The planet's land is not laid out to match a flat grid tile-for-tile (a saved world can be
+// a winding chain, and even a compact planet has no flat equivalent), so the island coils it
+// into a compact chunk: tiles are placed in order outward from home, each beside a neighbour
+// it touched on the planet, on whichever free cell sits closest to the centre.
 (function () {
   var root = typeof window !== 'undefined' ? window : globalThis;
   root.MI = root.MI || {};
@@ -28,7 +28,10 @@
 
   // landSlots: Set of planet slots that are land. Returns { cells: {slot: {i, j, ring}},
   // radius } — ring is the distance from home in cell spacings, radius the largest ring.
-  function layout(landSlots, homeSlot, tiles) {
+  // buildings (optional): Set of slots that hold a building. The coil is not a mirror of the
+  // planet's adjacency, so a building is kept off any cell beside another building where it
+  // can — two houses never end up side by side on the island either.
+  function layout(landSlots, homeSlot, tiles, buildings) {
     var cells = {};
     var taken = {};
     var land = Array.from(landSlots).sort(function (a, b) { return a - b; });
@@ -60,6 +63,12 @@
       taken[key(i, j)] = true;
     }
 
+    function besideBuilding(c) {
+      return Object.keys(cells).some(function (s) {
+        return buildings.has(Number(s)) && adjacent(cells[s], c);
+      });
+    }
+
     function freeAround(cell) {
       var out = [];
       DIRS.forEach(function (d) {
@@ -84,16 +93,23 @@
       if (index === 0) { place(slot, 0, 0); return; }
       var candidates = parent[slot] !== null ? freeAround(cells[parent[slot]]) : [];
       if (!candidates.length) candidates = frontier(); // boxed in: nearest free edge cell
+      var isBuilding = !!(buildings && buildings.has(slot));
       var best = null, bestScore = Infinity;
-      candidates.forEach(function (c) {
-        // Closest to the centre keeps it a chunk; each planet neighbour it would sit
-        // beside is worth a little, so a memory's terrain stays gathered round it.
-        var touching = tiles[slot].neighbors.filter(function (n) {
-          return cells[n] && adjacent(cells[n], c);
-        }).length;
-        var score = dist2(c.i, c.j) - 1.5 * touching;
-        if (score < bestScore - 1e-9) { bestScore = score; best = c; }
-      });
+      function consider(list) {
+        list.forEach(function (c) {
+          // Closest to the centre keeps it a chunk; each planet neighbour it would sit
+          // beside is worth a little, so a memory's terrain stays gathered round it.
+          var touching = tiles[slot].neighbors.filter(function (n) {
+            return cells[n] && adjacent(cells[n], c);
+          }).length;
+          var score = dist2(c.i, c.j) - 1.5 * touching;
+          if (isBuilding && besideBuilding(c)) score += 1000;
+          if (score < bestScore - 1e-9) { bestScore = score; best = c; }
+        });
+      }
+      consider(candidates);
+      // Every cell round its parent is beside another building: look further out.
+      if (isBuilding && bestScore >= 500) consider(frontier());
       place(slot, best.i, best.j);
     });
 

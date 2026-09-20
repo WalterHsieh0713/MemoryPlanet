@@ -733,7 +733,7 @@
       return Promise.resolve();
     }
 
-    var coiled = MI.island.layout(landSlots, world.home, state.tiles);
+    var coiled = MI.island.layout(landSlots, world.home, state.tiles, buildingSlots);
     var cells = coiled.cells;
     var roadEdges = MI.island.roads(cells, roadConnections(world), buildingSlots);
     var roads = {};

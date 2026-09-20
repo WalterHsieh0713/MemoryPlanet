@@ -78,15 +78,19 @@
   }
 
   // Nearest hexagon on `tiles` to `dir` that isn't in `claimed`. Pentagons stay water.
-  function nearestFree(tiles, dir, claimed) {
-    var best = null, bestDot = -Infinity;
+  // `keepClearOf` (optional): tiles the result should not touch — used for buildings, so the
+  // snap onto the bigger grid doesn't leave two of them side by side. A preference only.
+  function nearestFree(tiles, dir, claimed, keepClearOf) {
+    var best = null, bestDot = -Infinity, fallback = null, fallbackDot = -Infinity;
     for (var i = 0; i < tiles.length; i++) {
       var t = tiles[i];
       if (t.sides !== 6 || claimed.has(t.id)) continue;
       var d = dot(t.dir, dir);
+      if (d > fallbackDot) { fallbackDot = d; fallback = t.id; }
+      if (keepClearOf && t.neighbors.some(function (n) { return keepClearOf.has(n); })) continue;
       if (d > bestDot) { bestDot = d; best = t.id; }
     }
-    return best;
+    return best !== null ? best : fallback;
   }
 
   // Shortest land-safe path between two tiles on `tiles`: never through a pentagon or through
@@ -130,18 +134,20 @@
     var homeDir = oldTiles[world.home].dir;
     var ratio = oldFrequency / newFrequency;
     var claimed = new Set();
+    var claimedBuildings = new Set();
 
-    function place(oldSlot) {
+    function place(oldSlot, isBuilding) {
       if (mapping[oldSlot] !== undefined || !oldTiles[oldSlot]) return;
       var target = slerp(homeDir, oldTiles[oldSlot].dir, ratio);
-      var slot = nearestFree(newTiles, target, claimed);
+      var slot = nearestFree(newTiles, target, claimed, isBuilding ? claimedBuildings : null);
       if (slot === null) return; // can't happen while the new grid is bigger than the old
       mapping[oldSlot] = slot;
       claimed.add(slot);
+      if (isBuilding) claimedBuildings.add(slot);
     }
 
-    place(world.home);
-    world.memories.forEach(function (m) { if (m.placement) place(m.placement.slot); });
+    place(world.home, true);
+    world.memories.forEach(function (m) { if (m.placement) place(m.placement.slot, true); });
     world.landscape.forEach(function (l) { place(l.slot); });
     world.people.forEach(function (p) { if (p.placement) place(p.placement.slot); });
 
@@ -192,6 +198,7 @@
       p.placement.dir = newTiles[p.placement.slot].dir.slice();
     });
     world.home = moved(world.home);
+    if (world.house && typeof world.house.slot === 'number') world.house.slot = moved(world.house.slot);
     added.forEach(function (entry) { world.landscape.push(entry); });
 
     return { mapping: mapping, added: added };
