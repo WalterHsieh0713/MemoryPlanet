@@ -69,6 +69,43 @@ Skinned models and walk animation (2026-09-20): Mini Characters are skinned mesh
 - Only the visible instance's mixer advances (`isShown`); each view keeps its own copy. Mixers are disposed with the model (`disposeWalkerPair`, `clearAvatars`), or a replaced walker leaves a cached binding behind.
 - Walking speed is `TILES_PER_SECOND` in `player.js` (0.7 — a character is about a third of a house tall now, so the old 1.7 read as a sprint).
 
+## Where we are (2026-09-20)
+
+Merged with `origin/main` at `faa485c`, which brought the team's UI work: the scrapbook shop
+of ring-bound polaroids, cosmetics moved under settings, the journal as a 3D book that opens
+and flips, and a larger HUD. That UI stands as they wrote it. The only thing kept from this
+side is the **footprints follow button**, which moved to the right edge because the journal
+book now owns the bottom-right corner.
+
+Built since: compact placement (the land grows as a blob, buildings never adjacent),
+island-only follow mode with a third-person camera and mouse steering, characters played
+through their own walk/idle clips at a third of a house's height, terrain back to green with
+far fewer forests, and a first pass at solid buildings and tile levels.
+
+**The 3D solidity and elevation work is NOT finished — it still does not look or play right.**
+It is committed because the pieces underneath it (per-tile walking heights, footprint boxes,
+push-out) are worth keeping and are covered by tests, not because the result is good enough.
+What was verified was narrow: node tests, plus headless runs measuring feet against tile
+heights and the gap to a wall. That is not the same as it feeling right to play, and it does
+not. Treat the section below as a to-do, not a description of something working.
+
+Known limits of that pass, and the likely places to look:
+- **Only the island view has any of it.** The planet view has no levels, no solid buildings
+  and no character control at all.
+- **Only buildings are solid.** Trees, rocks, hills, fences and every other decoration are
+  walked straight through. A `grass-forest` tile is eight trees across the whole tile; the
+  follow camera avoids the canopy (`CANOPY_TILES`) but the character does not.
+- **Height is per tile, not per point.** A tile is one flat level, so the raised middle of a
+  hill, a dune or a mountain is walked through rather than climbed, and there are no real
+  ramps or stairs anywhere — a step is a tile-to-tile change eased over a few frames.
+- **A footprint box is one axis-aligned box per building**, from the parts below head height.
+  It cannot describe an L-shape, a porch, a tower with a wide base, or anything you should be
+  able to walk into rather than around.
+- **Residents and pets ignore all of it** — they have no collision and stand at their tile's
+  height only.
+- The camera only pulls in for buildings and tree tiles; anything else can still come between
+  it and the character.
+
 Known gaps:
 - Claude is no longer on the entry path: it only backs the detail card's "suggest a title" button, which hides itself when no key is configured. It has still never been seen answering — there is no local `.env` and the deployed key may not be set.
 - Roads currently link ALL memories chronologically; residents roam the network, but paths are not yet limited to memories that share a person. With the compact layout the chronological roads are short hops, so this matters less visually.
