@@ -1,6 +1,8 @@
-// MI.world.walkers — GLB-based walkers that move tile to tile in both views. Pets use
-// Kenney Cube Pets; memory residents use Kenney Mini Characters. Each wanders
-// by stepping tile to tile — pick a random walkable neighbour, walk to it, pause, repeat.
+// MI.world.walkers — GLB-based walkers in both views. Pets use Kenney Cube Pets; memory
+// residents use Kenney Mini Characters. A pet wanders by stepping tile to tile — pick a random
+// walkable neighbour, walk to it, pause, repeat. A resident does the same along the road between
+// their memories, but on a tile of their own they loiter: they meander freely within half a tile
+// of its centre (see Loitering below).
 //
 // This module knows nothing about world.js's internal state or MI.store/MI.island. world.js
 // hands it a "can I stand here" test and a tile-id -> position lookup each call, one set for
@@ -366,8 +368,119 @@
     return true;
   }
 
+  // --- Loitering ------------------------------------------------------------------------------
+  // A friend does not hop about the tiles around their building: on their own tile they meander
+  // freely, picking a nearby spot, walking to it, standing a moment, and picking another. A spot
+  // is measured from the tile's centre in TILE-WIDTHS, so one number holds on every planet size
+  // and in both views, and the half-tile radius is the hexagon's inscribed circle: they stay
+  // inside their own tile. `blocked(x, z)` says where they may not stand (a building, in the
+  // view's own terms); the tile-to-tile FSM above is left to carry them between memories.
+  var LOITER_RADIUS = 0.5;
+  // A house on the island can fill its whole tile, leaving no yard at all. Rather than stand
+  // frozen against it, reach a little past the tile's edge (its corners are at 0.577).
+  var LOITER_WIDEN = 0.62;
+  var LOITER_SPEED = 0.22;        // tile-widths per second: a stroll, not a march
+  var LOITER_WAIT = [0.8, 2.6];   // seconds spent standing between spots
+  var LOITER_MIN_HOP = 0.1;       // a spot closer than this is not worth setting off for
+
+  function segmentClear(a, b, blocked) {
+    var n = Math.max(2, Math.ceil(Math.hypot(b.x - a.x, b.z - a.z) / 0.04)); // finer than any wall
+    for (var i = 1; i <= n; i++) {
+      var f = i / n;
+      if (blocked(a.x + (b.x - a.x) * f, a.z + (b.z - a.z) * f)) return false;
+    }
+    return true;
+  }
+
+  // A spot in the disc that can be reached in a straight line from `from`, or null. A walker
+  // that starts INSIDE a blocked area (it arrived by the path beside a building, or a house
+  // went up under it) is not asked for a clear line: it only has to get out, so it takes the
+  // nearest open spot rather than a random one on the far side of the building.
+  function pickLoiterSpot(from, blocked, rand) {
+    rand = rand || Math.random;
+    var stuck = blocked(from.x, from.z);
+    var reaches = [LOITER_RADIUS, LOITER_WIDEN];
+    for (var r = 0; r < reaches.length; r++) {
+      var nearest = null, nearestDist = Infinity;
+      for (var tries = 0; tries < (stuck ? 300 : 40); tries++) {
+        var angle = rand() * Math.PI * 2, dist = Math.sqrt(rand()) * reaches[r];
+        var spot = { x: Math.cos(angle) * dist, z: Math.sin(angle) * dist };
+        var hop = Math.hypot(spot.x - from.x, spot.z - from.z);
+        if (hop < LOITER_MIN_HOP) continue;
+        if (blocked(spot.x, spot.z)) continue;
+        if (!stuck) {
+          if (segmentClear(from, spot, blocked)) return spot;
+        } else if (hop < nearestDist) {
+          nearest = spot; nearestDist = hop;
+        }
+      }
+      if (nearest) return nearest;
+    }
+    return null;
+  }
+
+  // Moves walker.spot by one frame. `dwell` says the walker is standing on a tile of its own
+  // and free to wander; otherwise it is on the road, and eases to `rest`, the fixed place beside
+  // the tile's middle that it walks along (most road tiles carry a building it must not walk
+  // through). Returns the unit direction it moved in, or null if it did not move.
+  function stepSpot(walker, dt, opts) {
+    var s = walker.spot;
+    if (!s) s = walker.spot = { x: opts.rest.x, z: opts.rest.z, to: null, wait: inRange(LOITER_WAIT) };
+    var goal;
+    if (!opts.dwell) {
+      s.to = null;
+      s.settled = false;
+      goal = opts.rest;
+    } else {
+      // Just arrived on a tile of its own. The road's rest place can lie inside a building's
+      // footprint; if so, do not stand there for a spell before getting out.
+      if (!s.settled) { s.settled = true; if (opts.blocked(s.x, s.z)) s.wait = 0; }
+      if (!s.to) {
+        s.wait -= dt;
+        if (s.wait <= 0) {
+          s.to = pickLoiterSpot(s, opts.blocked);
+          if (!s.to) s.wait = inRange(LOITER_WAIT);
+        }
+      }
+      goal = s.to;
+    }
+    if (!goal) return null;
+    var dx = goal.x - s.x, dz = goal.z - s.z, dist = Math.hypot(dx, dz);
+    if (dist < 1e-6) { s.to = null; s.wait = inRange(LOITER_WAIT); return null; }
+    var step = LOITER_SPEED * dt * (opts.dwell ? 1 : 2);
+    var heading = { x: dx / dist, z: dz / dist };
+    if (dist <= step) {
+      s.x = goal.x; s.z = goal.z;
+      if (opts.dwell) { s.to = null; s.wait = inRange(LOITER_WAIT); }
+      return heading;
+    }
+    var nx = s.x + heading.x * step, nz = s.z + heading.z * step;
+    // Something new in the way (a building that appeared mid-walk): give the spot up.
+    if (opts.dwell && opts.blocked(nx, nz) && !opts.blocked(s.x, s.z)) {
+      s.to = null; s.wait = inRange(LOITER_WAIT);
+      return null;
+    }
+    s.x = nx; s.z = nz;
+    return heading;
+  }
+
+  // Whether this walker should be loitering right now, and where it stands if so. A walker
+  // between tiles has t < 1 and is on its way; once t is 1 it is AT walker.targetId (tileId only
+  // catches up when it next sets off).
+  function loiterState(walker, loiter, dt) {
+    var dwell = walker.t >= 1 && loiter.dwellsAt(walker.targetId);
+    var at = walker.targetId;
+    var heading = stepSpot(walker, dt, {
+      dwell: dwell, rest: loiter.rest,
+      blocked: function (x, z) { return loiter.blocked(at, x, z); }
+    });
+    return { dwell: dwell, heading: heading };
+  }
+
   // --- Sphere view ------------------------------------------------------------------------
   // ctx: { isLand(id), neighborsOf(id) -> [ids], findAnchor() -> id|null, height, scale, hop }.
+  // ctx.loiter (residents): { tileWidth, rest: {x,z}, dwellsAt(id), blocked(id, x, z) } — see
+  // Loitering above; it replaces ctx.offset, which is the same "beside the building" idea fixed.
   // height/scale mirror how world.js sizes/places its other sphere props (state.spacing-
   // derived, RADIUS + LAND_LIFT) — these groups live inside the `planet` Group, which already
   // applies worldScale, so positions here stay in that same pre-scale unit-sphere space.
@@ -393,17 +506,38 @@
     // a walker that keeps to the roads spends much of its time on tiles that already carry a
     // building, and dead centre puts it inside one. Taken against a fixed world axis (not the
     // direction of travel) so it varies smoothly with `dir` and never pops at a step boundary.
-    if (ctx.offset) {
-      var axis = Math.abs(dir.y) > 0.95 ? WORLD_SIDE : WORLD_UP;
-      var side = new THREE.Vector3().crossVectors(dir, axis);
-      if (side.lengthSq() > 1e-8) walker.group.position.addScaledVector(side.normalize(), ctx.offset);
+    // A resident's spot on the tile (its loitering, or the rest place beside the building) is
+    // laid out in the same frame: `side` is x, `across` is z, both tangent to the sphere.
+    var axis = Math.abs(dir.y) > 0.95 ? WORLD_SIDE : WORLD_UP;
+    var side = new THREE.Vector3().crossVectors(dir, axis);
+    var across = null;
+    if (side.lengthSq() > 1e-8) {
+      side.normalize();
+      across = new THREE.Vector3().crossVectors(dir, side).normalize();
+    } else {
+      side = null;
+    }
+    var loiter = ctx.loiter ? loiterState(walker, ctx.loiter, dt) : null;
+    if (loiter && side) {
+      var spot = walker.spot, width = ctx.loiter.tileWidth;
+      walker.group.position.addScaledVector(side, spot.x * width).addScaledVector(across, spot.z * width);
+      // A tangent step leaves the surface; put it back at the height it was meant to stand at.
+      walker.group.position.setLength(ctx.height + hop);
+    } else if (ctx.offset && side) {
+      walker.group.position.addScaledVector(side, ctx.offset);
     }
     walker.group.scale.setScalar(ctx.scale);
-    animateWalker(walker, dt, was, ctx.scale);
+    animateWalker(walker, dt, was, ctx.scale, loiter && loiter.heading);
 
-    if (fromDir.distanceToSquared(toDir) > 1e-8) {
-      var up = dir.clone();
-      var forward = toDir.clone().sub(fromDir);
+    var up = dir.clone(), forward = null;
+    if (loiter && loiter.dwell) {
+      // Standing on its own tile it faces where it last walked, not back along the road it came in by.
+      if (loiter.heading && side) forward = side.clone().multiplyScalar(loiter.heading.x)
+        .addScaledVector(across, loiter.heading.z);
+    } else if (fromDir.distanceToSquared(toDir) > 1e-8) {
+      forward = toDir.clone().sub(fromDir);
+    }
+    if (forward) {
       forward.sub(up.clone().multiplyScalar(forward.dot(up)));
       if (forward.lengthSq() > 1e-8) {
         forward.normalize();
@@ -417,10 +551,11 @@
   // How far it actually travelled this frame, in the model's own units -- the walk cycle is
   // paced off that, so the same walker looks right on a 42-tile planet and on a 1002-tile one.
   // A walker standing still (paused, or a step it could not take) gets 0 and settles to idle.
-  function animateWalker(walker, dt, wasAt, scale) {
+  function animateWalker(walker, dt, wasAt, scale, strolled) {
     if (!walker.animator || dt <= 0) return;
     if (!isShown(walker.group)) return;
-    var moved = walker.t < 1 ? walker.group.position.distanceTo(wasAt) : 0;
+    // `strolled`: it moved this frame under its own loitering, with no tile step going on.
+    var moved = walker.t < 1 || strolled ? walker.group.position.distanceTo(wasAt) : 0;
     walker.animator.update(dt, moved / dt / (scale || 1));
   }
 
@@ -445,10 +580,16 @@
     var baseY = ctx.baseYOf
       ? ctx.baseYOf(walker.tileId) + (ctx.baseYOf(walker.targetId) - ctx.baseYOf(walker.tileId)) * ease
       : ctx.baseY;
-    walker.group.position.set(x + (ctx.offset || 0), baseY + hop, z); // beside the tile centre — see updateSphere
+    var loiter = ctx.loiter ? loiterState(walker, ctx.loiter, dt) : null;
+    var dx = 0, dz = 0;
+    if (loiter) { dx = walker.spot.x * ctx.loiter.tileWidth; dz = walker.spot.z * ctx.loiter.tileWidth; }
+    else dx = ctx.offset || 0; // beside the tile centre — see updateSphere
+    walker.group.position.set(x + dx, baseY + hop, z + dz);
     walker.group.scale.setScalar(ctx.scale);
-    animateWalker(walker, dt, was, ctx.scale);
-    if (Math.abs(to.x - from.x) > 1e-6 || Math.abs(to.z - from.z) > 1e-6) {
+    animateWalker(walker, dt, was, ctx.scale, loiter && loiter.heading);
+    if (loiter && loiter.dwell) {
+      if (loiter.heading) walker.group.rotation.y = Math.atan2(loiter.heading.x, loiter.heading.z);
+    } else if (Math.abs(to.x - from.x) > 1e-6 || Math.abs(to.z - from.z) > 1e-6) {
       walker.group.rotation.y = Math.atan2(to.x - from.x, to.z - from.z);
     }
   }
@@ -460,7 +601,8 @@
     makeModel: function (id) { return loadTemplate(id).then(function (model) { return model && cloneModel(model); }); },
     makeAnimator: makeAnimator,
     isShown: isShown,
-    wanderStep: pickNextTile,
+    pickLoiterSpot: pickLoiterSpot,
+    stepSpot: stepSpot,
     makeWalkerPair: makeWalkerPair,
     makeWalkerSolo: makeWalkerSolo,
     updateSphere: updateSphere,

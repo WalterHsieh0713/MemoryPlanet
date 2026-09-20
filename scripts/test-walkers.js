@@ -53,24 +53,46 @@ walkers.makeWalkerPair(model, function () { return new THREE.Group(); }).then(fu
     baseY: 2, scale: 1
   });
   assert.strictEqual(pair.flat.targetId, 2, 'resident route chooses a stop over a random branch');
-  // A friend with nowhere to go strolls instead of standing still: wanderStep picks a
-  // standable neighbour, never a forbidden one, and prefers not to double straight back.
-  var lone = { tileId: 5, fromTileId: null };
-  var ring = { 5: [4, 6, 7], 4: [5], 6: [5], 7: [5] };
-  var only = function (ok) { return function (id) { return ok.indexOf(id) !== -1; }; };
-  var seen = {};
-  for (var i = 0; i < 200; i++) seen[walkers.wanderStep(lone, function (id) { return ring[id]; }, only([4, 5, 6]))] = true;
-  assert(seen[4] && seen[6], 'a stroll uses every standable neighbour');
-  assert(!seen[7] && !seen[5], 'and never a tile it may not stand on, nor stays put while it has somewhere to go');
-  var back = { tileId: 5, fromTileId: 4 };
-  var forward = {};
-  for (var j = 0; j < 200; j++) forward[walkers.wanderStep(back, function (id) { return ring[id]; }, only([4, 5, 6, 7]))] = true;
-  assert(!forward[4] && forward[6] && forward[7], 'it does not double straight back while it has another way');
-  var boxed = { tileId: 5, fromTileId: null };
-  assert.strictEqual(walkers.wanderStep(boxed, function () { return [7]; }, only([5])), 5,
-    'boxed in, it stays where it is');
-  var cornered = { tileId: 5, fromTileId: 4 };
-  assert.strictEqual(walkers.wanderStep(cornered, function () { return [4]; }, only([4, 5])), 4,
-    'and doubles back only when that is the sole way out');
+  // A friend loiters: a spot is somewhere within half a tile-width of the tile's centre, never
+  // in a blocked place, and never reached through one.
+  var core = function (x, z) { return Math.hypot(x, z) < 0.25; }; // a building in the middle
+  var from = { x: 0.3, z: 0 };
+  var reach = 0;
+  for (var i = 0; i < 300; i++) {
+    var spot = walkers.pickLoiterSpot(from, core);
+    assert(spot, 'there is room to wander around a building');
+    assert(!core(spot.x, spot.z), 'a spot is never inside the building');
+    reach = Math.max(reach, Math.hypot(spot.x, spot.z));
+  }
+  assert(reach <= 0.5 + 1e-9 && reach > 0.4, 'and stays within half a tile of the centre, using the whole disc');
+  // The way to a spot is clear too: from one side of the building it never picks the far side
+  // when the straight line runs through it.
+  var wall = function (x, z) { return Math.abs(x) < 0.05 && z > -0.4 && z < 0.4; };
+  for (var k = 0; k < 300; k++) {
+    var across = walkers.pickLoiterSpot({ x: -0.3, z: 0 }, wall);
+    assert(across && across.x < 0.05, 'it does not pick a spot on the far side of a wall');
+  }
+  assert.strictEqual(walkers.pickLoiterSpot({ x: 0.3, z: 0 }, function () { return true; }), null,
+    'with nowhere to stand it picks nothing rather than a blocked place');
+  // A walker inside a blocked area is only asked to get out.
+  var inside = walkers.pickLoiterSpot({ x: 0.1, z: 0 }, core);
+  assert(inside && !core(inside.x, inside.z), 'a walker standing in the building can leave it');
+
+  // Frame by frame it walks to its spot at a stroll, then stands, then picks another.
+  var walker = { spot: { x: 0.3, z: 0, to: { x: 0.3, z: 0.4 }, wait: 0 } };
+  var travelled = 0, moves = 0, waited = 0;
+  for (var f = 0; f < 6000; f++) {
+    var before = { x: walker.spot.x, z: walker.spot.z };
+    var heading = walkers.stepSpot(walker, 1 / 60, { dwell: true, rest: { x: 0.3, z: 0 }, blocked: core });
+    var did = Math.hypot(walker.spot.x - before.x, walker.spot.z - before.z);
+    assert(did <= 0.22 / 60 + 1e-9, 'a stroll never exceeds its pace');
+    assert(!core(walker.spot.x, walker.spot.z), 'and never carries it into the building');
+    assert(Math.hypot(walker.spot.x, walker.spot.z) <= 0.62 + 1e-9, 'or off its tile');
+    if (heading) { moves++; travelled += did; } else waited++;
+  }
+  assert(moves > 600 && waited > 600, 'over 100s it both walks and stands, ' + moves + '/' + waited);
+  // Leaving to travel: it eases back to the rest place beside the building.
+  for (var g = 0; g < 600; g++) walkers.stepSpot(walker, 1 / 60, { dwell: false, rest: { x: 0.3, z: 0 }, blocked: core });
+  assert(Math.abs(walker.spot.x - 0.3) < 1e-6 && Math.abs(walker.spot.z) < 1e-6, 'on the road it walks beside the building');
   console.log('--- walker checks passed ---');
 }).catch(function (err) { console.error(err); process.exitCode = 1; });
