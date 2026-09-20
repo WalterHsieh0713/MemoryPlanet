@@ -1583,6 +1583,42 @@
   }
   #detail .swap:hover { background: #e2ecef; color: var(--ink); transform: translateY(-1px); }
   #detail .swap.current { background: var(--accent); color: #fff; cursor: default; }
+
+  /* A ship's card: the same scrap of paper as #detail, tilted the other way so the two read
+     as different things when one replaces the other. */
+  #ship-card {
+    position: fixed; right: 16px; top: 118px; z-index: 6;
+    width: min(300px, calc(100vw - 40px));
+    padding: 18px 20px; border-radius: 12px 4px 10px 6px;
+    transform: rotate(-0.9deg) translateY(-10px) scale(.97); pointer-events: none;
+    opacity: 0;
+    transition: opacity .25s ease, transform .4s var(--spring);
+  }
+  #ship-card.show { opacity: 1; transform: rotate(-0.9deg); pointer-events: auto; }
+  body.gated #ship-card {
+    opacity: 0 !important; pointer-events: none !important; visibility: hidden !important;
+  }
+  #ship-card .cat { font-size: 12px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: var(--accent-deep); }
+  #ship-card.claimed .cat { color: #4fa58c; }
+  #ship-card h3 { margin: 6px 0 2px; font-size: 19px; font-weight: 700; line-height: 1.25; }
+  #ship-card p { margin: 10px 0 0; font-size: 14px; font-weight: 500; line-height: 1.55; }
+  #ship-card .date { margin-top: 7px; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+  #ship-bar {
+    margin-top: 14px; height: 8px; border-radius: 999px; background: #e7eef1; overflow: hidden;
+  }
+  #ship-fill {
+    display: block; height: 100%; width: 0; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+    transition: width .5s var(--spring);
+  }
+  #ship-claim {
+    margin-top: 14px; width: 100%; border: none; cursor: pointer; font-family: inherit;
+    padding: 10px 16px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    background: var(--accent); color: #fff; box-shadow: var(--shadow-soft);
+    transition: background .2s ease, transform .25s var(--spring);
+  }
+  #ship-claim:hover { background: var(--accent-deep); transform: translateY(-1px); }
   #detail .pill {
     padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 700;
     background: #eaf6fa; color: var(--ink);
@@ -1790,6 +1826,18 @@
   <div class="swaps" id="detail-swaps"></div>
 </div>
 
+<!-- A ship you clicked out on the ocean: who they are, what they want, and the button that
+     takes them once you have given it. -->
+<div id="ship-card" class="paper">
+  <button class="close" id="ship-close" aria-label="Close">✕</button>
+  <div class="cat" id="ship-flag"></div>
+  <h3 id="ship-name"></h3>
+  <p id="ship-ask"></p>
+  <div id="ship-bar"><span id="ship-fill"></span></div>
+  <div class="date" id="ship-count"></div>
+  <button id="ship-claim" hidden>Strike their flag</button>
+</div>
+
 <div id="toast">
   <div class="emoji" id="toast-emoji">✨</div>
   <div>
@@ -1887,6 +1935,7 @@
 <script src="src/world/themes.js"></script>
 <script src="src/world/cosmetics.js"></script>
 <script src="src/world/walkers.js"></script>
+<script src="src/world/ships.js"></script>
 <script src="src/world/player.js"></script>
 <script src="src/world/connectors.js"></script>
 <script src="src/world/world.js"></script>
