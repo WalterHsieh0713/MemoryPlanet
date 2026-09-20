@@ -446,6 +446,22 @@
     });
   }
 
+  // Placeholder gathering hall for the friend hub. Village-kit piece, distinct from the
+  // main house, so it reads as a place people meet rather than a second home.
+  var HUB_SCALE = 1.32;
+
+  function spawnHub(hub, options) {
+    if (!state || !hub || typeof hub.slot !== 'number') return Promise.resolve();
+    var opts = options || {};
+    setTileLand(hub.slot);
+    if (opts.animate !== false) popTile(hub.slot);
+    return placeProp(HEX_PACK + hub.asset, { slot: hub.slot, scale: HUB_SCALE }, {
+      animate: opts.animate !== false,
+      rotY: Math.PI / 3,
+      tag: { type: 'hub', slot: hub.slot }
+    });
+  }
+
   function spawnLandscape(entry, options) {
     if (!state || typeof entry.slot !== 'number') return;
     // Remembered so a theme change can repaint this tile in place.
@@ -896,6 +912,11 @@
       landSlots.add(world.house.slot);
       buildingSlots.add(world.house.slot);
       assetBySlot[world.house.slot] = world.house.asset;
+    }
+    if (world.hub && typeof world.hub.slot === 'number') {
+      landSlots.add(world.hub.slot);
+      buildingSlots.add(world.hub.slot);
+      assetBySlot[world.hub.slot] = world.hub.asset;
     }
     if (!landSlots.size) {
       state.flatRadius = 3;
@@ -1471,6 +1492,9 @@
 
   function setFlatView(on, options) {
     if (!state) return Promise.resolve();
+    if (state.hub && state.hub.on) {
+      return leaveHub({ instant: true }).then(function () { return setFlatView(on, options); });
+    }
     if (state.transition) return state.transition;
     var goingFlat = !!on;
     var animated = !(options && options.instant) && goingFlat !== !!state.flatMode;
@@ -3152,17 +3176,19 @@
     // being land between one frame and the next. Put it back on the home tile if so.
     if (!isLandAt(standingOn) && !placePlayer(p, view)) return;
 
-    // Who can walk you: in follow mode the WASD keys, on the island otherwise the arrows,
-    // and on the planet nobody — there you only watch the character stand and wander.
+    // Who can walk you: on the island, WASD and the arrows are the same (camera-relative
+    // walk). Follow mode and orbit both count. On the planet you only watch. Inside the
+    // friend hub both sets walk the plaza.
     var keys = null;
-    if (state.camMode === 'ground') keys = state.keys.wasd;
-    else if (state.camMode === 'orbit' && state.flatMode) keys = state.keys.arrows;
+    if (state.camMode === 'ground' || (state.camMode === 'orbit' && state.flatMode)) {
+      keys = state.keys.wasd;
+    }
     var input = { forward: 0, strafe: 0 };
     if (keys) {
-      if (keys.w) input.forward += 1;
-      if (keys.s) input.forward -= 1;
-      if (keys.d) input.strafe += 1;
-      if (keys.a) input.strafe -= 1;
+      if (keys.w || state.keys.arrows.w) input.forward += 1;
+      if (keys.s || state.keys.arrows.s) input.forward -= 1;
+      if (keys.d || state.keys.arrows.d) input.strafe += 1;
+      if (keys.a || state.keys.arrows.a) input.strafe -= 1;
     }
 
     var up = playerUp(p);
@@ -3261,6 +3287,7 @@
 
   function setGroundView(on) {
     if (!state || state.transition || state.camMode === 'tween') return Promise.resolve(isGroundView());
+    if (state.hub && state.hub.on) return Promise.resolve(false);
     var want = !!on;
     if (want === isGroundView()) return Promise.resolve(want);
 
@@ -3494,6 +3521,11 @@
         on: false, mix: 0, group: null, planets: [], hoverId: null,
         liveId: null, liveHover: 0, liveBounce: 0, saved: null, busy: false,
         focusId: null, hop: null
+      },
+      hub: {
+        on: false, busy: false, group: null, figures: [], player: null,
+        hoverId: null, prompt: false, autoArmed: true, saved: null,
+        camOffset: null, blockers: [], groundY: 0, centres: [], radius: 0
       }
     };
     state.stars = makeStars();
@@ -3503,6 +3535,9 @@
     state.galaxy.group = new THREE.Group();
     state.galaxy.group.visible = false;
     scene.add(state.galaxy.group);
+    state.hub.group = new THREE.Group();
+    state.hub.group.visible = false;
+    scene.add(state.hub.group);
     setTheme(opts.theme || 'meadow');
 
     // Orbit camera, shared by both views: eye on a sphere around the origin, looking in.
@@ -3523,6 +3558,13 @@
     canvasEl.addEventListener('mousedown', function (e) {
       lastX = e.clientX; lastY = e.clientY;
       if (state.camMode === 'tween') return;
+      if (state.hub && state.hub.on) {
+        if (e.button !== 0) return;
+        dragging = true; dragMoved = false;
+        canvasEl.style.cursor = 'grabbing';
+        if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+        return;
+      }
       if (state.camMode === 'ground') {
         // Middle button only. Left is left alone so it stays free for clicking on things.
         if (e.button !== 1) return;
@@ -3542,7 +3584,9 @@
     window.addEventListener('mouseup', function () {
       dragging = false;
       looking = false;
-      canvasEl.style.cursor = state.camMode === 'ground' ? 'default' : hoverCursor;
+      canvasEl.style.cursor = (state.hub && state.hub.on)
+        ? 'grab'
+        : (state.camMode === 'ground' ? 'default' : hoverCursor);
     });
 
     // Hover: a pointer over anything you can actually open, plus a light mark on the tile.
@@ -3566,6 +3610,23 @@
     });
     state.pollHover = function () {
       if (!hoverPending || dragging || state.transition) return;
+      if (state.hub && state.hub.on) {
+        var event = hoverPending;
+        hoverPending = null;
+        var hid = pickHubLook(event, canvasEl, true);
+        setHubHover(hid);
+        hoverCursor = hid ? 'pointer' : 'grab';
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
+      if (state.camMode === 'ground') {
+        var groundEvent = hoverPending;
+        hoverPending = null;
+        var groundSlot = pickSlot(groundEvent, canvasEl);
+        hoverCursor = isHubBuildingSlot(groundSlot) ? 'pointer' : 'default';
+        canvasEl.style.cursor = hoverCursor;
+        return;
+      }
       if (state.camMode !== 'orbit') { hoverPending = null; return; }
       var event = hoverPending;
       hoverPending = null;
@@ -3614,6 +3675,16 @@
         return;
       }
       if (!dragging) return;
+      if (state.hub && state.hub.on) {
+        if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+        if (state.hub.camOffset) {
+          state.hub.camOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), -dx * 0.008);
+          state.hub.camOffset.y = Math.max(2.2, Math.min(9, state.hub.camOffset.y - dy * 0.02));
+          updateHubCamera();
+        }
+        lastX = e.clientX; lastY = e.clientY;
+        return;
+      }
       if (state.galaxy && state.galaxy.busy) return;
       if (state.galaxy && state.galaxy.hop) return;
       if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
@@ -3635,6 +3706,15 @@
     canvasEl.addEventListener('wheel', function (e) {
       e.preventDefault();
       if (state.transition) return;
+      if (state.hub && state.hub.on) {
+        var off = state.hub.camOffset;
+        if (!off) return;
+        var len = off.length();
+        var next = Math.max(5, Math.min(14, len * (1 + e.deltaY * 0.001)));
+        if (len > 0.001) off.multiplyScalar(next / len);
+        updateHubCamera();
+        return;
+      }
       if (state.camMode !== 'orbit') return; // the follow camera keeps a fixed distance
       if (state.galaxy && state.galaxy.on) {
         if (state.galaxy.busy) return;
@@ -3679,7 +3759,8 @@
       }
       var key = MOVE_KEYS[e.code];
       if (!key) return;
-      if (key[0] === 'arrows') e.preventDefault(); // arrows would otherwise scroll the page
+      // Arrows would scroll the page; in the hub both sets are walking, so neither should.
+      if (key[0] === 'arrows' || (state.hub && state.hub.on)) e.preventDefault();
       state.keys[key[0]][key[1]] = true;
     });
     window.addEventListener('keyup', function (e) {
@@ -3691,10 +3772,20 @@
 
     canvasEl.addEventListener('click', function (e) {
       if (dragMoved || state.transition) return; // a camera drag or mid-unfold, not a pick
+      if (state.hub && state.hub.on) {
+        var lookId = pickHubLook(e, canvasEl, false);
+        if (hubPickListener) hubPickListener(lookId);
+        return;
+      }
       if (state.galaxy && state.galaxy.on) {
         if (state.galaxy.busy) return;
         var gid = pickGalaxy(e, canvasEl);
         if (galaxyPickListener) galaxyPickListener(gid);
+        return;
+      }
+      if (state.camMode === 'ground') {
+        var groundSlot = pickSlot(e, canvasEl);
+        if (isHubBuildingSlot(groundSlot)) enterHub();
         return;
       }
       if (state.camMode !== 'orbit') return;     // following or mid-tween: nothing to pick yet
@@ -4295,6 +4386,9 @@
 
   function enterGalaxy(journals, options) {
     if (!state) return Promise.resolve();
+    if (state.hub && state.hub.on) {
+      return leaveHub({ instant: true }).then(function () { return enterGalaxy(journals, options); });
+    }
     var opts = options || {};
     var liveId = opts.currentId || null;
     state.galaxy.busy = false;
@@ -4506,9 +4600,11 @@
       }
       animateWater(now / 1000);
       animateSatellite(now / 1000);
-      if (!state.transition) updateWalkers(dt);
+      if (!state.transition && !(state.hub && state.hub.on)) updateWalkers(dt);
       updateShips(dt); // hides itself mid-fold rather than freezing, so a ship never lands ashore
-      if (!state.transition) updatePlayer(dt);
+      if (!state.transition && !(state.hub && state.hub.on)) updatePlayer(dt);
+      if (!state.transition && state.hub && state.hub.on) updateHub(dt);
+      pollHubApproach();
       if (state.pollHover) state.pollHover();
       tickGalaxy(dt);
       state.spinners.forEach(function (group) { spinRotors(group, dt); });
@@ -4538,6 +4634,434 @@
       }
     });
     posAttr.needsUpdate = true;
+  }
+
+  // --- Friend hub ---------------------------------------------------------------------
+  // A walkable plaza of every character look, entered from the village hall on the world
+  // (click in orbit, walk up in follow) or from settings. Models are the real Mini
+  // Characters; swapping writes player.character and, when a friend already wears that
+  // look, trades appearance.model with them.
+  var hubPickListener = null;
+  var hubChangeListener = null;
+  var HUB_CAM_OFFSET = new THREE.Vector3(4.1, 5.4, 4.7);
+  var HUB_CLICK_REACH = 2.8;
+
+  function isHub() {
+    return !!state && !!state.hub && state.hub.on;
+  }
+
+  function isHubBuildingSlot(slot) {
+    if (slot === null || slot === undefined || !MI.store) return false;
+    var world = MI.store.get();
+    return !!(world.hub && world.hub.slot === slot);
+  }
+
+  function notifyHub() {
+    if (hubChangeListener) hubChangeListener(isHub());
+  }
+
+  function makeHubLabel(text, ink) {
+    var canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    var ctx = canvas.getContext('2d');
+    var label = String(text || '').slice(0, 18);
+    ctx.font = '700 22px Quicksand, Nunito, sans-serif';
+    var w = Math.min(232, Math.max(72, ctx.measureText(label).width + 28));
+    var x = (256 - w) / 2, y = 16, h = 34, r = 12;
+    ctx.fillStyle = 'rgba(255, 247, 236, 0.94)';
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(232, 201, 160, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = ink || '#2c5f6f';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, 128, y + h / 2 + 1);
+    var tex = new THREE.CanvasTexture(canvas);
+    tex.encoding = THREE.sRGBEncoding;
+    var mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+    var sprite = new THREE.Sprite(mat);
+    sprite.scale.set(1.6, 0.4, 1);
+    sprite.position.y = 1.08;
+    sprite.center.set(0.5, 0);
+    sprite.userData.isHubLabel = true;
+    return sprite;
+  }
+
+  function hubIsLand(p) {
+    // One disk, not a circle per hex: inscribed circles leave gaps at the hex corners,
+    // which is what made walking seize up in some directions.
+    var r = state.hub && state.hub.radius;
+    if (!r) return false;
+    return p.x * p.x + p.z * p.z <= r * r;
+  }
+
+  function clearHubScene() {
+    if (!state || !state.hub) return;
+    if (state.hub.player && state.hub.player.animator) state.hub.player.animator.dispose();
+    state.hub.player = null;
+    (state.hub.figures || []).forEach(function (fig) {
+      if (fig.animator) fig.animator.dispose();
+    });
+    state.hub.figures = [];
+    state.hub.blockers = [];
+    state.hub.centres = [];
+    state.hub.hoverId = null;
+    if (!state.hub.group) return;
+    while (state.hub.group.children.length) {
+      state.hub.group.remove(state.hub.group.children[0]);
+    }
+  }
+
+  function retagHubFigures() {
+    if (!state || !state.hub) return;
+    var world = MI.store.get();
+    state.hub.figures.forEach(function (fig) {
+      var info = MI.world.hub.inspect(world, fig.id);
+      var toDrop = [];
+      fig.group.children.forEach(function (ch) {
+        if (ch.userData && ch.userData.isHubLabel) toDrop.push(ch);
+      });
+      toDrop.forEach(function (ch) { fig.group.remove(ch); });
+      var name = info.person ? info.person.name : info.look.name;
+      var ink = info.you ? '#2c5f6f' : (info.person ? '#c45c26' : '#3d6b52');
+      fig.group.add(makeHubLabel(name, ink));
+    });
+  }
+
+  function placeHubFigures() {
+    var world = MI.store.get();
+    var list = MI.world.hub.looks();
+    var spots = MI.world.hub.figureSpots(list.length, FLAT_SPACING);
+    var scale = FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE;
+    return Promise.all(list.map(function (look, i) {
+      var spot = spots[i];
+      if (!spot) return null;
+      return MI.world.walkers.makeModel(look.model).then(function (model) {
+        if (!state || !state.hub.on) return;
+        var mesh = model || makePersonModel(look.color);
+        var holder = new THREE.Group();
+        holder.add(mesh);
+        holder.position.set(spot.x, state.hub.groundY, spot.z);
+        holder.scale.setScalar(scale);
+        holder.rotation.y = spot.yaw;
+        holder.userData.tag = { type: 'hub-look', id: look.id };
+        var info = MI.world.hub.inspect(world, look.id);
+        var name = info.person ? info.person.name : look.name;
+        var ink = info.you ? '#2c5f6f' : (info.person ? '#c45c26' : '#3d6b52');
+        holder.add(makeHubLabel(name, ink));
+        state.hub.group.add(holder);
+        state.hub.figures.push({
+          id: look.id,
+          group: holder,
+          animator: MI.world.walkers.makeAnimator(mesh),
+          spot: spot
+        });
+      });
+    }));
+  }
+
+  function placeHubPlayer() {
+    var start = MI.world.hub.playerStart(FLAT_SPACING);
+    var id = state.characterId || MI.world.player.defaultId();
+    var p = MI.world.player.newPlayer();
+    return MI.world.player.makeAvatar(id, makePersonModel).then(function (model) {
+      if (!state || !state.hub.on || !model) return;
+      if (state.hub.player && state.hub.player.group && state.hub.player.group.parent) {
+        if (state.hub.player.animator) state.hub.player.animator.dispose();
+        state.hub.group.remove(state.hub.player.group);
+      }
+      var holder = new THREE.Group();
+      holder.add(model);
+      p.group = holder;
+      p.animator = MI.world.walkers.makeAnimator(model);
+      p.x = start.x;
+      p.z = start.z;
+      p.heading = start.heading;
+      p.groundY = state.hub.groundY;
+      p.placed = true;
+      state.hub.group.add(holder);
+      state.hub.player = p;
+      state.hub.groundForward = new THREE.Vector3(Math.sin(p.heading), 0, Math.cos(p.heading));
+    });
+  }
+
+  function buildHubScene() {
+    clearHubScene();
+    var cells = MI.world.hub.plazaCells();
+    var centres = cells.map(function (cell) { return MI.island.toXZ(cell, FLAT_SPACING); });
+    state.hub.centres = centres;
+    var spread = 0;
+    centres.forEach(function (c) {
+      spread = Math.max(spread, Math.sqrt(c.x * c.x + c.z * c.z));
+    });
+    // Cover the outer hexes' corners, but stop short of stepping off the grass rim.
+    state.hub.radius = spread + FLAT_TILE_RADIUS * 0.9;
+    state.hub.groundY = FLAT_BASE_Y + TILE_TOP_DEFAULT * FLAT_MODEL_SCALE;
+    var grassUrl = HEX_PACK + 'grass.glb';
+    var houseUrl = HEX_PACK + 'building-house.glb';
+    return Promise.all([loadParts(grassUrl), loadParts(houseUrl)]).then(function (pack) {
+      if (!state || !state.hub.on) return;
+      var grassParts = pack[0], houseParts = pack[1];
+      cells.forEach(function (cell, idx) {
+        var c = centres[idx];
+        var isHouse = cell.i === 0 && cell.j === 0;
+        var parts = isHouse && houseParts ? houseParts : grassParts;
+        if (!parts) return;
+        var obj = buildFromParts(parts, true);
+        obj.scale.setScalar(FLAT_MODEL_SCALE * (isHouse ? 1.18 : 1));
+        obj.rotation.y = Math.PI / 3;
+        obj.position.set(c.x, FLAT_BASE_Y, c.z);
+        obj.userData.tag = { type: 'hub-tile', house: isHouse };
+        state.hub.group.add(obj);
+        if (isHouse) {
+          // Kit house GLBs include the garden (trees, fence, logs). Tracing that whole
+          // footprint walled off the path around the house. A modest pad on the cottage
+          // itself is enough to walk around it.
+          state.hub.blockers.push({
+            x: c.x, z: c.z, hx: 0.55, hz: 0.55, cos: 1, sin: 0
+          });
+        }
+      });
+      return placeHubFigures();
+    }).then(function () {
+      if (!state || !state.hub.on) return;
+      return placeHubPlayer();
+    });
+  }
+
+  function hubCameraAxes() {
+    var up = new THREE.Vector3(0, 1, 0);
+    var dir = state.camera.getWorldDirection(new THREE.Vector3());
+    var forward = MI.world.player.tangent(dir, up);
+    if (!forward) {
+      forward = (state.hub.groundForward && state.hub.groundForward.clone())
+        || new THREE.Vector3(0, 0, 1);
+    }
+    var right = new THREE.Vector3().crossVectors(forward, up).normalize();
+    return { forward: forward, right: right };
+  }
+
+  function updateHubCamera() {
+    var p = state.hub && state.hub.player;
+    if (!p || !state.hub.camOffset) return;
+    var target = new THREE.Vector3(p.x, state.hub.groundY + 0.55, p.z);
+    state.camera.up.set(0, 1, 0);
+    state.camera.position.copy(target).add(state.hub.camOffset);
+    state.camera.lookAt(target);
+    state.camTarget.copy(target);
+  }
+
+  function setHubHover(id) {
+    if (!state || !state.hub) return;
+    if (state.hub.hoverId === id) return;
+    state.hub.hoverId = id;
+    var base = FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE;
+    state.hub.figures.forEach(function (fig) {
+      fig.group.scale.setScalar(fig.id === id ? base * 1.12 : base);
+    });
+  }
+
+  function pickHubLook(e, canvasEl, anyDistance) {
+    if (!state || !state.hub || !state.hub.on || !state.hub.group) return null;
+    var rect = canvasEl.getBoundingClientRect();
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, state.camera);
+    var hits = raycaster.intersectObject(state.hub.group, true);
+    var found = null;
+    for (var i = 0; i < hits.length; i++) {
+      for (var node = hits[i].object; node; node = node.parent) {
+        if (node.userData && node.userData.tag && node.userData.tag.type === 'hub-look') {
+          found = node.userData.tag.id;
+          break;
+        }
+      }
+      if (found) break;
+    }
+    if (!found || anyDistance) return found;
+    var fig = null;
+    for (var f = 0; f < state.hub.figures.length; f++) {
+      if (state.hub.figures[f].id === found) fig = state.hub.figures[f];
+    }
+    var p = state.hub.player;
+    if (!fig || !p) return null;
+    var dx = p.x - fig.spot.x, dz = p.z - fig.spot.z;
+    if (dx * dx + dz * dz > HUB_CLICK_REACH * HUB_CLICK_REACH) return null;
+    return found;
+  }
+
+  function updateHub(dt) {
+    var p = state.hub && state.hub.player;
+    if (!p || !p.group) return;
+    var input = { forward: 0, strafe: 0 };
+    function down(k) { return state.keys.wasd[k] || state.keys.arrows[k]; }
+    if (down('w')) input.forward += 1;
+    if (down('s')) input.forward -= 1;
+    if (down('d')) input.strafe += 1;
+    if (down('a')) input.strafe -= 1;
+    var axes = hubCameraAxes();
+    var clear = MI.world.player.pushOut({ x: p.x, z: p.z }, state.hub.blockers, PLAYER_RADIUS);
+    if (clear) { p.x = clear.x; p.z = clear.z; }
+    var rad = state.hub.radius;
+    if (rad) {
+      var dist = Math.sqrt(p.x * p.x + p.z * p.z);
+      if (dist > rad && dist > 1e-6) {
+        p.x *= rad / dist;
+        p.z *= rad / dist;
+      }
+    }
+    MI.world.player.updateFlat(p, dt, {
+      forward: axes.forward, right: axes.right, input: input,
+      isLandAt: hubIsLand,
+      blockers: state.hub.blockers, blockerRadius: PLAYER_RADIUS,
+      speed: MI.world.player.TILES_PER_SECOND * FLAT_SPACING,
+      baseY: state.hub.groundY,
+      scale: FLAT_MODEL_SCALE * PLAYER_FLAT_SCALE
+    });
+    state.hub.figures.forEach(function (fig) {
+      if (fig.animator) fig.animator.update(dt, 0);
+    });
+    updateHubCamera();
+  }
+
+  function hubApproach() {
+    if (!state || !state.flatMode || state.camMode !== 'ground') return false;
+    if (!MI.store) return false;
+    var world = MI.store.get();
+    if (!world.hub || !state.island || !state.island.centres) return false;
+    var c = state.island.centres[world.hub.slot];
+    var p = state.players && state.players.flat;
+    if (!c || !p || !p.placed) return false;
+    var dx = p.x - c.x, dz = p.z - c.z;
+    var reach = FLAT_SPACING * 1.15;
+    return dx * dx + dz * dz < reach * reach;
+  }
+
+  function pollHubApproach() {
+    if (!state || !state.hub || state.hub.on || state.hub.busy || state.transition) return;
+    var near = hubApproach();
+    if (near && state.hub.autoArmed) {
+      state.hub.autoArmed = false;
+      enterHub();
+      return;
+    }
+    if (!near) state.hub.autoArmed = true;
+  }
+
+  function enterHub() {
+    if (!state || state.hub.on || state.hub.busy) return Promise.resolve(false);
+    if (state.galaxy && state.galaxy.on) return Promise.resolve(false);
+    if (state.transition || state.camMode === 'tween') return Promise.resolve(false);
+    state.hub.busy = true;
+    var ready = isGroundView() ? setGroundView(false) : Promise.resolve();
+    return ready.then(function () {
+      if (!state) return false;
+      state.hub.saved = {
+        flatMode: state.flatMode,
+        dist: state.camDistance,
+        theta: state.camTheta,
+        phi: state.camPhi,
+        target: state.camTarget.clone(),
+        planetVisible: state.planet.visible,
+        flatVisible: state.flatGroup.visible,
+        starsVisible: !!(state.stars && state.stars.visible)
+      };
+      state.planet.visible = false;
+      state.flatGroup.visible = false;
+      if (state.satellite) state.satellite.visible = false;
+      if (state.stars) state.stars.visible = false;
+      applyViewLighting(1);
+      state.hub.on = true;
+      state.hub.group.visible = true;
+      state.camMode = 'hub';
+      state.hub.camOffset = HUB_CAM_OFFSET.clone();
+      clearKeys();
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+      notifyHub();
+      return buildHubScene();
+    }).then(function () {
+      if (!state) return false;
+      updateHubCamera();
+      state.hub.busy = false;
+      return true;
+    }).catch(function (err) {
+      console.error('[hub] failed to enter', err);
+      if (state) {
+        state.hub.busy = false;
+        state.hub.on = false;
+        state.camMode = 'orbit';
+        if (state.hub.group) state.hub.group.visible = false;
+        notifyHub();
+      }
+      return false;
+    });
+  }
+
+  function leaveHub(options) {
+    if (!state || !state.hub || !state.hub.on) return Promise.resolve();
+    var opts = options || {};
+    var saved = state.hub.saved || {};
+    state.hub.on = false;
+    state.hub.busy = false;
+    state.hub.autoArmed = false;
+    state.hub.group.visible = false;
+    clearHubScene();
+    state.planet.visible = saved.planetVisible !== undefined ? saved.planetVisible : !saved.flatMode;
+    state.flatGroup.visible = saved.flatVisible !== undefined ? saved.flatVisible : !!saved.flatMode;
+    if (state.stars) state.stars.visible = saved.starsVisible !== false && !saved.flatMode;
+    if (state.satellite) state.satellite.visible = true;
+    applyViewLighting(saved.flatMode ? 1 : 0);
+    state.camMode = 'orbit';
+    if (typeof saved.dist === 'number') state.camDistance = saved.dist;
+    if (typeof saved.theta === 'number') state.camTheta = saved.theta;
+    if (typeof saved.phi === 'number') state.camPhi = saved.phi;
+    if (saved.target) state.camTarget.copy(saved.target);
+    state.camera.up.set(0, 1, 0);
+    state.updateCamera();
+    clearKeys();
+    notifyHub();
+    if (opts.instant || reduceMotion()) return Promise.resolve();
+    return Promise.resolve();
+  }
+
+  function applyHubSwap(lookId) {
+    if (!state) return Promise.resolve({ ok: false });
+    var world = MI.store.get();
+    var result = MI.world.hub.swap(world, lookId);
+    if (!result.ok) return Promise.resolve(result);
+    MI.store.save();
+    var jobs = [setCharacter(world.player.character)];
+    if (result.person) jobs.push(spawnPerson(result.person, { animate: true }));
+    return Promise.all(jobs).then(function () {
+      if (state.hub && state.hub.on) {
+        retagHubFigures();
+        var keep = state.hub.player
+          ? { x: state.hub.player.x, z: state.hub.player.z, heading: state.hub.player.heading }
+          : null;
+        return placeHubPlayer().then(function () {
+          if (keep && state.hub.player) {
+            state.hub.player.x = keep.x;
+            state.hub.player.z = keep.z;
+            state.hub.player.heading = keep.heading;
+          }
+          return result;
+        });
+      }
+      return result;
+    });
   }
 
   var raycaster = new THREE.Raycaster();
@@ -4623,6 +5147,7 @@
   MI.world.landscapeCountFor = landscapeCountFor;
   MI.world.spawnLandscape = spawnLandscape;
   MI.world.spawnHouse = spawnHouse;
+  MI.world.spawnHub = spawnHub;
   MI.world.personColor = personColor;
   MI.world.syncShips = syncShips;
   MI.world.focusShip = focusShip;
@@ -4706,4 +5231,14 @@
   MI.world.onGalaxyHover = function (cb) { galaxyHoverListener = cb; };
   MI.world.onGalaxyPick = function (cb) { galaxyPickListener = cb; };
   MI.world.onGalaxyFrame = function (cb) { galaxyFrameListener = cb; };
+  MI.world.enterHub = enterHub;
+  MI.world.leaveHub = leaveHub;
+  MI.world.isHub = isHub;
+  MI.world.isHubSlot = isHubBuildingSlot;
+  MI.world.applyHubSwap = applyHubSwap;
+  MI.world.inspectHubLook = function (id) {
+    return MI.world.hub.inspect(MI.store.get(), id);
+  };
+  MI.world.onHubPick = function (cb) { hubPickListener = cb; };
+  MI.world.onHubChange = function (cb) { hubChangeListener = cb; };
 })();

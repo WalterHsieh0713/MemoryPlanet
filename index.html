@@ -1214,7 +1214,22 @@
   body.gated #shop,
   body.gated #picker,
   body.gated #book,
-  body.gated #detail {
+  body.gated #detail,
+  body.hub #hud-left,
+  body.hub #book-btn,
+  body.hub #settings-btn,
+  body.hub #theme-rack,
+  body.hub #settings,
+  body.hub #planet-card,
+  body.hub #view-btn,
+  body.hub #ground-btn,
+  body.hub #world-title,
+  body.hub #journal,
+  body.hub #shop,
+  body.hub #picker,
+  body.hub #book,
+  body.hub #detail,
+  body.hub #ship-card {
     opacity: 0 !important; pointer-events: none !important; visibility: hidden !important;
   }
 
@@ -1350,6 +1365,68 @@
   }
   #picker .play:hover { filter: brightness(1.05); }
   #picker .hint { margin-top: 10px; font-size: 12.5px; color: var(--ink-mid); }
+
+  #hub-ui {
+    position: fixed; left: 50%; bottom: 22px; z-index: 18;
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .25s ease, visibility .25s;
+  }
+  body.hub #hub-ui { opacity: 1; visibility: visible; pointer-events: auto; }
+  #hub-ui .hint {
+    margin: 0; padding: 6px 12px; border-radius: 999px;
+    background: rgba(255, 247, 236, 0.9); color: var(--ink-mid);
+    font-size: 13px; box-shadow: 0 6px 16px rgba(112, 70, 44, .12);
+  }
+  #hub-leave {
+    border: 0; border-radius: 16px; cursor: pointer; font: inherit;
+    font-size: 14px; font-weight: 700; color: var(--ink);
+    padding: 10px 18px; background: var(--paper);
+    box-shadow: 1px 2px 0 #e4d2b0, 0 6px 14px rgba(112, 70, 44, .12);
+  }
+  #hub-leave:hover { background: #fff8ec; }
+  #hub-card {
+    position: fixed; left: 18px; top: 50%; z-index: 19;
+    transform: translateY(-50%) translateX(-8px);
+    width: min(320px, calc(100vw - 36px));
+    padding: 18px 18px 16px; border-radius: 22px;
+    background: #fff7ec;
+    border: 1px solid #e6d4b6;
+    color: var(--ink);
+    box-shadow: 2px 3px 0 #e4d2b0, 0 18px 40px rgba(112, 70, 44, .18);
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity .22s ease, transform .22s var(--spring), visibility .22s;
+  }
+  #hub-card.open {
+    opacity: 1; visibility: visible; pointer-events: auto;
+    transform: translateY(-50%);
+  }
+  #hub-card h2 { margin: 0; font-size: 20px; font-weight: 700; }
+  #hub-card .sub { margin: 4px 0 0; font-size: 14px; font-weight: 600; color: var(--ink-mid); }
+  #hub-card .meta { margin: 10px 0 0; font-size: 13px; color: var(--ink-mid); line-height: 1.45; }
+  #hub-card .titles { margin: 8px 0 0; padding: 0; list-style: none; }
+  #hub-card .titles li {
+    font-size: 13px; color: var(--ink); padding: 4px 0 4px 12px;
+    border-left: 3px solid #f0c49a;
+  }
+  #hub-card .row { display: flex; gap: 8px; margin-top: 14px; }
+  #hub-card .row button {
+    flex: 1; border: 0; border-radius: 14px; cursor: pointer; font: inherit;
+    font-size: 14px; font-weight: 700; padding: 10px 8px;
+  }
+  #hub-card-swap { background: var(--accent, #f08c46); color: #fff; }
+  #hub-card-swap:hover { filter: brightness(1.05); }
+  #hub-card-swap[hidden], #hub-card-friend[hidden] { display: none; }
+  #hub-card-close { background: #fff8ec; color: var(--ink-mid); }
+  #hub-card-close:hover { color: var(--ink); }
+  @media (max-width: 640px) {
+    #hub-card {
+      left: 50%; top: auto; bottom: 88px;
+      transform: translateX(-50%) translateY(8px);
+    }
+    #hub-card.open { transform: translateX(-50%); }
+  }
   #shop {
     position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px;
     background: rgba(44, 95, 111, .24); backdrop-filter: blur(3px);
@@ -1717,7 +1794,7 @@
 <div id="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
   <div class="sheet paper">
     <h2 id="settings-title">settings</h2>
-    <button id="character-btn" type="button">switch character</button>
+    <button id="character-btn" type="button">friend hub</button>
     <button id="journals-btn" type="button">switch journal</button>
     <button id="reset-btn" type="button" disabled>start over</button>
   </div>
@@ -1863,7 +1940,24 @@
     <div class="sub">Who lives on your planet?</div>
     <div id="picker-grid" class="grid" role="radiogroup" aria-labelledby="picker-title"></div>
     <button id="picker-play" class="play">Play</button>
-    <div class="hint">Arrow keys walk them on the island &middot; the <b>footprints</b> button follows them, WASD moves and the mouse steers</div>
+    <div class="hint">The footprints button follows you. WASD and the arrow keys walk.</div>
+  </div>
+</div>
+
+<div id="hub-ui" aria-hidden="true">
+  <p class="hint">Walk up to a look and click it</p>
+  <button id="hub-leave" type="button">leave hub</button>
+</div>
+<div id="hub-card" role="dialog" aria-labelledby="hub-card-name">
+  <h2 id="hub-card-name">Scout</h2>
+  <p class="sub" id="hub-card-sub"></p>
+  <div id="hub-card-friend" hidden>
+    <p class="meta" id="hub-card-friend-meta"></p>
+    <ul class="titles" id="hub-card-titles"></ul>
+  </div>
+  <div class="row">
+    <button id="hub-card-swap" type="button">Swap</button>
+    <button id="hub-card-close" type="button">Not now</button>
   </div>
 </div>
 
@@ -1945,6 +2039,7 @@
 <script src="src/world/cosmetics.js"></script>
 <script src="src/world/walkers.js"></script>
 <script src="src/world/ships.js"></script>
+<script src="src/world/hub.js"></script>
 <script src="src/world/player.js"></script>
 <script src="src/world/connectors.js"></script>
 <script src="src/world/world.js"></script>

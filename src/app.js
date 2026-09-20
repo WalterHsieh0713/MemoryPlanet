@@ -58,6 +58,7 @@
   function chooseSlot(world) {
     var buildings = new Set(MI.store.takenSlots());
     if (world.house && typeof world.house.slot === 'number') buildings.add(world.house.slot);
+    if (world.hub && typeof world.hub.slot === 'number') buildings.add(world.hub.slot);
     var found = MI.placement.choose(MI.world.currentTiles(), {
       home: world.home,
       buildings: buildings,
@@ -230,6 +231,7 @@
   // `home` at it. Worlds that already have a home (their first memory set it) are left
   // alone, so this never moves an existing island.
   var HOUSE_ASSET = 'building-house.glb';
+  var HUB_ASSET = 'building-village.glb';
 
   function ensureHome() {
     var world = MI.store.get();
@@ -244,8 +246,42 @@
     return true;
   }
 
+  // The friend hub's front door on the world: a village hall, kept off the house the way
+  // every other building is. Worlds that already have a hub keep it; brand-new ones get
+  // one next to home so there is always a way in.
+  function ensureHub() {
+    var world = MI.store.get();
+    if (world.hub && typeof world.hub.slot === 'number') return false;
+    ensureHome();
+    world = MI.store.get();
+    var tiles = MI.world.currentTiles();
+    if (!tiles || !tiles.length) return false;
+    var buildings = new Set();
+    if (world.house && typeof world.house.slot === 'number') buildings.add(world.house.slot);
+    MI.store.takenSlots().forEach(function (slot) { buildings.add(slot); });
+    if (world.hub && typeof world.hub.slot === 'number') buildings.add(world.hub.slot);
+    var found = MI.placement.choose(tiles, {
+      home: world.home,
+      buildings: buildings,
+      land: MI.growth.landSlots(world),
+      taken: MI.store.occupiedSlots(),
+      count: world.memories.length
+    });
+    if (!found) return false;
+    if (found.via !== null && found.via !== undefined && !MI.store.occupiedSlots().has(found.via)) {
+      MI.store.addLandscape({ slot: found.via, asset: 'grass.glb', fromMemoryId: null, source: 'hub' });
+    }
+    if (!MI.store.occupiedSlots().has(found.slot)) {
+      MI.store.addLandscape({ slot: found.slot, asset: 'grass.glb', fromMemoryId: null, source: 'hub' });
+    }
+    world.hub = { slot: found.slot, asset: HUB_ASSET };
+    MI.store.save();
+    return true;
+  }
+
   function restore() {
     ensureHome();
+    ensureHub();
     var world = MI.store.get();
     world.landscape.forEach(function (entry) {
       MI.world.spawnLandscape(entry, { animate: false });
@@ -254,6 +290,7 @@
       return MI.world.spawnMemory(memory, { animate: false });
     });
     if (world.house) spawns.push(MI.world.spawnHouse(world.house, { animate: false }));
+    if (world.hub) spawns.push(MI.world.spawnHub(world.hub, { animate: false }));
     world.people.forEach(function (person) {
       if (person.placement) spawns.push(MI.world.spawnPerson(person, { animate: false }));
     });
@@ -362,7 +399,8 @@
     var world = MI.store.get();
     announced = {}; // ship ids repeat across journals; this one's ships have not been announced
     var ready = Promise.resolve();
-    if (MI.world.isGroundView()) ready = Promise.resolve(MI.world.setGroundView(false));
+    if (MI.world.isHub && MI.world.isHub()) ready = Promise.resolve(MI.world.leaveHub({ instant: true }));
+    if (MI.world.isGroundView()) ready = ready.then(function () { return MI.world.setGroundView(false); });
     return ready.then(function () {
       return MI.world.isFlatView() ? MI.world.setFlatView(false, { instant: true }) : Promise.resolve();
     }).then(function () {
@@ -380,6 +418,7 @@
       // back empty and your character had nowhere to stand until the next reload, which is
       // when restore() would have called ensureHome.
       ensureHome();
+      ensureHub();
       return MI.world.setCharacter(world.player && world.player.character);
     }).then(restore).then(function () {
       if (opts.keepCamera) return;
@@ -410,6 +449,7 @@
   MI.app = {
     addEntry: addEntry, restore: restore, growPlanet: growPlanet,
     equip: equip, startOver: startOver, onEvent: onEvent, ensureHome: ensureHome,
+    ensureHub: ensureHub,
     rebuildScene: rebuildScene, enterJournal: enterJournal, createJournal: createJournal,
     claimShip: claimShip, checkShips: checkShips
   };

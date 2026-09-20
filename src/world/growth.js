@@ -147,6 +147,7 @@
     }
 
     place(world.home, true);
+    if (world.hub && typeof world.hub.slot === 'number') place(world.hub.slot, true);
     world.memories.forEach(function (m) { if (m.placement) place(m.placement.slot, true); });
     world.landscape.forEach(function (l) { place(l.slot); });
     world.people.forEach(function (p) { if (p.placement) place(p.placement.slot); });
@@ -159,6 +160,7 @@
     world.memories.forEach(function (m) {
       if (m.placement && mapping[m.placement.slot] !== undefined) newBuildings.add(mapping[m.placement.slot]);
     });
+    if (world.hub && mapping[world.hub.slot] !== undefined) newBuildings.add(mapping[world.hub.slot]);
     var newLand = new Set();
     oldLand.forEach(function (s) { if (mapping[s] !== undefined) newLand.add(mapping[s]); });
 
@@ -199,6 +201,7 @@
     });
     world.home = moved(world.home);
     if (world.house && typeof world.house.slot === 'number') world.house.slot = moved(world.house.slot);
+    if (world.hub && typeof world.hub.slot === 'number') world.hub.slot = moved(world.hub.slot);
     added.forEach(function (entry) { world.landscape.push(entry); });
 
     return { mapping: mapping, added: added };

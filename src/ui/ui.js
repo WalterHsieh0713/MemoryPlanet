@@ -51,7 +51,10 @@
       'galaxy-card', 'galaxy-card-name', 'galaxy-card-meta', 'galaxy-open', 'galaxy-delete',
       'galaxy-new',
       'ship-card', 'ship-close', 'ship-flag', 'ship-name', 'ship-ask', 'ship-bar', 'ship-fill',
-      'ship-count', 'ship-claim']
+      'ship-count', 'ship-claim',
+      'hub-ui', 'hub-leave', 'hub-card', 'hub-card-name', 'hub-card-sub',
+      'hub-card-friend', 'hub-card-friend-meta', 'hub-card-titles',
+      'hub-card-swap', 'hub-card-close']
       .forEach(function (id) { el[id] = $(id); });
   }
 
@@ -1162,6 +1165,7 @@
 
   var pickerChoice = null;
   var pickerOpener = null;
+  var hubLookId = null;
   var gateAvatar = null;
   var gateBusy = false;
   var hoveredGalaxy = null;
@@ -1203,6 +1207,93 @@
   function closePicker() {
     el.picker.classList.remove('open');
     if (pickerOpener && pickerOpener.focus) pickerOpener.focus();
+  }
+
+  function closeHubCard() {
+    hubLookId = null;
+    if (el['hub-card']) el['hub-card'].classList.remove('open');
+  }
+
+  function showHubCard(lookId) {
+    if (!lookId) { closeHubCard(); return; }
+    var info = MI.world.inspectHubLook(lookId);
+    if (!info) { closeHubCard(); return; }
+    hubLookId = lookId;
+    el['hub-card-name'].textContent = info.person ? info.person.name : info.look.name;
+    if (info.you) {
+      el['hub-card-sub'].textContent = info.person
+        ? 'This is you — ' + info.person.name + ' wears this look too'
+        : 'This is you';
+    } else if (info.person) {
+      el['hub-card-sub'].textContent = (info.person.relationship || 'friend')
+        + ' · wearing ' + info.look.name;
+    } else {
+      el['hub-card-sub'].textContent = 'Nobody is using this look';
+    }
+    if (info.person && !info.you) {
+      el['hub-card-friend'].hidden = false;
+      var n = (info.person.memoryIds && info.person.memoryIds.length)
+        || info.titles.length;
+      el['hub-card-friend-meta'].textContent = n
+        ? (info.person.name + ' is in ' + plural(n, 'memory').replace('memorys', 'memories'))
+        : (info.person.name + ' lives on your planet');
+      el['hub-card-titles'].innerHTML = '';
+      info.titles.forEach(function (title) {
+        var li = document.createElement('li');
+        li.textContent = title;
+        el['hub-card-titles'].appendChild(li);
+      });
+    } else {
+      el['hub-card-friend'].hidden = true;
+    }
+    el['hub-card-swap'].hidden = !info.canSwap;
+    el['hub-card-swap'].textContent = info.person ? 'Swap looks' : 'Swap';
+    el['hub-card'].classList.add('open');
+  }
+
+  function confirmHubSwap() {
+    if (!hubLookId) return;
+    var wanted = hubLookId;
+    MI.world.applyHubSwap(wanted).then(function (result) {
+      if (!result || !result.ok) return;
+      closeHubCard();
+      var name = result.look ? result.look.name : 'that look';
+      if (result.person) {
+        toast('🤝', 'Looks swapped', result.person.name + ' took your old look.', 0, 2400);
+      } else {
+        toast('✨', 'Now ' + name, 'Walk around — this is you.', 0, 2200);
+      }
+    });
+  }
+
+  function openHub() {
+    closeSettings();
+    closeShop();
+    closePicker();
+    hideDetail();
+    hideShip();
+    if (isBookBusy()) closeBook();
+    closeHubCard();
+    return Promise.resolve(MI.world.enterHub());
+  }
+
+  function exitHub() {
+    closeHubCard();
+    return Promise.resolve(MI.world.leaveHub());
+  }
+
+  function syncHubUi(on) {
+    document.body.classList.toggle('hub', !!on);
+    if (el['hub-ui']) el['hub-ui'].setAttribute('aria-hidden', on ? 'false' : 'true');
+    if (on) {
+      closeSettings();
+      closeShop();
+      closePicker();
+      hideDetail();
+    } else {
+      closeHubCard();
+    }
+    syncGroundButton();
   }
 
   function renderPicker() {
@@ -1531,8 +1622,11 @@
     closePicker();
     hideDetail();
     if (isBookBusy()) closeBook();
-    var ready = MI.world.isGroundView() ? leaveGroundView() : Promise.resolve();
-    ready.then(function () { showGate('shelf'); });
+    var ready = Promise.resolve();
+    if (MI.world.isHub && MI.world.isHub()) ready = Promise.resolve(MI.world.leaveHub({ instant: true }));
+    ready.then(function () {
+      return MI.world.isGroundView() ? leaveGroundView() : Promise.resolve();
+    }).then(function () { showGate('shelf'); });
   }
 
   function chooseCharacter() {
@@ -1558,7 +1652,8 @@
   // of a fold, and lit while you are following.
   function syncGroundButton() {
     var onGround = MI.world.isGroundView();
-    var available = MI.world.isFlatView() && !MI.world.isTransitioning();
+    var available = MI.world.isFlatView() && !MI.world.isTransitioning()
+      && !(MI.world.isHub && MI.world.isHub());
     el['ground-btn'].classList.toggle('show', available);
     el['ground-btn'].classList.toggle('on', onGround);
     el['ground-btn'].setAttribute('aria-pressed', onGround ? 'true' : 'false');
@@ -2179,7 +2274,7 @@
     // would have seen the first time.
     el['character-btn'].addEventListener('click', function () {
       closeSettings();
-      openPicker();
+      openHub();
     });
     el['journals-btn'].addEventListener('click', returnToShelf);
     el['galaxy-new'].addEventListener('click', function () {
@@ -2257,10 +2352,13 @@
         return;
       }
       if (el.picker.classList.contains('open')) { closePicker(); return; }
+      if (el['hub-card'] && el['hub-card'].classList.contains('open')) { closeHubCard(); return; }
+      if (MI.world.isHub && MI.world.isHub()) { exitHub(); return; }
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
       else if (el.settings.classList.contains('open')) closeSettings();
       else if (el['theme-rack'].classList.contains('open')) closeThemeTray();
+      else if (el['ship-card'] && el['ship-card'].classList.contains('show')) hideShip();
       else if (isBookBusy()) closeBook();
     });
 
@@ -2274,6 +2372,11 @@
     MI.world.onPick(function (slot) {
       if (document.body.classList.contains('gated')) return;
       hideShip(); // clicked away from the ocean
+      if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
+        hideDetail();
+        openHub();
+        return;
+      }
       if (slot === null || slot === undefined) { hideDetail(); return; }
       var memory = MI.store.findMemoryBySlot(slot);
       if (memory) {
@@ -2288,6 +2391,10 @@
     // the pointer leaves, the open entry's own mark comes back.
     MI.world.onHover(function (slot) {
       if (document.body.classList.contains('gated')) return false;
+      if (MI.world.isHubSlot && MI.world.isHubSlot(slot)) {
+        MI.world.highlightSlot(slot, { soft: true });
+        return true;
+      }
       var memory = slot === null || slot === undefined ? null : MI.store.findMemoryBySlot(slot);
       if (memory) MI.world.highlightSlot(slot, { soft: true });
       else if (openSlot === null) MI.world.clearHighlight();
@@ -2308,6 +2415,11 @@
       enterExisting(id);
     });
     MI.world.onGalaxyFrame(syncGalaxyLabels);
+    MI.world.onHubPick(showHubCard);
+    MI.world.onHubChange(syncHubUi);
+    el['hub-leave'].addEventListener('click', exitHub);
+    el['hub-card-close'].addEventListener('click', closeHubCard);
+    el['hub-card-swap'].addEventListener('click', confirmHubSwap);
 
     refreshStats();
   }
@@ -2320,6 +2432,6 @@
     init: init, refreshStats: refreshStats, hideLoading: hideLoading,
     showGate: showGate,
     // The settings menu opens this; it is the only way to change who you are.
-    openCharacterPicker: openPicker
+    openCharacterPicker: openHub
   };
 })();

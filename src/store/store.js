@@ -38,6 +38,9 @@
       // The main house: the tile your character starts on, claimed at world creation so a
       // brand-new planet has somewhere to stand. { slot, asset } once MI.app.ensureHome runs.
       house: null,
+      // Gathering hall on the world: click it (or walk up in follow) to enter the friend hub.
+      // { slot, asset } once MI.app.ensureHub runs. Placeholder: Kenney village hall.
+      hub: null,
       // Plain terrain seeded around memories so the island reads as a landscape with
       // buildings in it, rather than a solid block of buildings.
       landscape: [],
@@ -105,6 +108,7 @@
     if (!w.ships) w.ships = [];         // worlds saved before the pirate fleet
     if (!w.player) w.player = { character: null }; // worlds saved before the character
     if (w.house === undefined) w.house = null;
+    if (w.hub === undefined) w.hub = null; // worlds saved before the village hall
     if (!w.planet) {
       // Every v2 world was built on the original 1002-tile grid (frequency 10).
       w.planet = { frequency: w.version >= 3 ? fresh.planet.frequency : 10 };
