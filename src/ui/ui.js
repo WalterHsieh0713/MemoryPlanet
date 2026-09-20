@@ -32,9 +32,11 @@
       'detail-cat', 'detail-title', 'detail-date', 'detail-text', 'detail-pills', 'loading',
       'reset-btn', 'view-btn', 'detail-swaps', 'toast-shards',
       'planet-card', 'planet-size', 'planet-tiles', 'planet-bar', 'planet-hint',
-      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items',
+      'wallet', 'wallet-count', 'shop-btn', 'shop', 'shop-close', 'shop-balance', 'shop-items', 'shop-title',
+      'shop-blurb',
       'ground-btn', 'picker', 'picker-grid', 'picker-play',
-      'character-btn', 'skins-btn',
+      'character-btn', 'skins-btn', 'theme-btn', 'theme-tray', 'theme-rack',
+      'tray-themes', 'tray-theme-items',
       'journal', 'book', 'book-btn', 'book-close', 'book-count', 'book-note',
       'book-list', 'book-write-tab', 'book-memories-tab', 'write-date', 'title-suggest',
       'tag-row', 'tag-people', 'tag-person-input', 'tag-person-list',
@@ -282,40 +284,166 @@
     if (writing && window.innerWidth <= 680 && isBookOpen()) el['entry-input'].focus();
   }
 
+  var bookOpenTimer = null;
+  var bookAnimTimers = [];
+
+  function clearBookAnim() {
+    clearTimeout(bookFocusTimer);
+    clearTimeout(bookOpenTimer);
+    bookOpenTimer = null;
+    for (var i = 0; i < bookAnimTimers.length; i++) clearTimeout(bookAnimTimers[i]);
+    bookAnimTimers = [];
+  }
+
+  function bookLater(ms, fn) {
+    var t = setTimeout(fn, ms);
+    bookAnimTimers.push(t);
+    return t;
+  }
+
+  function isBookBusy() {
+    return el.book.classList.contains('prep') || el.book.classList.contains('open');
+  }
+
   function openBook(event) {
-    if (isBookOpen()) return;
+    if (isBookBusy()) return;
     clearTimeout(toastTimer);
+    clearBookAnim();
     el.toast.classList.remove('show');
     bookOpener = event && event.currentTarget || document.activeElement;
-    var rect = el['book-btn'].querySelector('.mini-book').getBoundingClientRect();
-    el.book.style.setProperty('--book-from-x', (rect.left + rect.width / 2 - window.innerWidth / 2) + 'px');
-    el.book.style.setProperty('--book-from-y', (rect.top + rect.height / 2 - window.innerHeight / 2) + 'px');
-    el.book.style.setProperty('--book-from-scale', rect.width / el.book.querySelector('.spread').offsetWidth);
-    // Apply the miniature's measured starting pose before beginning the expansion.
-    void el.book.offsetWidth;
+
     refreshPersonList();
     renderBook();
     el['write-date'].textContent = new Date().toLocaleDateString(undefined,
       { weekday: 'long', month: 'long', day: 'numeric' });
     selectBookPage('write');
-    el.book.classList.add('open');
+
+    var mini = el['book-btn'].querySelector('.mini-book');
+    var stage = el.book.querySelector('.stage-3d');
+    el.book.classList.remove('from-pose', 'arriving', 'uncover', 'flipping', 'open');
+    el.book.classList.add('prep');
+    var dest = stage.getBoundingClientRect();
+    var mr = mini.getBoundingClientRect();
+    el.book.style.setProperty('--from-x', (mr.left + mr.width / 2 - (dest.left + dest.width / 2)) + 'px');
+    el.book.style.setProperty('--from-y', (mr.top + mr.height / 2 - (dest.top + dest.height / 2)) + 'px');
+    el.book.style.setProperty('--from-s', String(Math.max(0.08, mr.height / Math.max(dest.height, 1))));
+    el.book.classList.add('from-pose');
+    el['book-btn'].classList.add('hand-off');
     el['book-btn'].setAttribute('aria-expanded', 'true');
-    // Wait for the book to become visible before moving keyboard focus inside it.
+    unpeekMiniBook();
+    void stage.offsetWidth;
+
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.book.classList.add('arriving', 'uncover', 'flipping', 'open');
+      bookFocusTimer = setTimeout(function () {
+        if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
+      }, 40);
+      return;
+    }
+
+    requestAnimationFrame(function () {
+      el.book.classList.add('arriving');
+    });
+    // Closed book arrives, cover opens fully, then pages turn, then the journal.
+    bookLater(640, function () { el.book.classList.add('uncover'); });
+    bookLater(1380, function () { el.book.classList.add('flipping'); });
+    bookLater(2680, function () { el.book.classList.add('open'); });
+
     bookFocusTimer = setTimeout(function () {
       if (isBookOpen() && el.book.dataset.page === 'write') el['entry-input'].focus();
-    }, 530);
+    }, 2900);
   }
 
   function closeBook() {
     stopListening({ silent: true });
-    clearTimeout(bookFocusTimer);
-    el.book.classList.remove('open');
+    clearBookAnim();
+    el.book.classList.remove('open', 'from-pose', 'arriving', 'uncover', 'flipping', 'prep');
+    el.book.style.removeProperty('--from-x');
+    el.book.style.removeProperty('--from-y');
+    el.book.style.removeProperty('--from-s');
     el['book-btn'].setAttribute('aria-expanded', 'false');
-    if (bookOpener && bookOpener.isConnected) bookOpener.focus();
+    el['book-btn'].classList.remove('hand-off');
+    // Closing used to focus the mini book, which peeked and paused the spin until
+    // you clicked away. Resume the idle turn as soon as the journal is gone.
+    skipMiniPeek = true;
+    unpeekMiniBook();
+    var spin = el['book-btn'].querySelector('.mini-spin');
+    if (spin) {
+      clearTimeout(miniResumeTimer);
+      playMiniSpin(spin);
+    }
+    if (bookOpener && bookOpener !== el['book-btn'] && bookOpener.isConnected) {
+      bookOpener.focus();
+    } else if (document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
+    skipMiniPeek = false;
   }
 
   function isBookOpen() {
     return el.book.classList.contains('open');
+  }
+
+  // Hover faces the reader without throwing away the idle spin. The spin is paused
+  // at its current heading, a child turn eases the cover toward the camera, and
+  // unhovering unwinds that turn then continues the 14s spin from the same spot.
+  var miniResumeTimer = null;
+  var miniPeeking = false;
+  var skipMiniPeek = false;
+  var MINI_FACE = -16;
+  var MINI_TURN_MS = 400;
+
+  function spinY(node) {
+    var t = getComputedStyle(node).transform;
+    if (!t || t === 'none') return 0;
+    var n = t.replace(/^matrix3d\(|^matrix\(|\)$/g, '').split(',');
+    if (n.length === 16) {
+      return Math.atan2(parseFloat(n[8]), parseFloat(n[0])) * 180 / Math.PI;
+    }
+    if (n.length === 6) {
+      return Math.atan2(parseFloat(n[1]), parseFloat(n[0])) * 180 / Math.PI;
+    }
+    return 0;
+  }
+
+  function shortestDeg(deg) {
+    deg = ((deg + 180) % 360 + 360) % 360 - 180;
+    return deg;
+  }
+
+  function pauseMiniSpin(spin) {
+    var anims = spin.getAnimations ? spin.getAnimations() : [];
+    if (anims[0]) anims[0].pause();
+    else spin.style.animationPlayState = 'paused';
+  }
+
+  function playMiniSpin(spin) {
+    var anims = spin.getAnimations ? spin.getAnimations() : [];
+    if (anims[0]) anims[0].play();
+    spin.style.animationPlayState = '';
+  }
+
+  function peekMiniBook() {
+    if (skipMiniPeek) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (el['book-btn'].classList.contains('hand-off')) return;
+    clearTimeout(miniResumeTimer);
+    var spin = el['book-btn'].querySelector('.mini-spin');
+    var turn = el['book-btn'].querySelector('.mini-turn');
+    pauseMiniSpin(spin);
+    turn.style.transform = 'rotateY(' + shortestDeg(MINI_FACE - spinY(spin)) + 'deg)';
+    el['book-btn'].classList.add('peeking');
+    miniPeeking = true;
+  }
+
+  function unpeekMiniBook() {
+    if (!miniPeeking) return;
+    miniPeeking = false;
+    el['book-btn'].classList.remove('peeking');
+    var spin = el['book-btn'].querySelector('.mini-spin');
+    var turn = el['book-btn'].querySelector('.mini-turn');
+    turn.style.transform = 'rotateY(0deg)';
+    miniResumeTimer = setTimeout(function () { playMiniSpin(spin); }, MINI_TURN_MS);
   }
 
   // --- The book ---------------------------------------------------------------------------
@@ -722,6 +850,7 @@
     el['wallet-count'].textContent = shards;
     el['shop-balance'].textContent = shards;
     if (el.shop.classList.contains('open')) renderShop();
+    renderThemeTray();
   }
 
   function refreshPlanet() {
@@ -801,6 +930,7 @@
 
   function openShop() {
     closeSettings();
+    closeThemeTray();
     shopOpener = document.activeElement;
     renderShop();
     el.shop.classList.add('open');
@@ -814,6 +944,7 @@
 
   function openSettings() {
     closeShop();
+    closeThemeTray();
     el.settings.classList.add('open');
     el['settings-btn'].setAttribute('aria-expanded', 'true');
   }
@@ -823,85 +954,176 @@
     disarmReset();
   }
 
-  function themeThumb(id) {
+  function themeFill(id) {
     var theme = MI.world.themes.get(id);
     function hex(n) { return '#' + n.toString(16).padStart(6, '0'); }
-    var thumb = document.createElement('div');
-    thumb.className = 'thumb';
-    thumb.style.background = hex(theme.sky);
-    var planet = document.createElement('div');
-    planet.className = 'mini-planet';
-    planet.style.background = 'conic-gradient(from 200deg, ' + hex(theme.land) + ' 0 42%, ' +
+    return 'conic-gradient(from 200deg, ' + hex(theme.land) + ' 0 42%, ' +
       hex(theme.water) + ' 0 100%)';
-    thumb.appendChild(planet);
-    return thumb;
   }
+
+  var TRAY_SECTIONS = [
+    { kind: 'skins', label: 'costumes', icon: '👗' },
+    { kind: 'pets', label: 'pets', icon: '🐾' },
+    { kind: 'satellites', label: 'sky', icon: '🌙' }
+  ];
+  var trayOpenKinds = { themes: true, skins: false, pets: false, satellites: false };
+
+  function closeThemeTray() {
+    el['theme-rack'].classList.remove('open');
+    el['theme-btn'].setAttribute('aria-expanded', 'false');
+    el['theme-tray'].setAttribute('aria-hidden', 'true');
+    el['tray-theme-items'].setAttribute('aria-hidden', 'true');
+  }
+
+  function toggleThemeTray() {
+    var open = !el['theme-rack'].classList.contains('open');
+    if (open) {
+      closeSettings();
+      trayOpenKinds.themes = true;
+      el['tray-themes'].classList.add('expanded');
+      renderThemeTray();
+      el['theme-rack'].classList.add('open');
+    } else {
+      el['theme-rack'].classList.remove('open');
+    }
+    el['theme-btn'].setAttribute('aria-expanded', String(open));
+    el['theme-tray'].setAttribute('aria-hidden', String(!open));
+    el['tray-theme-items'].setAttribute('aria-hidden', String(!open));
+  }
+
+  function ownedCatalog(kind) {
+    return MI.economy.CATALOG[kind].filter(function (item) {
+      return MI.economy.owns(kind, item.id);
+    });
+  }
+
+  function fillTrayItems(container, kind) {
+    container.innerHTML = '';
+    var equippedId = MI.economy.equipped(kind);
+    ownedCatalog(kind).forEach(function (item) {
+      // The themes header already shows the equipped planet; only list the rest.
+      if (kind === 'themes' && item.id === equippedId) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = item.name;
+      btn.setAttribute('aria-label', item.name);
+      btn.setAttribute('aria-pressed', String(item.id === equippedId));
+      if (kind === 'themes') btn.style.background = themeFill(item.id);
+      else btn.textContent = item.icon;
+      btn.addEventListener('click', function () {
+        MI.app.equip(kind, item.id);
+        renderThemeTray();
+      });
+      container.appendChild(btn);
+    });
+  }
+
+  function sectionIcon(section) {
+    return section.icon;
+  }
+
+  function renderThemeTray() {
+    var orb = el['theme-btn'].querySelector('.orb');
+    if (orb) orb.style.background = themeFill(MI.economy.equipped('themes') || 'meadow');
+    fillTrayItems(el['tray-theme-items'], 'themes');
+    el['tray-themes'].classList.toggle('expanded', !!trayOpenKinds.themes);
+
+    el['theme-tray'].innerHTML = '';
+    TRAY_SECTIONS.forEach(function (section) {
+      var owned = ownedCatalog(section.kind);
+      if (!owned.length && section.kind !== 'skins') return;
+      var wrap = document.createElement('div');
+      wrap.className = 'tray-kind ' + section.kind + (trayOpenKinds[section.kind] ? ' expanded' : '');
+      wrap.dataset.kind = section.kind;
+
+      var head = document.createElement('button');
+      head.type = 'button';
+      head.className = 'tray-head';
+      head.textContent = sectionIcon(section);
+      head.title = section.label;
+      head.setAttribute('aria-label', section.label);
+      head.setAttribute('aria-expanded', String(!!trayOpenKinds[section.kind]));
+      head.addEventListener('click', function () {
+        trayOpenKinds[section.kind] = !trayOpenKinds[section.kind];
+        wrap.classList.toggle('expanded', trayOpenKinds[section.kind]);
+        head.setAttribute('aria-expanded', String(!!trayOpenKinds[section.kind]));
+      });
+
+      var items = document.createElement('div');
+      items.className = 'tray-items';
+      fillTrayItems(items, section.kind);
+
+      wrap.appendChild(head);
+      wrap.appendChild(items);
+      el['theme-tray'].appendChild(wrap);
+    });
+  }
+
+  var SHOP_TITLES = { themes: 'themes', pets: 'pets', satellites: 'sky', skins: 'skins' };
+  var SHOP_BLURBS = {
+    themes: 'Whole-planet clothes. Swap a world on like a postcard.',
+    pets: 'Little walkers for the paths. One can be out at a time.',
+    satellites: 'Sky company. They keep orbiting, even when the view folds.',
+    skins: 'Hats and knits for everyone who lives on the island.'
+  };
+  var POLAROID_TILT = ['r1', 'r2', 'r3', 'r4'];
 
   function renderShop() {
     var kind = shopKind;
     var balance = MI.economy.balance();
     el['shop-balance'].textContent = balance;
+    el['shop-title'].textContent = SHOP_TITLES[kind] || kind;
+    if (el['shop-blurb']) el['shop-blurb'].textContent = SHOP_BLURBS[kind] || '';
+    el.shop.setAttribute('data-kind', kind);
     Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
       tab.setAttribute('aria-selected', String(tab.dataset.kind === kind));
     });
 
-    var equippedId = MI.economy.equipped(kind);
     el['shop-items'].innerHTML = '';
+    var listed = 0;
     MI.economy.CATALOG[kind].forEach(function (item) {
-      var owned = MI.economy.owns(kind, item.id);
-      var inUse = equippedId === item.id;
-      var card = document.createElement('div');
-      card.className = 'item' + (inUse ? ' equipped' : '');
+      if (MI.economy.owns(kind, item.id)) return;
+      listed += 1;
+      var canBuy = balance >= item.price;
+      var card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'polaroid ' + POLAROID_TILT[(listed - 1) % POLAROID_TILT.length] + (canBuy ? '' : ' short');
+      if (!canBuy) card.disabled = true;
 
-      var thumb;
-      if (kind === 'themes') thumb = themeThumb(item.id);
-      else {
-        thumb = document.createElement('div');
-        thumb.className = 'thumb';
-        thumb.textContent = item.icon;
-      }
-      thumb.setAttribute('aria-hidden', 'true');
-      card.appendChild(thumb);
-
-      var info = document.createElement('div');
-      info.className = 'info';
-      var name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = item.name;
-      var blurb = document.createElement('div');
-      blurb.className = 'blurb';
-      blurb.textContent = item.blurb;
-      info.appendChild(name);
-      info.appendChild(blurb);
-
-      var action = document.createElement('button');
-      action.className = 'action';
-      // Pets and satellites are the two kinds you're allowed to have none of, so only they
-      // offer a way back out; a theme or skin is always wearing something.
-      if (inUse && (kind === 'pets' || kind === 'satellites')) {
-        action.className += ' use';
-        action.textContent = 'Put away';
-        action.addEventListener('click', function () { MI.app.equip(kind, null); renderShop(); });
-      } else if (inUse) {
-        action.className += ' in-use';
-        action.textContent = 'In use ✓';
-        action.disabled = true;
-      } else if (owned) {
-        action.className += ' use';
-        action.textContent = 'Use';
-        action.addEventListener('click', function () { MI.app.equip(kind, item.id); renderShop(); });
-      } else if (balance >= item.price) {
-        action.textContent = 'Unlock · ✦ ' + item.price;
-        action.addEventListener('click', function () { buy(kind, item); });
+      var photo = document.createElement('span');
+      photo.className = 'photo';
+      if (kind === 'themes') {
+        var planet = document.createElement('span');
+        planet.className = 'mini-planet';
+        planet.style.background = themeFill(item.id);
+        photo.appendChild(planet);
       } else {
-        action.className += ' short';
-        action.textContent = '✦ ' + item.price + ' · ' + (item.price - balance) + ' to go';
-        action.disabled = true;
+        var glyph = document.createElement('span');
+        glyph.className = 'glyph';
+        glyph.textContent = item.icon;
+        photo.appendChild(glyph);
       }
-      info.appendChild(action);
-      card.appendChild(info);
+      card.appendChild(photo);
+
+      var caption = document.createElement('span');
+      caption.className = 'caption';
+      caption.textContent = item.name;
+      card.appendChild(caption);
+
+      var sticker = document.createElement('span');
+      sticker.className = 'sticker';
+      sticker.textContent = canBuy ? ('✦ ' + item.price) : ((item.price - balance) + ' short');
+      card.appendChild(sticker);
+
+      if (canBuy) card.addEventListener('click', function () { buy(kind, item); });
       el['shop-items'].appendChild(card);
     });
+    if (!listed) {
+      var empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = 'This page is full. Everything here is already yours.';
+      el['shop-items'].appendChild(empty);
+    }
   }
 
   // --- Your character, and ground view ----------------------------------------------------
@@ -986,7 +1208,10 @@
     MI.app.equip(kind, item.id); // a new unlock goes straight on
     refreshWallet();
     renderShop();
-    toast(item.icon, item.name + ' unlocked!', 'Now on your planet.', 0, 2600);
+    renderThemeTray();
+    toast(item.icon, item.name + ' unlocked!', kind === 'themes'
+      ? 'Find it on the circle under settings.'
+      : 'Now on your planet.', 0, 2600);
   }
 
   function formatDate(iso) {
@@ -1506,6 +1731,14 @@
     });
 
     el['book-btn'].addEventListener('click', openBook);
+    el['book-btn'].addEventListener('pointerenter', peekMiniBook);
+    el['book-btn'].addEventListener('pointerleave', function () {
+      if (document.activeElement !== el['book-btn']) unpeekMiniBook();
+    });
+    el['book-btn'].addEventListener('focus', peekMiniBook);
+    el['book-btn'].addEventListener('blur', function () {
+      if (!el['book-btn'].matches(':hover')) unpeekMiniBook();
+    });
     el['book-close'].addEventListener('click', closeBook);
     el['book-write-tab'].addEventListener('click', function () { selectBookPage('write'); });
     el['book-memories-tab'].addEventListener('click', function () { selectBookPage('memories'); });
@@ -1558,6 +1791,12 @@
     el.shop.addEventListener('click', function (e) {
       if (e.target === el.shop) closeShop(); // a click on the backdrop, not the sheet
     });
+    el['theme-btn'].addEventListener('click', toggleThemeTray);
+    document.addEventListener('pointerdown', function (e) {
+      if (!el['theme-rack'].classList.contains('open')) return;
+      if (el['theme-rack'].contains(e.target)) return;
+      closeThemeTray();
+    });
     Array.prototype.forEach.call(el.shop.querySelectorAll('.tabs button'), function (tab) {
       tab.addEventListener('click', function () {
         shopKind = tab.dataset.kind;
@@ -1581,7 +1820,8 @@
       if (MI.world.isGroundView()) { leaveGroundView(); return; }
       if (el.shop.classList.contains('open')) closeShop();
       else if (el.settings.classList.contains('open')) closeSettings();
-      else if (isBookOpen()) closeBook();
+      else if (el['theme-rack'].classList.contains('open')) closeThemeTray();
+      else if (isBookBusy()) closeBook();
     });
 
     MI.world.onPick(function (slot) {
