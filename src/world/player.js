@@ -29,7 +29,7 @@
   // Tiles crossed per second. The caller turns this into world units by multiplying by
   // whatever a tile measures in ITS view (ctx.speed), because a tile's world size changes
   // with the planet's frequency and is different again on the island.
-  var TILES_PER_SECOND = 1.7;
+  var TILES_PER_SECOND = 1.0;
   var TURN_RATE = 12;     // radians/sec the model swings to face where it is going
   var BOB_RATE = 9;       // steps per second of the walk bob, since no model is animated
   var BOB_HEIGHT = 0.035;
